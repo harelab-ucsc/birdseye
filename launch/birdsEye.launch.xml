@@ -1,0 +1,107 @@
+<launch>
+
+  <arg name="sensorID1" default="cam0"/>
+  <arg name="sensorID2" default="cam1"/>
+  <arg name="sensorID3" default="flir"/>
+
+  <arg name="bagpath" default="/media/mwmaster/b9c5bbeb-67ca-493f-8b8a-3f9a36ac549b/_02-16-2024-15-17/"/>
+
+  <executable cmd="ros2 bag play $(var bagpath)" />
+
+  <node pkg='nv12_to_rgb8' exec='nv12decode' name='nv12_decode' namespace="$(var sensorID1)">
+    <remap from="/image" to="/$(var sensorID1)/camera/image_raw" />
+    <!-- <remap from="/$(var sensorID1)/nv12_decode_result" to="/$(var sensorID1)/camera/nv12_decoded" /> -->
+  </node>
+
+  <node pkg='nv12_to_rgb8' exec='nv12decode' name='nv12_decode' namespace="$(var sensorID2)">
+    <remap from="/image" to="/$(var sensorID2)/camera/image_raw" />
+    <!-- <remap from="/$(var sensorID2)/nv12_decode_result" to="/$(var sensorID2)/camera/nv12_decoded" /> -->
+  </node>
+
+
+  <node pkg="tf2_ros" type="static_transform_publisher" name="static_transform_publisher" ns="$(var sensorID1)" output="screen">
+    <ros-args>
+
+      <param name="x" value="-0.025616"/>
+      <param name="y" value="0.025013"/>
+      <param name="z" value="-0.083334"/>
+      <param name="qx" value="0.0"/>
+      <param name="qy" value="0.0"/>
+      <param name="qz" value="0.0"/>
+      <param name="qw" value="1.0"/>
+      <param name="frame_id" value="base_link"/>
+      <param name="child_frame_id" value="$(var sensorID1)_link"/>
+      
+    </ros-args>
+  </node>
+
+  <node pkg="tf2_ros" type="static_transform_publisher" name="static_transform_publisher" ns="$(var sensorID2)" output="screen">
+    <ros-args>
+
+      <param name="x" value="0.011679"/>
+      <param name="y" value="0.025044"/>
+      <param name="z" value="-0.083402"/>
+      <param name="qx" value="0.0"/>
+      <param name="qy" value="0.0"/>
+      <param name="qz" value="0.0"/>
+      <param name="qw" value="1.0"/>
+      <param name="frame_id" value="base_link"/>
+      <param name="child_frame_id" value="$(var sensorID2)_link"/>
+
+    </ros-args>
+  </node>
+
+  <node pkg="tf2_ros" type="static_transform_publisher" name="static_transform_publisher" ns="$(var sensorID3)" output="screen">
+    <ros-args>
+
+      <param name="x" value="-0.006552"/>
+      <param name="y" value="-0.024984"/>
+      <param name="z" value="-0.080604"/>
+      <param name="qx" value="0.7071"/>
+      <param name="qy" value="0.0"/>
+      <param name="qz" value="0.0"/>
+      <param name="qw" value="0.7071"/>
+      <param name="frame_id" value="base_link"/>
+      <param name="child_frame_id" value="$(var sensorID3)_link"/>
+
+    </ros-args>
+  </node>
+
+
+  <node pkg="fieldai_sub" exec="sub_node" name="sub_node" namespace="$(var sensorID1)">
+
+    <remap from="/image" to="/$(var sensorID1)/nv12_decoded" />
+    <remap from="/imu" to="/imu/data"/>
+    <remap from="/gps" to="/ublox_gps_node/fix"/>
+    <remap from="/gps_flag" to="/ublox_gps_node/navpvt"/>
+	  <remap from="/radalt" to="/rad_altitude"/>
+
+    <param name="sensorID" value="$(var sensorID1)"/>
+
+  </node>
+
+  <node pkg="fieldai_sub" exec="sub_node" name="sub_node" namespace="$(var sensorID2)">
+
+    <remap from="/image" to="/$(var sensorID2)/nv12_decoded" />
+    <remap from="/imu" to="/imu/data"/>
+    <remap from="/gps" to="/ublox_gps_node/fix"/>
+    <remap from="/gps_flag" to="/ublox_gps_node/navpvt"/>
+	  <remap from="/radalt" to="/rad_altitude"/>
+
+    <param name="sensorID" value="$(var sensorID2)"/>
+
+  </node>
+
+  <node pkg="fieldai_sub" exec="sub_node" name="sub_node" namespace="$(var sensorID3)">
+
+    <remap from="/image" to="/$(var sensorID3)/image_raw" />
+    <remap from="/imu" to="/imu/data"/>
+    <remap from="/gps" to="/ublox_gps_node/fix"/>
+    <remap from="/gps_flag" to="/ublox_gps_node/navpvt"/>
+    <remap from="/radalt" to="/rad_altitude"/>
+
+    <param name="sensorID" value="$(var sensorID3)"/>
+
+  </node>
+
+</launch>
