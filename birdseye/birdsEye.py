@@ -9,6 +9,7 @@ from sensor_msgs.msg import Imu, Image, NavSatFix
 from std_msgs.msg import String
 from SLICAnnotator import offlineSLICAnnotator
 import glob2
+from dbConnector import dbConnector
 from db_utilities import *
 
 
@@ -20,9 +21,9 @@ class birdsEye():
         # camera specs defined
         self.K = kwargs.pop('K', None)
         self.res = kwargs.pop('res', None)
-        self.dbc = dbc
         self.db_name = kwargs.pop('db_name', None)
         self.sensor = kwargs.pop('sensor', 'cam0')
+        self.dbc = dbConnector(os.path.join(self.img_dir, self.db_name))
         self.dbc.boot(self.db_name, self.sensor)
         self._2DFrameVertices = ((0,0), \
                                  (self.res[0] - 1, 0), \
@@ -159,4 +160,9 @@ class birdsEye():
         print('images: ', images)
         T_UI= makeAPose(-0.0351, 0.0, 0.28, 180, 0, 0)[0]  # ruler+eye measurements
         T_IC = makeAPose(0.02545, -0.02465, -0.077336, 0, 0, 0)[0]
-        pass
+        for pose in poses:
+            T_WU = poseRowToTransform(pose) #our base link maps from the world origin to the base link
+            sec = int(pose[-4])
+            nsec = int((pose[-1] - sec)*1e9)
+            T_WI = T_WU@T_UI
+            print('t: ', t, 'sec: ', sec, 'nsec: ', nsec)

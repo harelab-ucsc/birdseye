@@ -99,15 +99,15 @@ class subscriberNode(rclpy.node.Node):
         time.sleep(1)
 
 
-    def csv_read(self, csv_file, dbc):
+    def csv_read(self, csv_file):
         data = []
         with open(csv_file) as clicks:
             reader = csv.reader(clicks)
             for line in reader:
                 # breakdown line
                 u = utm.from_latlon(float(line[0]), float(line[1]))
-                # health = int(line[-1])
-                data.append((u[0], u[1]))#, health))
+                tag = int(line[-1])
+                data.append((u[0], u[1]), tag))
         self.dbc.insertClicks(f"clicks_{self.db_name}", data)
         self.csv_loaded = True
 
