@@ -2,55 +2,44 @@ import numpy as np
 import csv
 import utm
 import os
-from simRotTools import *
+# from simRotTools import *
 import rclpy
 from rclpy.node import Node
 from sensor_msgs.msg import Imu, Image, NavSatFix
 from std_msgs.msg import String
+from SLICAnnotator import offlineSLICAnnotator
+import glob2
+from db_utilities import *
 
 
 #TODO: Get the subscriber working with correct time stamps for flight table
 
 class birdsEye():
     def __init__(self, dbc, **kwargs):
+        self.img_dir = kwargs.pop('img_dir', None)
         # camera specs defined
-        self.K = kwargs.pop('intrinsics', None)
-        self.res = kwargs.pop('resolution', None)
-        self.dist = kwargs.pop('distortion', None)
-        # self.extrinsics = kwargs.pop('extrinsics', None)
+        self.K = kwargs.pop('K', None)
+        self.res = kwargs.pop('res', None)
         self.dbc = dbc
         self.db_name = kwargs.pop('db_name', None)
         self.sensor = kwargs.pop('sensor', 'cam0')
         self.dbc.boot(self.db_name, self.sensor)
-        # self.frame = None
-        # self.setupFrame()
+        self._2DFrameVertices = ((0,0), \
+                                 (self.res[0] - 1, 0), \
+                                 (self.res[0] - 1, self.res[1] - 1), \
+                                 (0, self.res[1] - 1))
 
 
-    # def setupFrame(self):
-    #     frame = [(x, -(self.res[0]-self.K[0,2])) for x in range(0, self.res[1], 32)]
-    #     frame += [(x, self.K[0,2]-1) for x in range(0, self.res[1], 32)]
-    #     frame += [(0, x-(self.res[0]-self.K[0,2])) for x in range(0, self.res[0], 32)]
-    #     frame += [(self.res[1]-1, x-(self.res[0]-self.K[0,2])) for x in range(0, self.res[0], 32)]
-    #     self.frame = np.array(frame, dtype=np.float32)
-    #     # print(frame.shape)
-    #     # self.frame = cv2.undistortPointsIter(frame, self.K, self.dist, None, self.K, (cv2.TERM_CRITERIA_COUNT | cv2.TERM_CRITERIA_EPS, 100, 0.03))
-    #     # self.frame = np.squeeze(self.frame).T
-    #     # self.frame = np.concatenate((self.frame, np.ones((1, self.frame.shape[1]))), axis=0)
-    #     self.frame = self.frame.astype(int)
-
-
-    def get3Dfrom2D(self, List2D, K, R, t):
+    def _2Dto3D(self, T_WB, T_BC, K, List2D):
         # From https://math.stackexchange.com/questions/4382437/back-projecting-a-2d-pixel-from-an-image-to-its-corresponding-3d-point
-        # List2D : n x 2 array of pixel locations in an image
+        # T_WB : World to base link transform, 4x4 nonsingular matrix
+        # T_BC : Base link to camera transform, 4x4 nonsingular matrix
         # K : Intrinsic matrix for camera
-        # R : Rotation matrix describing rotation of camera frame
-        #     w.r.t world frame.
-        # t : translation vector describing the translation of camera frame
-        #     w.r.t world frame
-        # [R t] combined is known as the Camera Pose.
+        # List2D : n x 2 array of pixel locations in an image
 
         List2D = np.array(List2D)
         List3D = []
+        T_WC = T_WB @ T_BC
 
         for p in List2D:
             # Homogeneous pixel coordinate
@@ -60,24 +49,24 @@ class birdsEye():
             pc = np.linalg.inv(K) @ p
 
             # Transform pixel in World coordinate frame
-            pw = t + (R@pc)
+            pw = T_WC @ pc
 
             # Transform camera origin in World coordinate frame
-            cam = np.array([0,0,0]).T
-            cam_world = t + R @ cam
+            cam = np.array([0,0,0,1]).T
+            cam_world = T_WC @ cam
 
             # Find a ray from camera to 3d point
             vector = pw - cam_world
             unit_vector = vector / np.linalg.norm(vector)
 
             # Point scaled along this ray
-            p3D = cam_world + t[-1]*vector
+            p3D = cam_world + T_WC[2,3]*vector
             List3D.append(p3D)
 
         return List3D
 
 
-    def projectPins2Pix(self, T_WB, T_BC, K, pins):
+    def _3Dto2D(self, T_WB, T_BC, K, pins):
         #Given world->base and base->camera 4x4 matrices, as well as a K matrix, and a 2d array of pins, project each pin into image space
         #Return a 2d array of image coordinates corresponding to each pin
         #First, compose the image space. That is, take the world pose from the DB, and use a rigid transform to get the sensor frame
@@ -100,56 +89,74 @@ class birdsEye():
         return projected_normalized[:2].T
 
 
-    def findVisiblePins(self, pins):
-        #Given a camera resolution in x,y; and a set of projected pins in pixel space, return a bitmap if the
-        #pin is visible
-        visiblePins = list()
-        for pin in pins:
-            # if (0 <= pin[0] < self.res[1]) and (-(self.res[0]-self.K[0,2]) <= pin[1] < self.K[0,2]):
-            if (0 <= pin[0] < self.res[1]) and (0 <= pin[1] < self.res[0]):
-                visiblePins.append(1)
-            else:
-                visiblePins.append(0)
-
-        return visiblePins
-
-
-    def poseRowToTransform(pose, rpy=None):
-        #Given a row from the db, produce a 4x4 homogeneous transform
-        #Return as a 4x4 nparray
-        if rpy is None:
-            rpy = quat2euler(pose[3], pose[4], pose[5], pose[6])
-
-        rot = euler2dcm(rpy[0], rpy[1], rpy[2])
-        translate = [[pose[0]],[pose[1]],[pose[2]]]
-        T = np.hstack([rot, translate])
-        T = np.vstack([T, [0,0,0,1]])
-
-        return T
+    def _2DFrameCheck(self, T_WB, T_BC, K, pts, stats=False):
+        if stats:
+            backproj = []
+        valid_mask =  self.inQuadrilateralCheck(self._2DFrameVertices, pts)
+        valid_pts = np.array(pts)[valid_mask]
+        valid_pts = valid_pts.tolist()
+        if stats:
+            backproj = self._2Dto3D(T_WB, T_BC, K, valid_pts)
+        if stats:
+            return valid_pts, backproj
+        else:
+            return valid_pts, None
 
 
-    def csv_read(self, csv_file, dbc):
-        data = []
-        with open(csv_file) as clicks:
-            reader = csv.reader(clicks)
-            for line in reader:
-                # breakdown line
-                u = utm.from_latlon(float(line[0]), float(line[1]))
-                # health = int(line[-1])
-                data.append((u[0], u[1]))#, health))
-        self.dbc.insertClicks(f"clicks_{self.db_name}", data)
-        self.csv_loaded = True
+    ### This is not so simple
+    # def _3DFrameCheck(self, T_WB, T_BC, K, pts, stats=False):
+    #     valid_pts = []
+    #     if stats:
+    #         reproj = []
+    #     frame = self._2Dto3D(T_WB, T_BC, K, self._2DFrameVertices)
+    #     for pt in pts:
+    #         if self.inQuadrilateralCheck(frame, pt):
+    #             valid_pts.append(pt)
+    #         if stats:
+    #             reproj.append(self._3Dto2D(T_WB, T_BC, K, pts))
+    #     if stats:
+    #         return valid_pts, reproj
+    #     else:
+    #         return valid_pts, None
 
 
-    def convertAndSave(self, msg, sensor, time):
+    def inQuadrilateralCheck(self, frame, pts):
+        n = len(frame)
+        frame = np.array(frame)
+        val = []
+        ring = lambda y: [ (x + 1) % y for x in range(y)]
+        det = lambda x,y: x[0]*y[1] - [x[1]*y[0]]
+        tmp1 = frame[ring(n)] - frame
 
-        """ bender code """
+        for v in pts:
+            v = np.array(v)
+            tmp2 = v - frame
+            tmp = [int(det(tmp1[i], tmp2[i])) >= 0 for i in range(n)]
+            val.append(sum(tmp))
+        val = [True if i == 4.0 else False for i in val]
+        return val
 
-        # vcimg = bridge.imgmsg_to_cv2(msg, desired_encoding='passthrough')
-        location = os.path.join(self.datadir.path, 'stacks/')
-        location = os.path.join(location, sensor)
-        # location = os.path.join(location, "img_"+str(time.secs)+".png")
-        location = os.path.join(location, "img_"+str(time.secs) + '.' + str(time.nsecs)+".png")
-        # cv2.imwrite(location, vcimg)
-        # cv2.imshow('frame', vcimg)
-        return location
+
+    def annotate(self, pts, encoding):
+        images = glob2.glob(self.img_dir + f"*all.{encoding}")
+        # above line can read direct from db as well
+        save_name = os.path.join(self.img_dir, self.img_dir.split(os.sep)[-2])
+        sA = offlineSLICAnnotator(images=images, save_name=save_name)
+        for i, image in enumerate(images):
+            sA.frameProcess(pts)
+            sA.frame_index = i
+
+
+    def parseFlightDatabase(self):
+        clicks = self.dbc.getFrom('x, y', f"clicks_{self.db_name}")
+        clicks = np.array(clicks)
+        print('clicks: ', clicks)
+        poses = self.dbc.getFrom('x, y, z, q, u, a, t, rtk_time, alt_time, imu_time', f'{self.sensor}_poses_{self.db_name}')
+        print('poses: ', poses)
+        params = self.dbc.getFrom(f"sensorID, resolution, intrinsics1, intrinsics2, extrinsics", f"parameters_{self.db_name}")
+        print('params: ', params)
+        images = self.dbc.getFrom('save_loc, rtk_fix, time', f'{self.sensor}_images_{self.db_name}')
+        print('images: ', images)
+        T_UI= makeAPose(-0.0351, 0.0, 0.28, 180, 0, 0)[0]  # ruler+eye measurements
+        T_IC = makeAPose(0.02545, -0.02465, -0.077336, 0, 0, 0)[0]
+        pass

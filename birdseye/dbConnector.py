@@ -75,12 +75,8 @@ class dbConnector:
         query = f"SELECT {what} FROM {where}" + " " + cond + limit
         # print(query)
         res = cur.execute(query)
-        return res.fetchall()
+        return res.fetchall()  # list of all rows of query result
 
-    #executes arbitrary sql
-    # limit max
-    # excutes
-    # returns iterable over every row
 
     def dfToTable(self, data, where, over_write=True):
         proc_d = self.checkForTable(where)
@@ -110,7 +106,7 @@ class dbConnector:
         self.db_c.commit()
 
 
-    def insertIgnoreInto(self.table_name, cols, vals):
+    def insertIgnoreInto(self, table_name, cols, vals):
         cur = self.db_c.cursor()
         cur.execute(f"INSERT IGNORE INTO {table_name}({cols}) VALUES({vals})")
         self.db_c.commit()

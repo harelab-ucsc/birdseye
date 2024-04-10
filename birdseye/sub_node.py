@@ -99,6 +99,19 @@ class subscriberNode(rclpy.node.Node):
         time.sleep(1)
 
 
+    def csv_read(self, csv_file, dbc):
+        data = []
+        with open(csv_file) as clicks:
+            reader = csv.reader(clicks)
+            for line in reader:
+                # breakdown line
+                u = utm.from_latlon(float(line[0]), float(line[1]))
+                # health = int(line[-1])
+                data.append((u[0], u[1]))#, health))
+        self.dbc.insertClicks(f"clicks_{self.db_name}", data)
+        self.csv_loaded = True
+
+
     def calibUptake(self):
         devices = [f'{self.sensor}', 'imu', 'ublox', 'radalt']
         res = np.array([None])
@@ -140,6 +153,12 @@ class subscriberNode(rclpy.node.Node):
         valsList = [device_key, resolution, intrinsics1, intrinsics2, extrinsics]
         vals = ','.join([str(x) for x in valsList])
         self.dbc.insertIgnoreInto(f"parameters_{self.db_name}", cols, vals)
+
+
+    def getParameters(self, device_key):
+        cols = "sensorID, resolution, intrinsics1, intrinsics2, extrinsics"
+        table = f"parameters_{self.db_name}"
+        return dbc.getFrom(cols, table, cond=f'WHERE sensorID = {device_key}')
 
 
     # TODO: for a later day, add parameter set callback
@@ -201,8 +220,10 @@ class subscriberNode(rclpy.node.Node):
                 nsec = str(msg.header.stamp.nanosec).rjust(9,str(0))
                 time = f'{sec}.{nsec}'
                 u = utm.from_latlon(msg.latitude, msg.longitude)
-                cols = "x, y, z, q, u, a, t, rtk_time, alt_time, imu_time"
-                valsList = [u[0], u[1], self.alt, \
+                cols = "x, y, z, q, u, a, t, rtk_time, alt_time, imu_time"\
+                tmp = [u[0], u[1], 0.0, 1.0]
+                tmp = np.matmul(self.getParameters('ublox')[-1], tmp)
+                valsList = [tmp[0], tmp[1], self.alt, \
                             self.att.x, self.att.y, self.att.z, self.att.w, \
                             time, self.alt_time, self.imu_time]
                 vals = ','.join([str(x) for x in valsList])
@@ -214,8 +235,7 @@ class subscriberNode(rclpy.node.Node):
 
 
     def imu_cb(self, msg: Imu):
-        # microstrain -> class attribute;
-        # 'catch freshest' approach is allowed because IMU is faster than RTK
+        # 100Hz update rate, so 'catch freshest' approach is allowed; faster than RTK
         sec = str(msg.header.stamp.sec)
         nsec = str(msg.header.stamp.nanosec).rjust(9,'0')
         time = f'{sec}.{nsec}'
@@ -224,24 +244,17 @@ class subscriberNode(rclpy.node.Node):
 
 
     def alt_cb(self, msg: AltSNR):
-        # rad alt -> flight z
         # 100Hz update rate, so 'catch freshest' approach is allowed again
         if msg.snr > 13:  # from device manual: "Altitude measurements associated with a SNR value of 13dB or lower are considered erroneous."
-            self.alt = msg.altitude
+            self.alt = [0.0, 0.0, msg.altitude, 1.0]
+            # next line transforms radalt measurements to camera frame
+            self.alt = np.matmul(self.getParameters('radalt')[-1], self.alt)[2]
             sec = str(msg.header.stamp.sec)
             nsec = str(msg.header.stamp.nanosec).rjust(9,'0')
             time = f'{sec}.{nsec}'
             self.alt_time = time
         else:
             self.get_logger().info(f'Radar altimeter data not recorded; SNR = {msg.snr}')
-
-
-    def parametersToDB(self, sensorID, type):
-        """
-        sensorID: string referring to the sensor  whose intr/extrinsics are being written to database
-        type: string, 'intrinsics' or 'extrinsics'
-        """
-        pass
 
 
 def main(args=None):
