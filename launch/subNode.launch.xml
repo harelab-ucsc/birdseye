@@ -1,22 +1,29 @@
 <launch>
   <arg name="sensorID" default="cam0"/>
-  <arg name="bagpath" default="/media/mwmaster/b9c5bbeb-67ca-493f-8b8a-3f9a36ac549b/_02-16-2024-15-17/"/>
+  <arg name="bagpath" default="/media/mwmaster/b9c5bbeb-67ca-493f-8b8a-3f9a36ac549b/polygon_04-08-2024-14-50/"/>
+  <arg name="sensors_yaml" default="camera_yamls/birdsEyeSensorParams.yaml"/>
+  <arg name="clicks_csv" default="catch/data.csv"/>
+  <arg name="dir_name" default="parsed_flight"/>
 
   <!-- <executable cmd="ros2 bag play /media/luca/b9c5bbeb-67ca-493f-8b8a-3f9a36ac549b/_12-08-2023-16-46" /> -->
-  <executable cmd="ros2 bag play $(var bagpath)" />
+  <executable cmd="ros2 bag play $(var bagpath) --read-ahead-queue-size 10000" />
 
-  <node pkg='nv12_to_rgb8' exec='nv12decode' name='nv12_decode'>
+  <node pkg='nv12_to_rgb8' exec='nv12decode' name='nv12decode'>
     <remap from="/image" to="/$(var sensorID)/camera/image_raw" />
-    <remap from="/$(var sensorID)/nv12_decode_result" to="/$(var sensorID)/camera/nv12_decoded" />
+    <remap from="/nv12_decoded" to="/$(var sensorID)/camera/nv12_decoded" />
   </node>
 
-  <node pkg="fieldai_sub" exec="sub_node" name="sub_node">
+  <node pkg="birdseye" exec="sub_node" name="sub_node">
     <remap from="/image" to="/$(var sensorID)/camera/nv12_decoded" />
     <remap from="/imu" to="/imu/data"/>
     <remap from="/gps" to="/ublox_gps_node/fix"/>
     <remap from="gps_flag" to="/ublox_gps_node/navpvt"/>
 	  <remap from="/radalt" to="/rad_altitude"/>
     <param name="sensorID" value="$(var sensorID)"/>
+    <param name="sensors_yaml" value="$(var sensors_yaml)"/>
+    <param name="clicks_csv" value="$(var clicks_csv)"/>
   </node>
+
+  <executable cmd="rqt_graph" />
 
 </launch>

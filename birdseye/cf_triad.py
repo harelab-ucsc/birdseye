@@ -2,26 +2,11 @@
 import numpy as np
 import matplotlib.pyplot as plt
 from mpl_toolkits.mplot3d import Axes3D
-
+from utilities import *
 from scipy.spatial.transform import Rotation as R
 
-def dcm2euler(dcm):
-    # yaw calculations
-    yaw = np.arctan2(dcm[0][1], dcm[0][0])
 
-    # pitch calculations
-    # the min, max ensures that the value remains within [-1,1]
-    boundedCell = min(1,max(-1,dcm[0][2]))
-    pitch = -np.arcsin(boundedCell)
-
-    # roll calculations
-    roll = np.arctan2(dcm[1][2], dcm[2][2])
-    euler = [roll, pitch, yaw] #be consistent in the ordering of xyz axes
-
-    return euler
-
-
-def arrow3d(ax, length=1, width=0.05, head=0.2, headwidth=2,
+def arrow3d(ax, length=1, width=0.05, head=0.2, headwidth=1,
                 theta_x=0, theta_z=0, offset=(0,0,0), rotation=np.eye(3), **kw):
     w = width
     h = head
@@ -47,51 +32,56 @@ def arrow3d(ax, length=1, width=0.05, head=0.2, headwidth=2,
     b2 = np.dot(rot_z, b1)
     b3 = np.dot(rotation, b2)
     b4 = b3.T+np.array(offset)
-    x = b4[:,0].reshape(r.shape); 
-    y = b4[:,1].reshape(r.shape); 
-    z = b4[:,2].reshape(r.shape); 
+    x = b4[:,0].reshape(r.shape);
+    y = b4[:,1].reshape(r.shape);
+    z = b4[:,2].reshape(r.shape);
     ax.plot_surface(x,y,z, **kw)
 
 
 def plotTransform(ax, T):
     #Given a homogeneous transform, plot the triad:
-    euler = dcm2euler(T[0:3,0:3])
-    xyz = T[0:3,3]
-    plotTriad(ax, xyz, euler)
+    roll, pitch, yaw = dcm2euler(T[0:3,0:3])
+    x, y, z = T[0:3,3]
+    plotTriad(ax, x, y, z, roll, pitch, yaw)
 
-def plotTriad(ax, xyz, rpy):
 
-    
-    #default: length along z axis
+def plotTriad(ax, x, y, z, roll, pitch, yaw):
+    # default: length along z axis
     # Handle rotate about x, call that roll:
-    
-    #Make an arbitrary rotation matrix for each of roll, pitch, yaw: (x forward, y left, z up)
 
-    theta_x = rpy[0]
-    theta_y = rpy[1]
-    theta_z = rpy[2]
-    
-    rot_x = np.array([[1,0,0],[0,np.cos(theta_x),-np.sin(theta_x) ],
-                      [0,np.sin(theta_x) ,np.cos(theta_x) ]])
-    rot_y = np.array([[np.cos(theta_y), 0, np.sin(theta_y)],
-                      [0,1,0],
-                      [-np.sin(theta_y), 0, np.cos(theta_y)]])
-    rot_z = np.array([[np.cos(theta_z),-np.sin(theta_z),0 ],
-                     [np.sin(theta_z) ,np.cos(theta_z),0 ],[0,0,1]])
-    full_rot = rot_x@rot_y@rot_z
-            
-                     
-    arrow3d(ax, length=1, color="blue", offset=xyz, rotation=full_rot)
-    arrow3d(ax, length=1, theta_x=-90, color="limegreen", offset=xyz, rotation=full_rot) 
-    arrow3d(ax, length=1, theta_x=90, theta_z=90, color="crimson", offset=xyz, rotation=full_rot)
+    # Make an arbitrary rotation matrix for each of roll, pitch, yaw: (x forward, y left, z up)
+    # Triad length
+		L = 0.8
 
+		# Rotation matrices
+		R_roll = np.array([[1, 0, 0],
+						   [0, np.cos(roll), -np.sin(roll)],
+						   [0, np.sin(roll), np.cos(roll)]])
 
-    
-#arrow3d(ax, length=2, width=0.02, head=0.1, headwidth=1.5, offset=[1,1,0], 
-#        theta_x=40,  color="crimson")
+		R_pitch = np.array([[np.cos(pitch), 0, np.sin(pitch)],
+						    [0, 1, 0],
+						    [-np.sin(pitch), 0, np.cos(pitch)]])
 
-#arrow3d(ax, length=1.4, width=0.03, head=0.15, headwidth=1.8, offset=[1,0.1,0], 
-#        theta_x=-60, theta_z = 60,  color="limegreen")
+		R_yaw = np.array([[np.cos(yaw), -np.sin(yaw), 0],
+						  [np.sin(yaw), np.cos(yaw), 0],
+						  [0, 0, 1]])
+
+		# Triad axes
+		x_axis = np.array([L, 0, 0])
+		y_axis = np.array([0, L, 0])
+		z_axis = np.array([0, 0, L])
+
+		# Rotate axes according to roll, pitch, yaw
+		x_axis = np.dot(R_yaw, np.dot(R_pitch, np.dot(R_roll, x_axis)))
+		y_axis = np.dot(R_yaw, np.dot(R_pitch, np.dot(R_roll, y_axis)))
+		z_axis = np.dot(R_yaw, np.dot(R_pitch, np.dot(R_roll, z_axis)))
+
+		# Draw triad
+		ax.quiver(x, y, z, x_axis[0], x_axis[1], x_axis[2], color='r', label='IMU x-axis')
+		ax.quiver(x, y, z, y_axis[0], y_axis[1], y_axis[2], color='g', label='IMU y-axis')
+		ax.quiver(x, y, z, z_axis[0], z_axis[1], z_axis[2], color='b', label='IMU z-axis')
+		ax.legend()
+
 
 if __name__ == "__main__":
     fig = plt.figure()

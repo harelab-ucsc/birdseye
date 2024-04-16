@@ -1,19 +1,22 @@
-import numpy as np
+#!/usr/bin/env python3
+
 import csv
+import yaml
 import utm
 import rclpy
 import os
-import shutil
+# import shutil
 import pdb
 import cv2
 import glob2
 import stat
 import time
+import numpy as np
 
 # from . import simRotTools
 # from . import fieldAI
 from . import dbConnector
-# from utilities import *
+from . import utilities
 from cv_bridge import CvBridge
 from rclpy.node import Node
 from sensor_msgs.msg import Imu, Image, NavSatFix
@@ -37,8 +40,9 @@ class subscriberNode(rclpy.node.Node):
         self.declare_parameter("sensorID", rclpy.Parameter.Type.STRING)
         self.sensor = self.get_parameter("sensorID").value
 
-        self.declare_parameter("sensors_yaml", rclpy.Parameter.Type.STRING)
+        self.declare_parameter("sensors_yaml", "camera_yamls/birdsEyeSensorParams.yaml")
         self.sensors_yaml = self.get_parameter("sensors_yaml").value
+        self.sensors_yaml = os.path.join(os.path.expanduser('~'), self.sensors_yaml)
 
         self.declare_parameter("dir_name", 'parsed_flight')
         self.dir_name = self.get_parameter("dir_name").value
@@ -50,6 +54,11 @@ class subscriberNode(rclpy.node.Node):
         self.db_name = self.get_parameter("db_name").value
         self.dbc = dbConnector.dbConnector(os.path.join(self.dir_name, self.db_name))
         self.dbc.boot(self.db_name, self.sensor)
+
+        self.declare_parameter("clicks_csv", "catch/data.csv")
+        self.clicks_csv = self.get_parameter("clicks_csv").value
+        self.clicks_csv = os.path.join(os.path.expanduser('~'), self.clicks_csv)
+        self.csv_read()
 
         os.chmod(os.path.join(self.dir_name, self.db_name+'.db'), stat.S_IRWXU | stat.S_IRWXG | stat.S_IRWXO)
         time.sleep(1)
@@ -99,80 +108,10 @@ class subscriberNode(rclpy.node.Node):
         time.sleep(1)
 
 
-    def csv_read(self, csv_file):
-        data = []
-        with open(csv_file) as clicks:
-            reader = csv.reader(clicks)
-            for line in reader:
-                # breakdown line
-                u = utm.from_latlon(float(line[0]), float(line[1]))
-                tag = int(line[-1])
-                data.append((u[0], u[1]), tag))
-        self.dbc.insertClicks(f"clicks_{self.db_name}", data)
-        self.csv_loaded = True
-
-
-    def calibUptake(self):
-        devices = [f'{self.sensor}', 'imu', 'ublox', 'radalt']
-        res = np.array([None])
-        intr1 = np.array([None])
-        intr2 = np.array([None])
-        extr = np.array([None])
-        with open(self.sensors_yaml, 'r') as f:
-            params = self.load_yaml()
-            for device in devices:
-                data = params[device]
-                if device == self.sensor:
-                    self.res = data["resolution"]
-                    self.K = data["intrinsics"]
-                    self.dist = data["distortion_coeffs"]
-                    self.extr = data["T_cam_imu"]  # extrinsics relative to imu base link
-                    res = self.res
-                    intr1 = self.K
-                    intr2 = self.dist
-                    extr = self.extr
-                elif device == 'imu':
-                    intr1 = np.array([data["accelerometer_noise_density"], \
-                                    data["accelerometer_random_walk"]])
-                    intr2 = np.array([data["gyroscope_noise_density"], \
-                                    data["gyroscope_random_walk"]])
-                    extr = np.eye(4)
-                elif device is 'ublox':
-                    extr = np.array(data["T_ubl_imu"])
-                elif device is 'radalt':
-                    extr = np.array(data["T_rad_imu"])
-                self.putParameters(device, res, intr1, intr2, extr)
-                res = np.array([None])
-                intr1 = np.array([None])
-                intr2 = np.array([None])
-                extr = np.array([None])
-
-
-    def putParameters(self, device_key, resolution, intrinsics1, intrinsics2, extrinsics):
-        cols = "sensorID, resolution, intrinsics1, intrinsics2, extrinsics"
-        valsList = [device_key, resolution, intrinsics1, intrinsics2, extrinsics]
-        vals = ','.join([str(x) for x in valsList])
-        self.dbc.insertIgnoreInto(f"parameters_{self.db_name}", cols, vals)
-
-
-    def getParameters(self, device_key):
-        cols = "sensorID, resolution, intrinsics1, intrinsics2, extrinsics"
-        table = f"parameters_{self.db_name}"
-        return dbc.getFrom(cols, table, cond=f'WHERE sensorID = {device_key}')
-
-
-    # TODO: for a later day, add parameter set callback
-    # def parameter_callback(self, params):
-    #     for param in params:
-    #         if param.name == 'my_str' and param.type_ == Parameter.Type.STRING:
-    #             self.sensor = param.value
-    #     return SetParametersResult(successful=True)
-
-
     def clear_dir(self):
         try:
             files = glob2.glob(os.path.join(self.dir_name, '*'))
-            if len(files) > 1:
+            if len(files) >= 1:
                 for file in files:
                     if os.path.isfile(file):
                         os.remove(file)
@@ -181,6 +120,98 @@ class subscriberNode(rclpy.node.Node):
                 self.get_logger().info(f"No files in {self.dir_name}.")
         except Exception as e:
             self.get_logger().info(f"Error occurred while clearing {self.dir_name} files: {e}.")
+
+
+    def csv_read(self):
+        self.get_logger().info('Reading clicks CSV file...')
+        data = []
+        with open(self.clicks_csv) as clicks:
+            reader = csv.reader(clicks)
+            for line in reader:
+                # breakdown line
+                u = utm.from_latlon(float(line[0]), float(line[1]))
+                tag = int(line[-1][-1])
+                data.append([u[0], u[1], tag])
+        self.dbc.insertClicks(f"clicks_{self.db_name}", data)
+
+
+    def calibUptake(self):
+        print('Reading sensor parameters YAML file...')
+        devices = [f'{self.sensor}', 'imu', 'ublox', 'radalt']
+        res = None
+        intr1 = None
+        intr2 = None
+        extr = None
+        with open(self.sensors_yaml, 'r') as f:
+            params = yaml.safe_load(f)
+            for device in devices:
+                data = params[device]
+                if device == self.sensor:
+                    self.res = data["resolution"]
+                    self.K = data["intrinsics"]
+                    self.dist = data["distortion_coeffs"]
+                    self.extr = data["T_cam_imu"]  # extrinsics relative to imu base link
+                    self.extr = utilities.matrix_list_converter(self.extr, (4,4))
+                    res = self.res
+                    intr1 = self.K
+                    intr2 = self.dist
+                    extr = self.extr
+                    # print(extr)
+                    # print(type(data["T_cam_imu"]))
+                    self.putParameters(device, res, intr1, intr2, extr)
+                elif device == 'imu':
+                    intr1 = [data["accelerometer_noise_density"], data["accelerometer_random_walk"]]
+                    intr2 = [data["gyroscope_noise_density"],  data["gyroscope_random_walk"]]
+                    self.putParameters(device, res, intr1, intr2, extr)
+                elif device == 'ublox':
+                    extr = data["T_ubl_imu"]
+                    self.putParameters(device, res, intr1, intr2, utilities.matrix_list_converter(extr, (4,4)))
+                elif device == 'radalt':
+                    extr = data["T_rad_imu"]
+                    self.putParameters(device, res, intr1, intr2, utilities.matrix_list_converter(extr, (4,4)))
+                res = None
+                intr1 = None
+                intr2 = None
+                extr = None
+
+
+    def putParameters(self, device_key, resolution, intrinsics1, intrinsics2, extrinsics):
+        vals = '"'
+        cols = "sensorID, resolution, intrinsics1, intrinsics2, extrinsics"
+        valsList = [device_key, resolution, intrinsics1, intrinsics2, extrinsics]
+        vals += '","'.join([str(x) for x in valsList])
+        vals += '"'
+        self.dbc.insertIgnoreInto(f"parameters_{self.db_name}", cols, vals)
+
+
+    def getParameters(self, device_key):
+        params = []
+        cols = "sensorID, resolution, intrinsics1, intrinsics2, extrinsics"
+        table = f"parameters_{self.db_name}"
+        ret = self.dbc.getFrom(cols, table, cond=f'WHERE sensorID = "{device_key}"')
+        # print(ret)
+        for elem in ret:
+            # print(len(elem))
+            for i, item in enumerate(elem):
+                # print(i, item)
+                if item == device_key:
+                    params.append(item)
+                elif item != 'None':
+                    tmp = utilities.string_list_converter(item)
+                    # print('tmp: ', tmp)
+                    if item == elem[-1]:
+                        tmp = utilities.matrix_list_converter(tmp, (4,4))
+                    # print(tmp)
+                    params.append(tmp)
+        return params
+
+
+    # TODO: for a later day, add parameter set callback
+    # def parameter_callback(self, params):
+    #     for param in params:
+    #         if param.name == 'my_str' and param.type_ == Parameter.Type.STRING:
+    #             self.sensor = param.value
+    #     return SetParametersResult(successful=True)
 
 
     def cam_cb(self, msg: Image):
@@ -208,30 +239,32 @@ class subscriberNode(rclpy.node.Node):
 
 
     def ublox_cb(self, msg: NavSatFix):
-        if self.rtk_fix != 131:
-            self.get_logger().info('ublox missed; no RTK fix')
+        # else:
+        if self.att is None:
+            self.get_logger().info('ublox missed... no IMU data')
+        elif self.alt is None:
+            self.get_logger().info('ublox missed... no radar altimeter data')
         else:
-            if self.att is None:
-                self.get_logger().info('ublox missed; no IMU data')
-            elif self.alt is None:
-                self.get_logger().info('ublox missed; no radar altimeter data')
-            else:
-                sec = str(msg.header.stamp.sec)
-                nsec = str(msg.header.stamp.nanosec).rjust(9,str(0))
-                time = f'{sec}.{nsec}'
-                u = utm.from_latlon(msg.latitude, msg.longitude)
-                cols = "x, y, z, q, u, a, t, rtk_time, alt_time, imu_time"\
-                tmp = [u[0], u[1], 0.0, 1.0]
-                tmp = np.matmul(self.getParameters('ublox')[-1], tmp)
-                valsList = [tmp[0], tmp[1], self.alt, \
-                            self.att.x, self.att.y, self.att.z, self.att.w, \
-                            time, self.alt_time, self.imu_time]
-                vals = ','.join([str(x) for x in valsList])
-                self.dbc.insertInto(f"{self.sensor}_poses_{self.db_name}", cols, vals)
-                self.att = None  # flush used attitude
-                self.imu_time = None
-                self.alt = None  # flush used altitude
-                self.alt_time = None
+            if self.rtk_fix != 131:
+                self.get_logger().info(f'Bad pose recorded... no RTK fix: {self.rtk_fix} should be 131')
+            sec = str(msg.header.stamp.sec)
+            nsec = str(msg.header.stamp.nanosec).rjust(9,str(0))
+            time = f'{sec}.{nsec}'
+            u = utm.from_latlon(msg.latitude, msg.longitude)
+            cols = "x, y, z, q, u, a, t, rtk_fix, rtk_time, alt_time, imu_time"
+            tmp = [u[0], u[1], 0.0, 1.0]
+            # self.get_logger().info(str(tmp))
+            tmp = np.matmul(self.getParameters('ublox')[-1], tmp)
+            # self.get_logger().info(str(tmp))
+            valsList = [tmp[0], tmp[1], self.alt, \
+                        self.att.x, self.att.y, self.att.z, self.att.w, \
+                        self.rtk_fix, time, self.alt_time, self.imu_time]
+            vals = ','.join([str(x) for x in valsList])
+            self.dbc.insertInto(f"{self.sensor}_poses_{self.db_name}", cols, vals)
+            self.att = None  # flush used attitude
+            self.imu_time = None
+            self.alt = None  # flush used altitude
+            self.alt_time = None
 
 
     def imu_cb(self, msg: Imu):
