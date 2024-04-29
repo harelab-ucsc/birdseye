@@ -81,18 +81,18 @@ class subscriberNode(rclpy.node.Node):
 
         # camera subscriber
         self.cam_sub = self.create_subscription(
-            Image, '/image', self.cam_cb, 10)
+            Image, '/image', self.cam_cb, 100)
         # ublox subscribers
         self.ublox_health_sub = self.create_subscription(
-            NavPVT, '/gps_flag', self.ublox_health_cb, 10)
+            NavPVT, '/gps_flag', self.ublox_health_cb, 100)
         self.ublox_sub = self.create_subscription(
-            NavSatFix, '/gps', self.ublox_cb, 10)
+            NavSatFix, '/gps', self.ublox_cb, 100)
         # microstrain subscriber
         self.imu_sub = self.create_subscription(
-            Imu, '/imu', self.imu_cb, 10)
+            Imu, '/imu', self.imu_cb, 100)
         # radalt subscriber
         self.radalt_sub = self.create_subscription(
-            AltSNR, '/radalt', self.alt_cb, 10)
+            AltSNR, '/radalt', self.alt_cb, 100)
 
 
     def dirCheck(self):
@@ -227,11 +227,11 @@ class subscriberNode(rclpy.node.Node):
         cv2.imwrite(data_loc, image)
         valsList = ['\"'+data_loc+'\"', self.rtk_fix, time]
         vals = ','.join([str(x) for x in valsList])
-        self.dbc.insertInto(f"{self.sensor}_images_{self.db_name}", "save_loc, rtk_fix, time", vals)
+        self.dbc.insertIgnoreInto(f"{self.sensor}_images_{self.db_name}", "save_loc, rtk_fix, time", vals)
 
 
-    # the ublox subscribers in this structure is more error-prone,
-    # vs having one message with std_sgs/Heading, NavPVT, and NavSatFix members
+    # the ublox subscribers in this structure are more error-prone,
+    # vs having one message with std_msgs/Heading, NavPVT, and NavSatFix members
     # because the health flag and the rtk information are not currently
     # forced to be synchronized as 2 separate messages - MWM, 2024/02/02
     def ublox_health_cb(self, msg: NavPVT):

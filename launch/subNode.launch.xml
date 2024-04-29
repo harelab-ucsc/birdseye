@@ -8,13 +8,18 @@
   <!-- <executable cmd="ros2 bag play /media/luca/b9c5bbeb-67ca-493f-8b8a-3f9a36ac549b/_12-08-2023-16-46" /> -->
   <executable cmd="ros2 bag play $(var bagpath) --read-ahead-queue-size 10000" />
 
-  <node pkg='nv12_to_rgb8' exec='nv12decode' name='nv12decode'>
+  <node pkg='nv12_to_rgb8' exec='nv12decode' name='nv12decode' namespace="$(var sensorID)">
     <remap from="/image" to="/$(var sensorID)/camera/image_raw" />
     <remap from="/nv12_decoded" to="/$(var sensorID)/camera/nv12_decoded" />
   </node>
+  
+  <node name="image_proc" pkg="image_proc" exec="image_proc" namespace="$(var sensorID)">
+    <remap from="image" to="/$(var sensorID)/camera/nv12_decoded" />
+    <remap from="camera_info" to="/$(var sensorID)/camera/camera_info" />
+  </node>
 
-  <node pkg="birdseye" exec="sub_node" name="sub_node">
-    <remap from="/image" to="/$(var sensorID)/camera/nv12_decoded" />
+  <node pkg="birdseye" exec="sub_node" name="sub_node" namespace="$(var sensorID)">
+    <remap from="/image" to="/$(var sensorID)/image_rect" />
     <remap from="/imu" to="/imu/data"/>
     <remap from="/gps" to="/ublox_gps_node/fix"/>
     <remap from="gps_flag" to="/ublox_gps_node/navpvt"/>

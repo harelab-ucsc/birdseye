@@ -10,8 +10,9 @@ setup(
         ('share/ament_index/resource_index/packages',
             ['resource/' + package_name]),
         ('share/' + package_name, ['package.xml']),
+        # (os.path.join('share', package_name, 'launch'), glob(os.path.join('launch', '*.launch.py'))),
     ],
-    install_requires=['setuptools'],
+    install_requires=['setuptools',],
     zip_safe=True,
     maintainer='jetson',
     maintainer_email='jetson@todo.todo',
@@ -20,6 +21,8 @@ setup(
     tests_require=['pytest'],
     entry_points={
         'console_scripts': [
+            'sub_node = birdseye.sub_node:main',
+            # 'birdseye = birdseye.birdsEye:parseFlightDatabase'
         ],
     },
 )

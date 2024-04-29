@@ -49,7 +49,10 @@ class Contour:
         if isinstance(iterable, dict):
             self.__dict__.update(iterable, **kwargs)
         else:
+            # give resolution as (height, width) for numpy, which natively uses (row, column))
             self.res = kwargs.pop('res', (YRES, XRES))
+            self.img = kwargs.pop('img', None)
+
             self.cnt = kwargs.pop('cnt', None)
             self.hry = kwargs.pop('hry', None)
             self.moments = kwargs.pop('moments', None)
@@ -70,13 +73,15 @@ class Contour:
 
 
     def update(self, cnt):
-        img = np.zeros(self.res)
+        self.img = np.zeros(self.res)
         poly = [np.reshape(cnt, (cnt.shape[0], 1, cnt.shape[1])).astype(np.int32)]
-        cv2.drawContours(img, poly, -1, 255, 1)
-        cv2.fillPoly(img, poly, color=255)
-        # cv2.imshow('in-situ update window', img)
-        # cv2.waitKey(0)
-        self.getContourData(img)
+        cv2.drawContours(self.img, poly, -1, 255, 1)
+        cv2.fillPoly(self.img, poly, color=255)
+        cv2.namedWindow("Mask", cv2.WINDOW_NORMAL)
+        cv2.resizeWindow("Mask", 512, 384)
+        cv2.imshow('Mask', self.img)
+        cv2.waitKey(150)
+        self.getContourData(self.img)
 
 
     def getContourData(self, img):

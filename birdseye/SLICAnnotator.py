@@ -56,7 +56,7 @@ class SLICAnnotator:
                 tmp = np.zeros(self.mask_res, dtype='uint8')
                 tmp[self.segments == segval] = 255
                 try:
-                    pdb.set_trace()
+                    # pdb.set_trace()
                     if tmp[coord] == 255:
                         self.mask = cv2.bitwise_or(tmp, self.mask)
                 except IndexError:
@@ -90,15 +90,17 @@ class SLICAnnotator:
             self.rmPt.append(coord)
 
 
-    def load_frame(self):
-        self.image = cv2.imread(self.images[self.frame_index])
-        self.image = cv2.undistort(self.image, self.K, self.dist)
+    def load_frame(self, frame_index=None):
+        if not frame_index:
+            frame_index = self.frame_index
+        self.image = cv2.imread(self.images[frame_index])
+        # self.image = cv2.undistort(self.image, self.K, self.dist)
         self.image = cv2.resize(self.image, self.mask_res[::-1])
-        save_name = self.images[self.frame_index][:-4]
+        save_name = self.images[frame_index][:-4]
         self._mask = Mask(save_name=self.save_name, \
                         resolution=self.image.shape[:2], \
                         rle_encoding=self.rle)
-        self._mask.load(self.frame_index)
+        self._mask.load(frame_index)
         self.mask = self._mask.channels[:,:,self._mask.index]
         self.segments = slic(img_as_float(self.image), n_segments=800, \
                             sigma=5, slic_zero=True, start_label=0)
@@ -173,7 +175,7 @@ class SLICAnnotator:
                 print('down a class')
 
             elif key == ord('s'):
-                cmds.append(['save', self.frame_index])
+                cmds.append(['save', self.frame_index, None])
                 print('save mask')
 
             elif key == ord('l'):
@@ -217,19 +219,25 @@ class offlineSLICAnnotator(SLICAnnotator):
                     pass
 
 
-    def frameProcess(self, pts):
+    def frameProcess(self, pts, frame_index=None, save_name=None):
+        if not frame_index:
+            frame_index = self.frame_index
+        if not save_name:
+            save_name = self.save_name
         self.load_frame()
 
         for pt in pts:
             # print(pt)
             self.check_segments([pt])
             self._mask.update([['write', self.mask]])
-            cv2.imshow("image", mark_boundaries(img_as_float(self.image), self.segments, color=(0.5,0.5,0.5)))
-            cv2.imshow("mask", self.mask)
-            key = cv2.waitKey(0)
+            # cv2.imshow("image", mark_boundaries(img_as_float(self.image), self.segments, color=(0.5,0.5,0.5)))
+            cv2.namedWindow("Click", cv2.WINDOW_NORMAL)
+            cv2.resizeWindow("Click", 512, 384)
+            cv2.imshow("Click", self.mask)
+            key = cv2.waitKey(30)
             self._mask.update([['next',]]) # need to add class adjustment capability
             self.mask = self._mask.channels[:,:,self._mask.index]
-        self._mask.update([['save', self.frame_index]]) # this save will duplicate frame_ids, rather than overwriting old entries
+        self._mask.update([['save', frame_index, save_name]]) # this save will duplicate frame_ids, rather than overwriting old entries
 
 
 if __name__ == '__main__':

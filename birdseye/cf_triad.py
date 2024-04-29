@@ -77,10 +77,10 @@ def plotTriad(ax, x, y, z, roll, pitch, yaw):
 		z_axis = np.dot(R_yaw, np.dot(R_pitch, np.dot(R_roll, z_axis)))
 
 		# Draw triad
-		ax.quiver(x, y, z, x_axis[0], x_axis[1], x_axis[2], color='r', label='IMU x-axis')
-		ax.quiver(x, y, z, y_axis[0], y_axis[1], y_axis[2], color='g', label='IMU y-axis')
-		ax.quiver(x, y, z, z_axis[0], z_axis[1], z_axis[2], color='b', label='IMU z-axis')
-		ax.legend()
+		ax.quiver(x, y, z, x_axis[0], x_axis[1], x_axis[2], color='r', label='Camera x-axis')
+		ax.quiver(x, y, z, y_axis[0], y_axis[1], y_axis[2], color='g', label='Camera y-axis')
+		ax.quiver(x, y, z, z_axis[0], z_axis[1], z_axis[2], color='b', label='Camera z-axis')
+		# ax.legend()
 
 
 if __name__ == "__main__":

@@ -50,7 +50,7 @@ class Mask:
 
             elif cmd[0] == 'save':
                 print('mask: save')
-                self.save(cmd[1])
+                self.save(cmd[1], cmd[2])
 
             elif cmd[0] == 'load':
                 print('mask: load')
@@ -67,7 +67,9 @@ class Mask:
                 print(f'mask: class down ({self.cl})')
 
 
-    def save(self, frame_index):
+    def save(self, frame_index, save_name):
+        if not save_name:
+            save_name = self.save_name
         if not self.rle:
             save_dict = {}
             for i in range(self.num_channels):
@@ -79,7 +81,7 @@ class Mask:
         else:
             # MOT defines a segmentation annotation entry as
             #  "time_frame id class_id img_height img_width rle"
-            f = open(f"{self.save_name}.txt", "a")
+            f = open(f"{save_name}.txt", "a")
             for i in range(self.num_channels):
                 if len(np.argwhere(self.channels[:,:,i])):
                     save_dict = encode(np.asfortranarray(self.channels[:,:,i]))
@@ -89,7 +91,7 @@ class Mask:
                     line = f'{frame_index} <object_id> {self.classes[i]} {tmp1} {tmp2} {tmp3}\n'
                     f.write(line)
             f.close()
-            print(f'    Mask saved: frame index {frame_index} {self.save_name}.txt')
+            print(f'    Mask saved: frame index {frame_index} {save_name}.txt')
 
 
     def export_masks(self):
