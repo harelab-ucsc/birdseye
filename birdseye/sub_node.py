@@ -19,10 +19,13 @@ from . import dbConnector
 from . import utilities
 from cv_bridge import CvBridge
 from rclpy.node import Node
-from sensor_msgs.msg import Imu, Image, NavSatFix
+from sensor_msgs.msg import Image
 from std_msgs.msg import String
-from custom_msgs.msg import AltSNR
 from ublox_msgs.msg import NavPVT
+
+from tf2_ros import TransformException
+from tf2_ros.buffer import Buffer
+from tf2_ros.transform_listener import TransformListener
 
 import rclpy.node
 from rclpy.exceptions import ParameterNotDeclaredException
@@ -66,23 +69,12 @@ class subscriberNode(rclpy.node.Node):
         # tf2 piping
         self.tf_buffer = Buffer()
         self.tf_listener = TransformListener(self.tf_buffer, self)
-        self.declare_parameter('source_frame', 'base_link')
+        self.declare_parameter('source_frame', 'cam0')
         self.source_frame = self.get_parameter('source_frame').value
         self.declare_parameter('target_frame', 'utm')
         self.target_frame = self.get_parameter('target_frame').value
 
-        # fast data streams, relative to RTK
-        self.alt = None
-        self.att = None
-        self.rtk_fix = 0
-        self.alt_time = None
-        self.imu_time = None
-
         # camera calibration and projection parameters
-        self.K = None
-        self.dist = None
-        self.res = None
-        self.extr = None
         self.calibUptake()
 
         self.br = CvBridge()
@@ -93,14 +85,6 @@ class subscriberNode(rclpy.node.Node):
         # ublox subscribers
         self.ublox_health_sub = self.create_subscription(
             NavPVT, '/gps_flag', self.ublox_health_cb, 100)
-        self.ublox_sub = self.create_subscription(
-            NavSatFix, '/gps', self.ublox_cb, 100)
-        # microstrain subscriber
-        self.imu_sub = self.create_subscription(
-            Imu, '/imu', self.imu_cb, 100)
-        # radalt subscriber
-        self.radalt_sub = self.create_subscription(
-            AltSNR, '/radalt', self.alt_cb, 100)
 
 
     def dirCheck(self):
@@ -214,6 +198,7 @@ class subscriberNode(rclpy.node.Node):
         return params
 
 
+
     # TODO: for a later day, add parameter set callback
     # def parameter_callback(self, params):
     #     for param in params:
@@ -230,72 +215,84 @@ class subscriberNode(rclpy.node.Node):
         data_loc = self.dir_name + "/" + self.sensor + '_' + time + ".png"
         image = self.br.imgmsg_to_cv2(msg, desired_encoding='passthrough')
 
-        #TODO: rectify the images before saving
+        # if self.RTK_STATUS == 131:
+        if self.RTK_STATUS == 3 or self.RTK_STATUS == 67 or self.RTK_STATUS == 131:
+            try:
+                t = self.tf_buffer.lookup_transform(
+                    self.target_frame,
+                    self.source_frame,
+                    rclpy.time.Time())
+                t = t.transform
+                # self.get_logger().info(f'[{t.translation.x}, {t.translation.y}, {t.translation.z}]')
+                pos = [t.translation.x, t.translation.y, t.translation.z]
+                quat = [t.rotation.x, t.rotation.y, t.rotation.z, t.rotation.w]
+            except TransformException as ex:
+                self.get_logger().info(
+                    f'Could not transform {self.source_frame} to {self.target_frame}: {ex}')
+                pass
+        else:
+            self.get_logger().info(f'bad RTK_STATUS {self.RTK_STATUS}; should be one of 3, 67, 131')
 
         cv2.imwrite(data_loc, image)
-        valsList = ['\"'+data_loc+'\"', self.rtk_fix, time]
+        valsList = pos + quat + [self.rtk_fix, '\"'+data_loc+'\"', time]
         vals = ','.join([str(x) for x in valsList])
-        self.dbc.insertIgnoreInto(f"{self.sensor}_images_{self.db_name}", "save_loc, rtk_fix, time", vals)
+        self.dbc.insertIgnoreInto(f"{self.sensor}_images_{self.db_name}", "x, y, z, q, u, a, t, rtk_fix, save_loc, time", vals)
 
 
-    # the ublox subscribers in this structure are more error-prone,
-    # vs having one message with std_msgs/Heading, NavPVT, and NavSatFix members
-    # because the health flag and the rtk information are not currently
-    # forced to be synchronized as 2 separate messages - MWM, 2024/02/02
-    def ublox_health_cb(self, msg: NavPVT):
-        self.rtk_fix = msg.flags
+    def navpvt_cb(self, msg: NavPVT):
+        self.RTK_STATUS = msg.flags  # in {3:GPS, 67:RTK_FLOAT, 131:RTK_FIX}
 
 
-    def ublox_cb(self, msg: NavSatFix):
-        # else:
-        if self.att is None:
-            self.get_logger().info('ublox missed... no IMU data')
-        elif self.alt is None:
-            self.get_logger().info('ublox missed... no radar altimeter data')
-        else:
-            if self.rtk_fix != 131:
-                self.get_logger().info(f'Bad pose recorded... no RTK fix: {self.rtk_fix} should be 131')
-            sec = str(msg.header.stamp.sec)
-            nsec = str(msg.header.stamp.nanosec).rjust(9,str(0))
-            time = f'{sec}.{nsec}'
-            u = utm.from_latlon(msg.latitude, msg.longitude)
-            cols = "x, y, z, q, u, a, t, rtk_fix, rtk_time, alt_time, imu_time"
-            tmp = [u[0], u[1], 0.0, 1.0]
-            # self.get_logger().info(str(tmp))
-            tmp = np.matmul(self.getParameters('ublox')[-1], tmp)
-            # self.get_logger().info(str(tmp))
-            valsList = [tmp[0], tmp[1], self.alt, \
-                        self.att.x, self.att.y, self.att.z, self.att.w, \
-                        self.rtk_fix, time, self.alt_time, self.imu_time]
-            vals = ','.join([str(x) for x in valsList])
-            self.dbc.insertInto(f"{self.sensor}_poses_{self.db_name}", cols, vals)
-            self.att = None  # flush used attitude
-            self.imu_time = None
-            self.alt = None  # flush used altitude
-            self.alt_time = None
+    # def ublox_cb(self, msg: NavSatFix):
+    #     # else:
+    #     if self.att is None:
+    #         self.get_logger().info('ublox missed... no IMU data')
+    #     elif self.alt is None:
+    #         self.get_logger().info('ublox missed... no radar altimeter data')
+    #     else:
+    #         if self.rtk_fix != 131:
+    #             self.get_logger().info(f'Bad pose recorded... no RTK fix: {self.rtk_fix} should be 131')
+    #         sec = str(msg.header.stamp.sec)
+    #         nsec = str(msg.header.stamp.nanosec).rjust(9,str(0))
+    #         time = f'{sec}.{nsec}'
+    #         u = utm.from_latlon(msg.latitude, msg.longitude)
+    #         cols = "x, y, z, q, u, a, t, rtk_fix, rtk_time, alt_time, imu_time"
+    #         tmp = [u[0], u[1], 0.0, 1.0]
+    #         # self.get_logger().info(str(tmp))
+    #         tmp = np.matmul(self.getParameters('ublox')[-1], tmp)
+    #         # self.get_logger().info(str(tmp))
+    #         valsList = [tmp[0], tmp[1], self.alt, \
+    #                     self.att.x, self.att.y, self.att.z, self.att.w, \
+    #                     self.rtk_fix, time, self.alt_time, self.imu_time]
+    #         vals = ','.join([str(x) for x in valsList])
+    #         self.dbc.insertInto(f"{self.sensor}_poses_{self.db_name}", cols, vals)
+    #         self.att = None  # flush used attitude
+    #         self.imu_time = None
+    #         self.alt = None  # flush used altitude
+    #         self.alt_time = None
 
 
-    def imu_cb(self, msg: Imu):
-        # 100Hz update rate, so 'catch freshest' approach is allowed; faster than RTK
-        sec = str(msg.header.stamp.sec)
-        nsec = str(msg.header.stamp.nanosec).rjust(9,'0')
-        time = f'{sec}.{nsec}'
-        self.att = msg.orientation  # may need to swap elements for unified coordinate system
-        self.imu_time = time
+    # def imu_cb(self, msg: Imu):
+    #     # 100Hz update rate, so 'catch freshest' approach is allowed; faster than RTK
+    #     sec = str(msg.header.stamp.sec)
+    #     nsec = str(msg.header.stamp.nanosec).rjust(9,'0')
+    #     time = f'{sec}.{nsec}'
+    #     self.att = msg.orientation  # may need to swap elements for unified coordinate system
+    #     self.imu_time = time
 
 
-    def alt_cb(self, msg: AltSNR):
-        # 100Hz update rate, so 'catch freshest' approach is allowed again
-        if msg.snr > 13:  # from device manual: "Altitude measurements associated with a SNR value of 13dB or lower are considered erroneous."
-            self.alt = [0.0, 0.0, msg.altitude, 1.0]
-            # next line transforms radalt measurements to camera frame
-            self.alt = np.matmul(self.getParameters('radalt')[-1], self.alt)[2]
-            sec = str(msg.header.stamp.sec)
-            nsec = str(msg.header.stamp.nanosec).rjust(9,'0')
-            time = f'{sec}.{nsec}'
-            self.alt_time = time
-        else:
-            self.get_logger().info(f'Radar altimeter data not recorded; SNR = {msg.snr}')
+    # def alt_cb(self, msg: AltSNR):
+    #     # 100Hz update rate, so 'catch freshest' approach is allowed again
+    #     if msg.snr > 13:  # from device manual: "Altitude measurements associated with a SNR value of 13dB or lower are considered erroneous."
+    #         self.alt = [0.0, 0.0, msg.altitude, 1.0]
+    #         # next line transforms radalt measurements to camera frame
+    #         self.alt = np.matmul(self.getParameters('radalt')[-1], self.alt)[2]
+    #         sec = str(msg.header.stamp.sec)
+    #         nsec = str(msg.header.stamp.nanosec).rjust(9,'0')
+    #         time = f'{sec}.{nsec}'
+    #         self.alt_time = time
+    #     else:
+    #         self.get_logger().info(f'Radar altimeter data not recorded; SNR = {msg.snr}')
 
 
 def main(args=None):
