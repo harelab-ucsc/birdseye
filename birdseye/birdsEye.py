@@ -451,3 +451,14 @@ class birdsEye():
 
         with open(os.path.join(self.img_dir, 'out_dict.pkl'), 'wb') as f:
             pickle.dump(out_dict, f)
+
+
+if __name__ == '__main__':
+    dir_path = '/home/mwmaster/parsed_flight/'
+    save_name = os.path.join(dir_path, 'data')
+    db_name = 'flight_data'
+    dbc = dbConnector(os.path.join(dir_path,db_name))
+    tst = birdsEye(dbc, db_name=db_name, img_dir=dir_path, save_name=save_name)
+
+    tst.parseFlightDatabase()
+
