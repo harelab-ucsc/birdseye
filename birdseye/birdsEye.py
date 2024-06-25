@@ -15,6 +15,7 @@ import glob2
 from dbConnector import dbConnector
 from utilities import *
 from AMI_ContourClassFamily import Contour
+from pupil_apriltags import Detector
 
 
 memory = 25
@@ -25,9 +26,22 @@ def apriltag_detect(img, gray):
     ret = []
     state = 0
 
-    options = apriltag.DetectorOptions(families="tag36h11")
-    detector = apriltag.Detector(options)
-    results = detector.detect(gray)  # returns empty list if no targets
+    # options = apriltag.DetectorOptions(families="tag36h11")
+    # detector = apriltag.Detector(options)
+    # results = detector.detect(gray)  # returns empty list if no targets
+
+    # Changed april tag dector to pupil-labs. Increasing nthreads seem to help not have the segmentation fault issue. 
+    at_detector = Detector(
+    families="tag36h11",
+    nthreads=2,
+    quad_decimate=1.0,
+    quad_sigma=0.0,
+    refine_edges=1,
+    decode_sharpening=0.25,
+    debug=0
+    )
+
+    results = at_detector.detect(gray)
 
     cv2.namedWindow("Window", cv2.WINDOW_NORMAL)
     cv2.resizeWindow("Window", 512, 384)
