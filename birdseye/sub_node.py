@@ -129,7 +129,7 @@ class subscriberNode(rclpy.node.Node):
 
     def calibUptake(self):
         print('Reading sensor parameters YAML file...')
-        devices = [f'{self.sensor}', 'imu', 'ublox', 'radalt']
+        devices = [f'{self.sensor}', 'imu', 'ublox'] #, 'radalt']
         res = None
         intr1 = None
         intr2 = None
@@ -158,9 +158,9 @@ class subscriberNode(rclpy.node.Node):
                 elif device == 'ublox':
                     extr = data["T_ubl_imu"]
                     self.putParameters(device, res, intr1, intr2, utilities.matrix_list_converter(extr, (4,4)))
-                elif device == 'radalt':
-                    extr = data["T_rad_imu"]
-                    self.putParameters(device, res, intr1, intr2, utilities.matrix_list_converter(extr, (4,4)))
+                # elif device == 'radalt':
+                #     extr = data["T_rad_imu"]
+                #     self.putParameters(device, res, intr1, intr2, utilities.matrix_list_converter(extr, (4,4)))
                 res = None
                 intr1 = None
                 intr2 = None
