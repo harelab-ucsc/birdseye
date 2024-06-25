@@ -271,13 +271,13 @@ class birdsEye():
         print("clicks: \n", clicks)
 
         self.poses = self.dbc.getFrom('x, y, z, q, u, a, t, rtk_fix, rtk_time, alt_time, imu_time', f'{self.sensor}_poses_{self.db_name}')
-        params = self.dbc.getFrom(f"sensorID, resolution, intrinsics1, intrinsics2, extrinsics", f"parameters_{self.db_name}")
+        # params = self.dbc.getFrom(f"sensorID, resolution, intrinsics1, intrinsics2, extrinsics", f"parameters_{self.db_name}")
         self.images = self.dbc.getFrom('save_loc, rtk_fix, time', f'{self.sensor}_images_{self.db_name}')
         save_name = os.path.join(self.img_dir, self.img_dir.split(os.sep)[-2])
         sA = offlineSLICAnnotator(images=[i[0] for i in self.images], save_name=save_name) #, mask_res=self.res[::-1])
 
-        l = len(self.images)
-        print(len(self.poses), l)
+        # l = len(self.images)
+        # print(len(self.poses), l)
         self.img = self.images.pop(0)
         self.frame_index = 0
 
