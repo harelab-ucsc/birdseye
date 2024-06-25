@@ -32,14 +32,14 @@ def apriltag_detect(img, gray):
 
     # Changed april tag dector to pupil-labs. Increasing nthreads seem to help not have the segmentation fault issue. 
     at_detector = Detector(
-    families="tag36h11",
-    nthreads=2,
-    quad_decimate=1.0,
-    quad_sigma=0.0,
-    refine_edges=1,
-    decode_sharpening=0.25,
-    debug=0
-    )
+        families="tag36h11",
+        nthreads=2,
+        quad_decimate=1.0,
+        quad_sigma=0.0,
+        refine_edges=1,
+        decode_sharpening=0.25,
+        debug=0
+        )
 
     results = at_detector.detect(gray)
 
