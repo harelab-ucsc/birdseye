@@ -226,17 +226,19 @@ class subscriberNode(rclpy.node.Node):
                 # self.get_logger().info(f'[{t.translation.x}, {t.translation.y}, {t.translation.z}]')
                 pos = [t.translation.x, t.translation.y, t.translation.z]
                 quat = [t.rotation.x, t.rotation.y, t.rotation.z, t.rotation.w]
+                 cv2.imwrite(data_loc, image)
+                valsList = pos + quat + [self.rtk_fix, '\"'+data_loc+'\"', time]
+                vals = ','.join([str(x) for x in valsList])
+                self.dbc.insertIgnoreInto(f"{self.sensor}_images_{self.db_name}", \
+                                            "x, y, z, q, u, a, t, rtk_fix, save_loc, time", vals)
+                if self.rtk_fix != 131:
+                    self.get_logger().info(f'Bad pose recorded... no RTK fix: {self.rtk_fix} should be 131')
             except TransformException as ex:
                 self.get_logger().info(
                     f'Could not transform {self.source_frame} to {self.target_frame}: {ex}')
                 pass
         else:
             self.get_logger().info(f'bad RTK_STATUS {self.RTK_STATUS}; should be one of 3, 67, 131')
-
-        cv2.imwrite(data_loc, image)
-        valsList = pos + quat + [self.rtk_fix, '\"'+data_loc+'\"', time]
-        vals = ','.join([str(x) for x in valsList])
-        self.dbc.insertIgnoreInto(f"{self.sensor}_images_{self.db_name}", "x, y, z, q, u, a, t, rtk_fix, save_loc, time", vals)
 
 
     def navpvt_cb(self, msg: NavPVT):
