@@ -30,7 +30,7 @@ def apriltag_detect(img, gray):
     # detector = apriltag.Detector(options)
     # results = detector.detect(gray)  # returns empty list if no targets
 
-    # Changed april tag dector to pupil-labs. Increasing nthreads seem to help not have the segmentation fault issue. 
+    # Changed april tag dector to pupil-labs. Increasing nthreads seem to help not have the segmentation fault issue.
     at_detector = Detector(
         families="tag36h11",
         nthreads=2,
@@ -85,17 +85,16 @@ class birdsEye():
         self.dbc = dbConnector(os.path.join(self.img_dir, self.db_name))
         self.dbc.boot(self.db_name, self.sensor)
 
-        self.poses = None
-        self.images = None
+        self.data = None
+        # self.images = None
         self.frame_index = None
-        self.pose_time = None
+        # self.pose_time = None
 
         # camera specs
         tmp = self.getParameters(self.sensor)
         self.res = [int(tmp[1][0]), int(tmp[1][1])]
         self.K = np.array([[tmp[2][0],0.0,tmp[2][2]],[0.0, tmp[2][1], tmp[2][3]],[0.0,0.0,1.0]])
-        self.T_BC = np.linalg.inv(np.array(tmp[4]))  # tmp[4] = T_cam_imu
-        self.T_WB = None
+        self.T_WC = None
         self._2DFrameVertices = ((0,0), \
                                  (self.res[0] - 1, 0), \
                                  (self.res[0] - 1, self.res[1] - 1), \
@@ -139,7 +138,6 @@ class birdsEye():
 
         List2D = np.array(List2D)
         List3D = []
-        T_WC = self.T_WB @ self.T_BC
 
         for p in List2D:
             # Homogeneous pixel coordinate
@@ -151,7 +149,7 @@ class birdsEye():
             # print(pc, pc.shape)
 
             # Transform pixel in World coordinate frame
-            pw = T_WC @ pc
+            pw = self.T_WC @ pc
 
             # Transform camera origin in World coordinate frame
             cam = np.array([0,0,0,1]).T
@@ -177,8 +175,7 @@ class birdsEye():
         pins = np.concatenate((pins, np.zeros((len(pins), 1)),np.ones((len(pins), 1))), axis=1)
 
         # projecting the image by x_image = K * T_{wc} * X_utm
-        base_frame_pins = np.linalg.inv(self.T_WB)@pins.T
-        sensor_frame_pins = np.linalg.inv(self.T_BC)@base_frame_pins
+        sensor_frame_pins = np.linalg.inv(self.T_WC)@pins.T
 
         #in the sensor frame, z points down, x backward, and y right
         projected = self.K@sensor_frame_pins[:-1,:]
@@ -239,33 +236,33 @@ class birdsEye():
         return val
 
 
-    def imgCheck(self, i):
-        flag = False
-        img_time = None
-        tmp = [0,0]
-        if i == len(self.poses) - 1:
-            return flag, img_time
-        tmp[0] = self.poses[i][-2] - self.img[-1] <= 0
-        tmp[1] = self.poses[i+1][-2] - self.img[-1] > 0
-        try:
-            if sum(tmp) == 2:
-                # print('here')
-                flag = True
-                img_time = self.img[-1]
-                self.img = self.images.pop(0)
-                self.frame_index +=1
-            elif not tmp[0]:
-                # print('catch up to imu')
-                self.img = self.images.pop(0)
-                self.frame_index += 1
-                flag, img_time = self.imgCheck(i)
-            else:
-                # print('img time ahead of pose time')
-                pass
-        except IndexError as e:
-            print(e)
-            print('    INFO: list of image filenames is depleted. Passing.')
-        return flag, img_time
+    # def imgCheck(self, i):
+    #     flag = False
+    #     img_time = None
+    #     tmp = [0,0]
+    #     if i == len(self.poses) - 1:
+    #         return flag, img_time
+    #     tmp[0] = self.poses[i][-2] - self.img[-1] <= 0
+    #     tmp[1] = self.poses[i+1][-2] - self.img[-1] > 0
+    #     try:
+    #         if sum(tmp) == 2:
+    #             # print('here')
+    #             flag = True
+    #             img_time = self.img[-1]
+    #             self.img = self.images.pop(0)
+    #             self.frame_index +=1
+    #         elif not tmp[0]:
+    #             # print('catch up to imu')
+    #             self.img = self.images.pop(0)
+    #             self.frame_index += 1
+    #             flag, img_time = self.imgCheck(i)
+    #         else:
+    #             # print('img time ahead of pose time')
+    #             pass
+    #     except IndexError as e:
+    #         print(e)
+    #         print('    INFO: list of image filenames is depleted. Passing.')
+    #     return flag, img_time
 
 
     def annotate(self, pts, encoding, save_name=None):
@@ -284,28 +281,26 @@ class birdsEye():
         clicks = np.array(clicks[-3:])
         print("clicks: \n", clicks)
 
-        self.poses = self.dbc.getFrom('x, y, z, q, u, a, t, rtk_fix, rtk_time, alt_time, imu_time', f'{self.sensor}_poses_{self.db_name}')
+        self.data = self.dbc.getFrom('x, y, z, q, u, a, t, rtk_fix, save_loc, time', f'{self.sensor}_images_{self.db_name}')
         # params = self.dbc.getFrom(f"sensorID, resolution, intrinsics1, intrinsics2, extrinsics", f"parameters_{self.db_name}")
-        self.images = self.dbc.getFrom('save_loc, rtk_fix, time', f'{self.sensor}_images_{self.db_name}')
+        # self.images = self.dbc.getFrom('save_loc, rtk_fix, time', f'{self.sensor}_images_{self.db_name}')
         save_name = os.path.join(self.img_dir, self.img_dir.split(os.sep)[-2])
-        sA = offlineSLICAnnotator(images=[i[0] for i in self.images], save_name=save_name) #, mask_res=self.res[::-1])
+        sA = offlineSLICAnnotator(images=[i[-2] for i in self.data], save_name=save_name) #, mask_res=self.res[::-1])
 
-        # l = len(self.images)
-        # print(len(self.poses), l)
-        self.img = self.images.pop(0)
-        self.frame_index = 0
+        # self.img = self.images.pop(0)
+        # self.frame_index = 0
 
         rtk_tracker = [0,0,0]
-        for i, pose in enumerate(self.poses):
-            print(f'body frame: {i+1} of {len(self.poses)}')
-            ret, img_time = self.imgCheck(i)
-            print(f'    image frame index {self.frame_index} of {l}')
-            sA.frame_index = self.frame_index
+        for i, frame in enumerate(self.data):
+            print(f'frame: {i+1} of {len(self.data)}')
+            # ret, img_time = self.imgCheck(i)
+            # print(f'    image frame index {self.frame_index} of {l}')
+            sA.frame_index = i
             sA.load_frame()
 
-            self.T_WB = poseRowToTransform(pose)  # our base link maps from the world origin to the base link
-            T = self.T_WB@self.T_BC
-            plotTransform(self.ax, T)
+            self.T_WC = poseRowToTransform(frame[:7])  # our base link maps from the world origin to the base link
+            # T = self.T_WB@self.T_BC
+            plotTransform(self.ax, self.T_WC)
             clicks_2D = self._3Dto2D(clicks)
             self.ax.scatter(clicks[:,0], clicks[:,1], np.zeros_like(clicks[:,1]),marker='s', alpha=0.5, c='m', s=64, label='Click')
             self._3DFrameVertices = self._2Dto3D(self._2DFrameVertices)
@@ -315,10 +310,10 @@ class birdsEye():
                             marker='s', color='k', label='Frame')
             clicks_2D, bproj = self._2DFrameCheck(clicks_2D, stats=True)
 
-            if pose[-4] == 131:
+            if frame[-3] == 131:
                 color = 'g'
                 rtk_tracker[0] += 1
-            elif tmp[-4] == 67:
+            elif tmp[-3] == 67:
                 color = 'y'
                 rtk_tracker[1] += 1
             else:
@@ -326,62 +321,64 @@ class birdsEye():
                 rtk_tracker[2] += 1
 
             if i >= memory :
-                for tmp in self.poses[(i-memory):i]:
-                    if tmp[-4] == 131:
+                for tmp in self.data[(i-memory):i]:
+                    if tmp[-3] == 131:
                         color = 'g'
-                    elif tmp[-4] == 67:
+                    elif tmp[-3] == 67:
                         color = 'y'
-                    else:
+                    elif tmp[-3] == 3:
                         color = 'r'
+                    else:
+                        color = 'k'
                     self.ax.scatter(tmp[0], tmp[1], tmp[2], c=color, alpha=0.1, s=32)
             else:
-                for tmp in self.poses[:i]:
-                    if tmp[-4] == 131:
+                for tmp in self.data[:i]:
+                    if tmp[-3] == 131:
                         color = 'g'
-                    elif tmp[-4] == 67:
+                    elif tmp[-3] == 67:
                         color = 'y'
-                    elif tmp[-4] == 3:
+                    elif tmp[-3] == 3:
                         color = 'r'
                     else:
                         color = 'k'
                     self.ax.scatter(tmp[0], tmp[1], tmp[2], c=color, alpha=0.1, s=32)
 
-            if ret:
-                if pose[2] > 3.0:
-                    img = cv2.imread(self.img[0])
-                    gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
-                    cv2.putText(img, f'{img_time}', (50,100), \
-                        cv2.FONT_HERSHEY_SIMPLEX, 4, (0, 0, 0), 2)
-                    ret, self.tgts = apriltag_detect(img, gray)
-                    if clicks_2D:
-                        save_name = os.path.join(self.img_dir, 'click_masks')
-                        sA.frameProcess(clicks_2D, self.frame_index, save_name=save_name)
-                        for click in clicks_2D:
-                            cv2.circle(img, [int(click[0]), int(click[1])], 25, (255, 0, 0), -1)
-                    if bproj:
-                        self.bproj.append(bproj)
+            # if ret:
+            if frame[2] > 3.0:
+                img = cv2.imread(frame[-2])
+                gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+                cv2.putText(img, f'{img_time}', (50,100), \
+                    cv2.FONT_HERSHEY_SIMPLEX, 4, (0, 0, 0), 2)
+                ret, self.tgts = apriltag_detect(img, gray)
+                if clicks_2D:
+                    save_name = os.path.join(self.img_dir, 'click_masks')
+                    sA.frameProcess(clicks_2D, self.frame_index, save_name=save_name)
+                    for click in clicks_2D:
+                        cv2.circle(img, [int(click[0]), int(click[1])], 25, (255, 0, 0), -1)
+                if bproj:
+                    self.bproj.append(bproj)
 
-                    if self.tgts:
-                        cent = [i[0] for i in self.tgts]
-                        self.april_2D.append(cent)
-                        if clicks_2D:
-                            self.reproj.append(cent + clicks_2D)
-                        cnts = np.array([i[1] for i in self.tgts])
-                        for i, cnt in enumerate(cnts):
-                            self.contour.update(cnt)
-                            sA._mask.channels[:,:,i] = cv2.resize(self.contour.img, (512,384), cv2.INTER_CUBIC)
-                            sA._mask.update([['next',]]) # need to add class adjustment capability
-                            sA.mask = sA._mask.channels[:,:,sA._mask.index]
-                        sA._mask.update([['save', self.frame_index, None]])
-                    else:
-                        cv2.namedWindow("Mask", cv2.WINDOW_NORMAL)
-                        cv2.resizeWindow("Mask", 512, 384)
-                        cv2.imshow('Mask', np.zeros(self.contour.res))
-                        cv2.waitKey(30)
-                        cv2.namedWindow("Window", cv2.WINDOW_NORMAL)
-                        cv2.resizeWindow("Window", 512, 384)
-                        cv2.imshow("Window", img)
-                        cv2.waitKey(30)
+                if self.tgts:
+                    cent = [i[0] for i in self.tgts]
+                    self.april_2D.append(cent)
+                    if clicks_2D:
+                        self.reproj.append(cent + clicks_2D)
+                    cnts = np.array([i[1] for i in self.tgts])
+                    for i, cnt in enumerate(cnts):
+                        self.contour.update(cnt)
+                        sA._mask.channels[:,:,i] = cv2.resize(self.contour.img, (512,384), cv2.INTER_CUBIC)
+                        sA._mask.update([['next',]]) # need to add class adjustment capability
+                        sA.mask = sA._mask.channels[:,:,sA._mask.index]
+                    sA._mask.update([['save', self.frame_index, None]])
+                else:
+                    cv2.namedWindow("Mask", cv2.WINDOW_NORMAL)
+                    cv2.resizeWindow("Mask", 512, 384)
+                    cv2.imshow('Mask', np.zeros(self.contour.res))
+                    cv2.waitKey(30)
+                    cv2.namedWindow("Window", cv2.WINDOW_NORMAL)
+                    cv2.resizeWindow("Window", 512, 384)
+                    cv2.imshow("Window", img)
+                    cv2.waitKey(30)
 
             if self.tgts:
                 self.april_3D.append(self._2Dto3D([i[0] for i in self.tgts]))
@@ -410,15 +407,15 @@ class birdsEye():
                                 self.april_3D[0][0][1], \
                                 self.april_3D[0][0][2], \
                                 c='g', alpha=0.3, s=64)
-            self.ax.set_xlim(pose[0]-15, pose[0]+15)
+            self.ax.set_xlim(frame[0]-15, frame[0]+15)
             self.ax.set_xlabel('X')
-            self.ax.set_ylim(pose[1]-15, pose[1]+15)
+            self.ax.set_ylim(frame[1]-15, frame[1]+15)
             self.ax.set_ylabel('Y')
             self.ax.set_zlim(0, 15)
             self.ax.set_zlabel('Z')
             self.ax.legend()
 
-            self.ax.set_title(f'RTK time: {pose[-3]} \n RadAlt time: {pose[-2]} \n AHRS time: {pose[-1]}')
+            self.ax.set_title(f'Time: {frame[-1]}')
             self.ax.set_box_aspect([1,1,1])
             self.ax.set_proj_type('ortho')
             self.fig.canvas.draw_idle()
@@ -468,11 +465,10 @@ class birdsEye():
 
 
 if __name__ == '__main__':
-    dir_path = '/home/mwmaster/parsed_flight/'
+    dir_path = os.path.join(os.path.expanduser('~'), 'parsed_flight')
     save_name = os.path.join(dir_path, 'data')
     db_name = 'flight_data'
     dbc = dbConnector(os.path.join(dir_path,db_name))
     tst = birdsEye(dbc, db_name=db_name, img_dir=dir_path, save_name=save_name)
 
     tst.parseFlightDatabase()
-
