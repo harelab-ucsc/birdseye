@@ -32,11 +32,14 @@ class SLICAnnotator:
         self.dist = kwargs.pop('distortion_coefs', np.zeros(4))
         self.K = kwargs.pop('K_matrix', np.eye(3))
         self.rle = kwargs.pop('rle', True)
-        self._mask = None
         self.src_res = kwargs.pop('src_res', (1080,1920))
         self.mask_res = kwargs.pop('mask_res', (384, 512))
         self.mask = np.zeros(self.mask_res, dtype='uint8')
         self.draw = False
+
+        self._mask = Mask(save_name=self.save_name, \
+                        resolution=self.mask_res, \
+                        rle_encoding=self.rle)
 
 
     def monitor_frame_index(self):
@@ -91,21 +94,28 @@ class SLICAnnotator:
 
 
     def load_frame(self, frame_index=None):
-        if not frame_index:
+        if frame_index is None:
             frame_index = self.frame_index
+        # print('frame_index: ', frame_index)
+        print('prep')
+
+        self.image = None
         self.image = cv2.imread(self.images[frame_index])
+        print('ping')
         # self.image = cv2.undistort(self.image, self.K, self.dist)
         self.image = cv2.resize(self.image, self.mask_res[::-1])
-        save_name = self.images[frame_index][:-4]
-        self._mask = Mask(save_name=self.save_name, \
-                        resolution=self.image.shape[:2], \
-                        rle_encoding=self.rle)
+        # save_name = self.images[frame_index][:-4]
+        # self._mask = Mask(save_name=self.save_name, \
+        #                 resolution=self.image.shape[:2], \
+        #                 rle_encoding=self.rle)
         self._mask.load(frame_index)
+        # print('sA.load_frame: bonk')
         self.mask = self._mask.channels[:,:,self._mask.index]
         self.segments = slic(img_as_float(self.image), n_segments=800, \
                             sigma=5, slic_zero=True, start_label=0)
         self.segvals = np.unique(self.segments)
         # self.reset_mask()
+        # print('made it')
 
 
     def reset_mask(self):
@@ -215,16 +225,19 @@ class offlineSLICAnnotator(SLICAnnotator):
                     if tmp[y,x] == 255:
                         self.mask = cv2.bitwise_or(tmp, self.mask)
                 except IndexError:
-                    print('bonk')
+                    print('sA.check_segments: bonk')
                     pass
 
 
     def frameProcess(self, pts, frame_index=None, save_name=None):
-        if not frame_index:
+        if frame_index is None:
             frame_index = self.frame_index
-        if not save_name:
+        if save_name is None:
             save_name = self.save_name
+        # print('offline frame_index: ', frame_index)
+        # print('offline save_name: ', save_name)
         self.load_frame()
+
 
         for pt in pts:
             # print(pt)

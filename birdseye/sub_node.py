@@ -38,12 +38,13 @@ clicks_csv = None
 
 class subscriberNode(rclpy.node.Node):
     def __init__(self):
+        time.sleep(1)
         # node init
         super().__init__('flight_data_sub')
         self.declare_parameter("sensorID", rclpy.Parameter.Type.STRING)
         self.sensor = self.get_parameter("sensorID").value
 
-        self.declare_parameter("sensors_yaml", "camera_yamls/birdsEyeSensorParams.yaml")
+        self.declare_parameter("sensors_yaml", "sensor_params/birdsEyeSensorParams.yaml")
         self.sensors_yaml = self.get_parameter("sensors_yaml").value
         self.sensors_yaml = os.path.join(os.path.expanduser('~'), self.sensors_yaml)
 
@@ -63,6 +64,9 @@ class subscriberNode(rclpy.node.Node):
         self.clicks_csv = os.path.join(os.path.expanduser('~'), self.clicks_csv)
         self.csv_read()
 
+        # camera calibration and projection parameters
+        self.calibUptake()
+
         os.chmod(os.path.join(self.dir_name, self.db_name+'.db'), stat.S_IRWXU | stat.S_IRWXG | stat.S_IRWXO)
         time.sleep(1)
 
@@ -74,9 +78,6 @@ class subscriberNode(rclpy.node.Node):
         self.declare_parameter('target_frame', 'utm')
         self.target_frame = self.get_parameter('target_frame').value
 
-        # camera calibration and projection parameters
-        self.calibUptake()
-
         self.br = CvBridge()
 
         # camera subscriber
@@ -84,7 +85,8 @@ class subscriberNode(rclpy.node.Node):
             Image, '/image', self.cam_cb, 100)
         # ublox subscribers
         self.ublox_health_sub = self.create_subscription(
-            NavPVT, '/gps_flag', self.ublox_health_cb, 100)
+            NavPVT, '/gps_flag', self.navpvt_cb, 100)
+        self.RTK_STATUS = None
 
 
     def dirCheck(self):
@@ -115,7 +117,7 @@ class subscriberNode(rclpy.node.Node):
 
 
     def csv_read(self):
-        self.get_logger().info('Reading clicks CSV file...')
+        self.get_logger().info(f'Reading clicks CSV file: {self.clicks_csv}...')
         data = []
         with open(self.clicks_csv) as clicks:
             reader = csv.reader(clicks)
@@ -125,10 +127,11 @@ class subscriberNode(rclpy.node.Node):
                 tag = int(line[-1][-1])
                 data.append([u[0], u[1], tag])
         self.dbc.insertClicks(f"clicks_{self.db_name}", data)
+        self.get_logger().info('...Done reading clicks CSV file.')
 
 
     def calibUptake(self):
-        print('Reading sensor parameters YAML file...')
+        self.get_logger().info(f'Reading sensor parameters YAML file: {self.sensors_yaml}...')
         devices = [f'{self.sensor}', 'imu', 'ublox'] #, 'radalt']
         res = None
         intr1 = None
@@ -165,6 +168,7 @@ class subscriberNode(rclpy.node.Node):
                 intr1 = None
                 intr2 = None
                 extr = None
+        self.get_logger().info('...Done reading sensor parameters YAML file.')
 
 
     def putParameters(self, device_key, resolution, intrinsics1, intrinsics2, extrinsics):
@@ -215,8 +219,8 @@ class subscriberNode(rclpy.node.Node):
         data_loc = self.dir_name + "/" + self.sensor + '_' + time + ".png"
         image = self.br.imgmsg_to_cv2(msg, desired_encoding='passthrough')
 
-        # if self.RTK_STATUS == 131:
-        if self.RTK_STATUS == 3 or self.RTK_STATUS == 67 or self.RTK_STATUS == 131:
+        if self.RTK_STATUS == 131:
+        # if self.RTK_STATUS == 3 or self.RTK_STATUS == 67 or self.RTK_STATUS == 131:
             try:
                 t = self.tf_buffer.lookup_transform(
                     self.target_frame,
@@ -226,75 +230,24 @@ class subscriberNode(rclpy.node.Node):
                 # self.get_logger().info(f'[{t.translation.x}, {t.translation.y}, {t.translation.z}]')
                 pos = [t.translation.x, t.translation.y, t.translation.z]
                 quat = [t.rotation.x, t.rotation.y, t.rotation.z, t.rotation.w]
-                 cv2.imwrite(data_loc, image)
-                valsList = pos + quat + [self.rtk_fix, '\"'+data_loc+'\"', time]
+                cv2.imwrite(data_loc, image)
+                valsList = pos + quat + [self.RTK_STATUS, '\"'+data_loc+'\"', time]
                 vals = ','.join([str(x) for x in valsList])
                 self.dbc.insertIgnoreInto(f"{self.sensor}_images_{self.db_name}", \
                                             "x, y, z, q, u, a, t, rtk_fix, save_loc, time", vals)
-                if self.rtk_fix != 131:
-                    self.get_logger().info(f'Bad pose recorded... no RTK fix: {self.rtk_fix} should be 131')
+                # if self.RTK_STATUS != 131:
+                #     self.get_logger().info(f'Bad pose recorded... no RTK fix: {self.RTK_STATUS} should be 131')
             except TransformException as ex:
                 self.get_logger().info(
                     f'Could not transform {self.source_frame} to {self.target_frame}: {ex}')
                 pass
         else:
-            self.get_logger().info(f'bad RTK_STATUS {self.RTK_STATUS}; should be one of 3, 67, 131')
+            # self.get_logger().info(f'bad RTK_STATUS {self.RTK_STATUS}; should be one of 3, 67, 131')
+            self.get_logger().info(f'bad RTK_STATUS {self.RTK_STATUS}; should be 131')
 
 
     def navpvt_cb(self, msg: NavPVT):
         self.RTK_STATUS = msg.flags  # in {3:GPS, 67:RTK_FLOAT, 131:RTK_FIX}
-
-
-    # def ublox_cb(self, msg: NavSatFix):
-    #     # else:
-    #     if self.att is None:
-    #         self.get_logger().info('ublox missed... no IMU data')
-    #     elif self.alt is None:
-    #         self.get_logger().info('ublox missed... no radar altimeter data')
-    #     else:
-    #         if self.rtk_fix != 131:
-    #             self.get_logger().info(f'Bad pose recorded... no RTK fix: {self.rtk_fix} should be 131')
-    #         sec = str(msg.header.stamp.sec)
-    #         nsec = str(msg.header.stamp.nanosec).rjust(9,str(0))
-    #         time = f'{sec}.{nsec}'
-    #         u = utm.from_latlon(msg.latitude, msg.longitude)
-    #         cols = "x, y, z, q, u, a, t, rtk_fix, rtk_time, alt_time, imu_time"
-    #         tmp = [u[0], u[1], 0.0, 1.0]
-    #         # self.get_logger().info(str(tmp))
-    #         tmp = np.matmul(self.getParameters('ublox')[-1], tmp)
-    #         # self.get_logger().info(str(tmp))
-    #         valsList = [tmp[0], tmp[1], self.alt, \
-    #                     self.att.x, self.att.y, self.att.z, self.att.w, \
-    #                     self.rtk_fix, time, self.alt_time, self.imu_time]
-    #         vals = ','.join([str(x) for x in valsList])
-    #         self.dbc.insertInto(f"{self.sensor}_poses_{self.db_name}", cols, vals)
-    #         self.att = None  # flush used attitude
-    #         self.imu_time = None
-    #         self.alt = None  # flush used altitude
-    #         self.alt_time = None
-
-
-    # def imu_cb(self, msg: Imu):
-    #     # 100Hz update rate, so 'catch freshest' approach is allowed; faster than RTK
-    #     sec = str(msg.header.stamp.sec)
-    #     nsec = str(msg.header.stamp.nanosec).rjust(9,'0')
-    #     time = f'{sec}.{nsec}'
-    #     self.att = msg.orientation  # may need to swap elements for unified coordinate system
-    #     self.imu_time = time
-
-
-    # def alt_cb(self, msg: AltSNR):
-    #     # 100Hz update rate, so 'catch freshest' approach is allowed again
-    #     if msg.snr > 13:  # from device manual: "Altitude measurements associated with a SNR value of 13dB or lower are considered erroneous."
-    #         self.alt = [0.0, 0.0, msg.altitude, 1.0]
-    #         # next line transforms radalt measurements to camera frame
-    #         self.alt = np.matmul(self.getParameters('radalt')[-1], self.alt)[2]
-    #         sec = str(msg.header.stamp.sec)
-    #         nsec = str(msg.header.stamp.nanosec).rjust(9,'0')
-    #         time = f'{sec}.{nsec}'
-    #         self.alt_time = time
-    #     else:
-    #         self.get_logger().info(f'Radar altimeter data not recorded; SNR = {msg.snr}')
 
 
 def main(args=None):

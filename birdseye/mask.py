@@ -68,8 +68,9 @@ class Mask:
 
 
     def save(self, frame_index, save_name):
-        if not save_name:
+        if save_name is None:
             save_name = self.save_name
+        # print(f'    Mask: save: frame_index: {frame_index}, save_name: {save_name}')
         if not self.rle:
             save_dict = {}
             for i in range(self.num_channels):
