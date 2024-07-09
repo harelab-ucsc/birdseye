@@ -1,4 +1,5 @@
 from scipy.spatial import ConvexHull
+from scipy.stats import multivariate_normal as mvn
 from sklearn.cluster import DBSCAN
 from sklearn import metrics
 
@@ -13,8 +14,8 @@ import simplekml
 from TSP import tsp
 
 
-EPS = 0.5
-MIN_SAMPLES = 3
+EPS = 1.0
+MIN_SAMPLES = 2
 
 filepath = "catch/data.csv"
 clicks_csv = os.path.join(os.path.expanduser('~'), filepath)
@@ -38,11 +39,9 @@ with open(clicks_csv) as clicks:
         print('lat/lon click location: ', ll)
         print('    utm conversion: ', u)
         tag = int(line[-1][-1])
-        UTMrep.append([u[0], u[1]])  # clicks in UTM coordinates, meter base unit
-UTMrep.append([u[0]-0.1, u[1]-0.1])
-UTMrep.append([u[0]+0.1, u[1]+0.1])
-UTMrep.append([u[0]+0.1, u[1]-0.1])
-UTMrep.append([u[0]-0.1, u[1]+0.1])
+        UTMrep.append([u[0], u[1]])
+        # for _ in range(5):
+        #     UTMrep.append(mvn.rvs(mean=[u[0], u[1]], cov=0.5).tolist())  # clicks in UTM coordinates, meter base unit
 UTMrep = np.array(UTMrep)
 print()
 
@@ -109,7 +108,7 @@ for k, col in zip(unique_labels, colors):
     if len(tmp) != 0:
         hull = ConvexHull(tmp)
         pts = tmp[hull.vertices]
-        plt.plot(pts[:,0], pts[:,1], 'o', markerfacecolor='g', markeredgecolor="k", markersize=6,)
+        plt.plot(pts[:,0], pts[:,1], 'o', markerfacecolor='g', markeredgecolor="k", markersize=10)
         waypoints += list(pts)
 
 waypoints = np.array(waypoints)
@@ -125,7 +124,7 @@ places = [i for i in range(len(waypoints))]
 # print(places)
 out = tsp(places, dists)
 spt = out[0]
-plt.plot(waypoints[spt,0], waypoints[spt,1], 'o', markerfacecolor='r', markeredgecolor='k', markersize=14)
+plt.plot(waypoints[spt,0], waypoints[spt,1], 'o', markerfacecolor='r', markeredgecolor='k', markersize=10)
 for pt in out[1:]:
     plt.plot([waypoints[spt,0], waypoints[pt,0]], [waypoints[spt,1], waypoints[pt,1]], 'k')
     plt.plot(waypoints[pt,0], waypoints[pt,1], 'o', markerfacecolor='b', markeredgecolor='b', markersize=4)
@@ -140,5 +139,5 @@ plan = np.array(plan)
 kml=simplekml.Kml()
 for i in out:
     print(plan[i])
-    kml.newpoint(name=str(places[i]), coords=[plan[i]])
+    kml.newpoint(name=str(places[i]), coords=[(plan[i][1], plan[i][0])])
 kml.save(plan_kml)
