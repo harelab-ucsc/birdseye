@@ -21,15 +21,19 @@ def _write_csv_file(path: str, rows: list[str]):
     """
     """
     with open(path, "w+") as csvp:
-        writer = csv.writer(csvp)
+        writer = csv.writer(csvp, delimiter=",")
         writer.writerows(rows)
 
 def generate_csv_from_plan(plan):
     """
     """
     header = ["lat,lon,point_name"]
-    lines = [f"{pos[0]},{pos[1]},{index}" for index, pos in enumerate(plan)]
-    _write_csv_file("balthazar.csv", header + lines)
+    lines = ["{},{},{}".format(
+        str(pos[0]),
+        str(pos[1]),
+        str(index)
+    ) for index, pos in enumerate(plan)]
+    _write_csv_file("balthazar.csv", [header + lines])
 
 
 def build_dji_plan(generate: bool = True):
@@ -169,4 +173,4 @@ def build_dji_plan(generate: bool = True):
 
 
 if __name__ == "__main__":
-    build_dji_plan(generate=True)
+    #build_dji_plan(generate=True)
