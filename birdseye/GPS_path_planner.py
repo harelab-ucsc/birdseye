@@ -16,7 +16,7 @@ from TSP import tsp
 EPS = 0.5
 MIN_SAMPLES = 3
 
-filepath = "catch/data.csv"
+filepath = "Documents/hare/birdseye/birdseye/catch/data.csv"
 clicks_csv = os.path.join(os.path.expanduser('~'), filepath)
 savename = "parsed_flight/plan.kml"
 plan_kml = os.path.join(os.path.expanduser('~'), savename)
@@ -31,6 +31,7 @@ UTMrep = []
 dists = []
 with open(clicks_csv) as clicks:
     reader = csv.reader(clicks)
+    next(reader)
     for line in reader:
         # break down line
         u = utm.from_latlon(float(line[0]), float(line[1]))
@@ -137,8 +138,26 @@ for pt in waypoints[out]:
     plan.append(list(utm.to_latlon(pt[0], pt[1], u[-2], u[-1])))
 plan = np.array(plan)
 
+def _write_csv_file(path: str, rows: list[str]):
+    """
+    """
+    with open(path, "w+") as csvp:
+        writer = csv.writer(csvp)
+        writer.writerows(rows)
+
+def generate_csv_from_plan(plan):
+    """
+    """
+    header = ["lat,lon,point_name"]
+    lines = [f"{pos[0]},{pos[1]},{index}" for index, pos in enumerate(plan)]
+    _write_csv_file("balthazar.csv", header + lines)
+
+generate_csv_from_plan(plan)
+
+"""
 kml=simplekml.Kml()
 for i in out:
     print(plan[i])
     kml.newpoint(name=str(places[i]), coords=[plan[i]])
 kml.save(plan_kml)
+"""
