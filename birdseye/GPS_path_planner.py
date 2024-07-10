@@ -27,13 +27,14 @@ def _write_csv_file(path: str, rows: list[str]):
 def generate_csv_from_plan(plan):
     """
     """
-    header = ["lat,lon,point_name"]
-    lines = ["{},{},{}".format(
+    lines = []
+    lines.append(["lat","lon","point_name"])
+    [lines.append([
         str(pos[0]),
         str(pos[1]),
         str(index)
-    ) for index, pos in enumerate(plan)]
-    _write_csv_file("balthazar.csv", [header + lines])
+    ]) for index, pos in enumerate(plan)]
+    _write_csv_file("balthazar.csv", lines)
 
 
 def build_dji_plan(generate: bool = True):
