@@ -33,7 +33,7 @@ def generate_csv_from_plan(plan):
         str(pos[1]),
         str(index)
     ) for index, pos in enumerate(plan)]
-    _write_csv_file("balthazar.csv", header + lines)
+    _write_csv_file("balthazar.csv", [header + lines])
 
 
 def build_dji_plan(generate: bool = True):
