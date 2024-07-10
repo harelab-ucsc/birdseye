@@ -8,8 +8,8 @@ def generate_launch_description():
     return LaunchDescription([
           # Declare the launch arguments
         DeclareLaunchArgument('sensorID', default_value='cam0'),
-        DeclareLaunchArgument('cam_topic', default_value='/cam0/rgb_cam/image_rect'),
-        # DeclareLaunchArgument('cam_topic', default_value='/cam0/rgb_cam/image_raw'),
+        # DeclareLaunchArgument('cam_topic', default_value='/cam0/rgb_cam/image_rect'),
+        DeclareLaunchArgument('cam_topic', default_value='/cam0/rgb_cam/image_raw'),
         DeclareLaunchArgument('sensors_yaml', default_value=os.path.join(os.path.expanduser('~'), 'sensor_params/birdsEyeSensorParams.yaml')),
         DeclareLaunchArgument('clicks_csv', default_value=os.path.join(os.path.expanduser('~'),'catch/data_10.csv')),
         DeclareLaunchArgument('dir_name', default_value='parsed_flight'),
