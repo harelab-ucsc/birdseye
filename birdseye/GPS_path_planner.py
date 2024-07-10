@@ -41,7 +41,9 @@ def generate_csv_from_plan(plan):
 def build_dji_plan(generate: bool = True):
     """
     """
+    # NOTE: Set data path here.
     filepath = "catch/data.csv"
+    #filepath = "Documents/hare/birdseye/birdseye/catch/data.csv"
     clicks_csv = os.path.join(os.path.expanduser('~'), filepath)
     savename = "parsed_flight/plan.kml"
     plan_kml = os.path.join(os.path.expanduser('~'), savename)
@@ -58,14 +60,17 @@ def build_dji_plan(generate: bool = True):
         reader = csv.reader(clicks)
         for line in reader:
             # break down line
-            u = utm.from_latlon(float(line[0]), float(line[1]))
-            ll = '(' + ','.join(line[:2]) + ')'
-            print('lat/lon click location: ', ll)
-            print('    utm conversion: ', u)
-            tag = int(line[-1][-1])
-            UTMrep.append([u[0], u[1]])
-            # for _ in range(5):
-            #     UTMrep.append(mvn.rvs(mean=[u[0], u[1]], cov=0.5).tolist())  # clicks in UTM coordinates, meter base unit
+            try:
+                u = utm.from_latlon(float(line[0]), float(line[1]))
+                ll = '(' + ','.join(line[:2]) + ')'
+                print('lat/lon click location: ', ll)
+                print('    utm conversion: ', u)
+                tag = int(line[-1][-1])
+                UTMrep.append([u[0], u[1]])
+                # for _ in range(5):
+                #     UTMrep.append(mvn.rvs(mean=[u[0], u[1]], cov=0.5).tolist())  # clicks in UTM coordinates, meter base unit
+            except:
+                continue
     UTMrep = np.array(UTMrep)
     print()
 
@@ -161,11 +166,14 @@ def build_dji_plan(generate: bool = True):
 
     generate_csv_from_plan(plan)
 
+
+    """
     kml=simplekml.Kml()
     for i in out:
         print(plan[i])
         kml.newpoint(name=str(places[i]), coords=[(plan[i][1], plan[i][0])])
     kml.save(plan_kml)
+    """
 
 if __name__ == "__main__":
     build_dji_plan(generate=True)
