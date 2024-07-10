@@ -33,13 +33,13 @@ def generate_csv_from_plan(plan):
         str(pos[1]),
         str(index)
     ) for index, pos in enumerate(plan)]
-    _write_csv_file("balthazar.csv", [header + lines])
+    _write_csv_file("balthazar.csv", header + lines)
 
 
 def build_dji_plan(generate: bool = True):
     """
     """
-    filepath = "Documents/hare/birdseye/birdseye/catch/data.csv"
+    filepath = "catch/data.csv"
     clicks_csv = os.path.join(os.path.expanduser('~'), filepath)
     savename = "parsed_flight/plan.kml"
     plan_kml = os.path.join(os.path.expanduser('~'), savename)
