@@ -148,6 +148,13 @@ def build_dji_plan(generate: bool = True):
             tmp.append(np.linalg.norm(pti-ptj))
         dists.append(tmp)
 
+    plan = []
+    for pt in waypoints[out]:
+        plan.append(list(utm.to_latlon(pt[0], pt[1], u[-2], u[-1])))
+    plan = np.array(plan)
+
+    generate_csv_from_plan(plan)
+
     places = [i for i in range(len(waypoints))]
 # print(places)
     out = tsp(places, dists)
@@ -158,13 +165,6 @@ def build_dji_plan(generate: bool = True):
         plt.plot(waypoints[pt,0], waypoints[pt,1], 'o', markerfacecolor='b', markeredgecolor='b', markersize=4)
         spt = pt
     plt.show()
-
-    plan = []
-    for pt in waypoints[out]:
-        plan.append(list(utm.to_latlon(pt[0], pt[1], u[-2], u[-1])))
-    plan = np.array(plan)
-
-    generate_csv_from_plan(plan)
 
 
     """
