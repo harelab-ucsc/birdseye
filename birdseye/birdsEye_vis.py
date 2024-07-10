@@ -36,8 +36,11 @@ print('bproj:    ', type(bproj), len(bproj), len(bproj[0]))
 print('back-projections of click detections \n', bproj, '\n')
 print('bproj_tgt:    ', type(bproj_tgt), len(bproj_tgt), len(bproj_tgt[0]))
 print('back-projection error of visual targeting \n', bproj_tgt, '\n')
+print(bproj_tgt.mean(axis=0), bproj_tgt.std(axis=0))
+
 print('reproj:    ', type(reproj), len(reproj), len(reproj[0]))
 print('re-projection error of visual targeting \n', reproj, '\n')
+print(reproj.mean(axis=0), reproj.std(axis=0))
 
 
 # res_apr = []
@@ -127,20 +130,20 @@ print('re-projection error of visual targeting \n', reproj, '\n')
 #
 print('AprilTag 3D-projection accuracy (meters): \n', bproj_tgt.mean(axis=0), '+/- ', bproj_tgt.std(axis=0))
 # print('Click back-projection accuracy (meters): \n', bpj[:,:-1].mean(axis=0), '+/- ', bpj[:,:-1].std(axis=0))
-fig = plt.figure(figsize=(10,10))
+fig = plt.figure(figsize=(8,8))
 
 ax = fig.add_subplot()#projection='3d')
-ax.scatter(bproj_tgt[:,0], bproj_tgt[:,1], c='g', label='april_GT-c3D_broj')#bproj[:,2],
-ax.scatter(bproj_tgt[:,0].mean(), bproj_tgt[:,1].mean(), c='b', marker='x', label='bproj_tgt mean')# bproj[:,2].mean,
+ax.scatter(bproj_tgt[:,0], bproj_tgt[:,1], c='g', label='Back-Projection Error')#bproj[:,2],
+ax.scatter(bproj_tgt[:,0].mean(), bproj_tgt[:,1].mean(), c='b', marker='x', label='Mean Error')# bproj[:,2].mean,
 ax.scatter(0.0, 0.0, c='r', s=100, marker='s', label='truth')#0.0,
 ax.set_xlim(-2,2)
 ax.set_ylim(-2,2)
 # ax.set_zlim(-0.5,0.5)
-ax.set_xlabel('X (meters)')
-ax.set_ylabel('Y (meters)')
+ax.set_xlabel('X (meters)', fontsize = 16)
+ax.set_ylabel('Y (meters)', fontsize = 16)
 # ax.set_zlabel('Z (meters)')
 
-ax.legend()
+ax.legend(fontsize = 16)
 plt.show()
 #
 #
@@ -160,8 +163,8 @@ plt.show()
 # tmp = np.linalg.norm(click_2D - april_GT, axis=1)
 # print(f'Click Projection Error (pixels):\n {tmp.mean():.4f} +/- {tmp.std():.4f}')
 # ax[0].set_title(f'reproj: {tmp.mean():.4f} +/- {tmp.std():.4f}\n[min, max]: [{tmp.min():.4f}, {tmp.max():.4f}]')
-fig, ax = plt.subplots()
-ax.scatter(reproj[:,0], reproj[:,1], c='r', label='reproj (c2D-aGT)')
+fig, ax = plt.subplots(figsize=(8,8))
+ax.scatter(reproj[:,0], reproj[:,1], c='r', label='Reprojection Error')
 # ax.scatter(tmp_x, tmp_y, c='r', label='reproj (c2D-aGT)')
 # ax[0].set_xlim(0,1920)
 # ax[0].set_ylim(0,1080)
@@ -169,11 +172,11 @@ ax.scatter(reproj[:,0], reproj[:,1], c='r', label='reproj (c2D-aGT)')
 ax.axhline(y=0, color='k', alpha=0.3)
 ax.axvline(x=0, color='k', alpha=0.3)
 ax.set_aspect('equal')
-ax.set_xlabel('X (pixels)')
+ax.set_xlabel('X (pixels)', fontsize = 16)
 # ax[0].set_ylabel('Y (pixels)')
-ax.set_ylabel('Y (pixels)')
+ax.set_ylabel('Y (pixels)', fontsize = 16)
 ax.scatter(0.0, 0.0, c='k', s=20, label='origin')
 #
 # ax[0].legend()
-ax.legend()
+ax.legend(fontsize = 16)
 plt.show()

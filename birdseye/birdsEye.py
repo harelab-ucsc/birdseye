@@ -92,9 +92,10 @@ class birdsEye():
         # camera specs
         tmp = self.getParameters(self.sensor)
         self.res = [int(tmp[1][0]), int(tmp[1][1])]
-        self.K = np.array([[tmp[2][0]+1.0*9.4631483,0.0,tmp[2][2]-1.0*51.33589893], \
-                           [0.0,tmp[2][1]+1.0*12.99244429,tmp[2][3]+4.0*20.56120044], \
+        self.K = np.array([[tmp[2][0],0.0,tmp[2][2]], \
+                           [0.0,tmp[2][1],tmp[2][3]], \
                            [0.0,0.0,1.0]])
+        self.D = np.array(tmp[3])
         self.T_WC = None
         self._2DFrameVertices = ((0,0), \
                                  (self.res[0] - 1, 0), \
@@ -248,6 +249,9 @@ class birdsEye():
         save_name = os.path.join(self.img_dir, self.img_dir.split(os.sep)[-2])
         sA = offlineSLICAnnotator(images=[i[-2] for i in self.data], save_name=save_name) #, mask_res=self.res[::-1])
 
+        # Create rectification and projection maps
+        map1, map2 = cv2.initUndistortRectifyMap(self.K, self.D, None, self.K, (self.res[0], self.res[1]), cv2.CV_32FC1)
+
         cv2.namedWindow("Mask", cv2.WINDOW_NORMAL)
         cv2.resizeWindow("Mask", 512, 384)
         cv2.namedWindow("Window", cv2.WINDOW_NORMAL)
@@ -314,18 +318,19 @@ class birdsEye():
 
             if frame[2]-self.init_alt > 3.0:
                 img = cv2.imread(frame[-2])
-                gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
-                cv2.putText(img, f'{frame[-1]}', (50,100), \
+                rect = cv2.remap(img, map1, map2, interpolation=cv2.INTER_LINEAR)
+                gray = cv2.cvtColor(rect, cv2.COLOR_BGR2GRAY)
+                cv2.putText(rect, f'{frame[-1]}', (50,100), \
                     cv2.FONT_HERSHEY_SIMPLEX, 4, (0, 255, 0), 2)
-                ret, self.tgts, img = apriltag_detect(img, gray)
+                ret, self.tgts, rect = apriltag_detect(rect, gray)
                 if clicks_2D:
                     sA.frameProcess(clicks_2D, frame_index=self.frame_index, save_name=self.click_save_name)
                     for click in clicks_2D:
-                        cv2.circle(img, [int(click[0]), int(click[1])], 15, (0, 0, 255), -1)
+                        cv2.circle(rect, [int(click[0]), int(click[1])], 15, (0, 0, 255), -1)
                     if bproj:
                         self.bproj.append(bproj)
 
-                cv2.imshow("Window", img)
+                cv2.imshow("Window", rect)
                 cv2.waitKey(30)
 
                 if self.tgts:

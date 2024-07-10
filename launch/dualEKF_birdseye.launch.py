@@ -17,12 +17,12 @@ def generate_launch_description():
         launch_ros.actions.Node(
             package='tf2_ros',
             executable='static_transform_publisher',
-            arguments = ['0.01821261', '-0.0897189', '0.03', '0.9996459', '-0.0074281', '0.0081705', '-0.0242095', 'base_link', 'cam0']
+            arguments = ['-0.0013182011389418422', '0.048743269467030205', '0.0355464324080468', '0.9997894', '-0.0065577', '-0.018069', '-0.0071814', 'base_link', 'cam0']
             ),
         launch_ros.actions.Node(
             package='tf2_ros',
             executable='static_transform_publisher',
-            arguments = ['-0.015', '0', '0.33', '0', '0', '0', '1', 'base_link', 'gps']
+            arguments = ['-0.05', '0', '0.33', '0', '0', '0', '1', 'base_link', 'gps']
             ),
         ExecuteProcess(
             cmd=['ros2', 'bag', 'play', launch.substitutions.LaunchConfiguration('bagpath'), '--read-ahead-queue-size', '10000'],
