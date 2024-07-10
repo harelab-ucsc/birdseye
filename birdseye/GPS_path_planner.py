@@ -17,6 +17,21 @@ EPS = 0.5
 MIN_SAMPLES = 3
 
 
+def _write_csv_file(path: str, rows: list[str]):
+    """
+    """
+    with open(path, "w+") as csvp:
+        writer = csv.writer(csvp)
+        writer.writerows(rows)
+
+def generate_csv_from_plan(plan):
+    """
+    """
+    header = ["lat,lon,point_name"]
+    lines = [f"{pos[0]},{pos[1]},{index}" for index, pos in enumerate(plan)]
+    _write_csv_file("balthazar.csv", header + lines)
+
+
 def build_dji_plan(generate: bool = True):
     """
     """
@@ -141,20 +156,6 @@ def build_dji_plan(generate: bool = True):
     for pt in waypoints[out]:
         plan.append(list(utm.to_latlon(pt[0], pt[1], u[-2], u[-1])))
     plan = np.array(plan)
-
-    def _write_csv_file(path: str, rows: list[str]):
-        """
-        """
-        with open(path, "w+") as csvp:
-            writer = csv.writer(csvp)
-            writer.writerows(rows)
-
-    def generate_csv_from_plan(plan):
-        """
-        """
-        header = ["lat,lon,point_name"]
-        lines = [f"{pos[0]},{pos[1]},{index}" for index, pos in enumerate(plan)]
-        _write_csv_file("balthazar.csv", header + lines)
 
     generate_csv_from_plan(plan)
 
