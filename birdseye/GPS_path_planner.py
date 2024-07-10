@@ -173,4 +173,4 @@ def build_dji_plan(generate: bool = True):
 
 
 if __name__ == "__main__":
-    #build_dji_plan(generate=True)
+    build_dji_plan(generate=True)
