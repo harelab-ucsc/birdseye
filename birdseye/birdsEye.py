@@ -106,13 +106,13 @@ class birdsEye():
         self.ax = self.fig.add_subplot(111, projection='3d')
         plt.show(block=False)
 
-        self.tgts = None
-        self.april_2D = []
-        self.april_3D = []
+        # self.tgts = None
+        # self.april_2D = []
+        # self.april_3D = []
         self.bproj = []
-        self.bproj_tgt = []
-        self.reproj = []
-        self.contour = Contour(res=(self.res[1], self.res[0]))
+        # self.bproj_tgt = []
+        # self.reproj = []
+        # self.contour = Contour(res=(self.res[1], self.res[0]))
 
 
     def getParameters(self, device_key):
