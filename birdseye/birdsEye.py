@@ -92,7 +92,7 @@ class birdsEye():
         # camera specs
         tmp = self.getParameters(self.sensor)
         self.res = [int(tmp[1][0]), int(tmp[1][1])]
-        self.K = np.array([[tmp[2][0],0.0,tmp[2][2]], \
+        self.K = np.array([[tmp[2][0],0.0,self.res[0]-tmp[2][2]], \
                            [0.0,tmp[2][1],tmp[2][3]], \
                            [0.0,0.0,1.0]])
         self.D = np.array(tmp[3])
@@ -229,15 +229,12 @@ class birdsEye():
         return val
 
 
-    # def annotate(self, pts, encoding, save_name=None):
-    #     if not save_name:
-    #         save_name = os.path.join(self.img_dir, self.img_dir.split(os.sep)[-2])
-    #     images = glob2.glob(self.img_dir + f"*.{encoding}")
-    #     # above line can read direct from db as well
-    #     sA = offlineSLICAnnotator(images=images, save_name=save_name)
-    #     for i, image in enumerate(images):
-    #         sA.frameProcess(pts)
-    #         sA.frame_index = i
+    def annotate(self, label):
+        f = open(f"{self.save_name}.txt", "a")
+        line = f'{self.frame_index} <object_id> {label} \n'
+        f.write(line)
+        f.close()
+        print(f'    Mask saved: frame index {self.frame_index}, {self.save_name}.txt')
 
 
     def parseFlightDatabase(self):
@@ -252,8 +249,8 @@ class birdsEye():
         # Create rectification and projection maps
         map1, map2 = cv2.initUndistortRectifyMap(self.K, self.D, None, self.K, (self.res[0], self.res[1]), cv2.CV_32FC1)
 
-        cv2.namedWindow("Mask", cv2.WINDOW_NORMAL)
-        cv2.resizeWindow("Mask", 512, 384)
+        # cv2.namedWindow("Mask", cv2.WINDOW_NORMAL)
+        # cv2.resizeWindow("Mask", 512, 384)
         cv2.namedWindow("Window", cv2.WINDOW_NORMAL)
         cv2.resizeWindow("Window", 512, 384)
 
@@ -273,12 +270,15 @@ class birdsEye():
             clicks_2D = self._3Dto2D(clicks)
             self.ax.scatter(clicks[:,0], clicks[:,1], np.zeros_like(clicks[:,1]),marker='s', alpha=0.5, c='m', s=64, label='Click')
             self._3DFrameVertices = self._2Dto3D(self._2DFrameVertices)
-            # if i == 100: print(self._3DFrameVertices)
             self.ax.scatter(np.array(self._3DFrameVertices)[:,0], \
                             np.array(self._3DFrameVertices)[:,1], \
                             np.array(self._3DFrameVertices)[:,2], \
                             marker='s', color='k', label='Frame')
             clicks_2D, bproj = self._2DFrameCheck(clicks_2D, stats=True)
+            if len(clicks_2D) > 0:
+                self.annotate(1.0)
+            else:
+                self.annotate(0.0)
 
             if frame[-3] == 131:
                 color = 'g'
@@ -322,7 +322,7 @@ class birdsEye():
                 gray = cv2.cvtColor(rect, cv2.COLOR_BGR2GRAY)
                 cv2.putText(rect, f'{frame[-1]}', (50,100), \
                     cv2.FONT_HERSHEY_SIMPLEX, 4, (0, 255, 0), 2)
-                ret, self.tgts, rect = apriltag_detect(rect, gray)
+                # ret, self.tgts, rect = apriltag_detect(rect, gray)
                 if clicks_2D:
                     sA.frameProcess(clicks_2D, frame_index=self.frame_index, save_name=self.click_save_name)
                     for click in clicks_2D:
@@ -333,36 +333,36 @@ class birdsEye():
                 cv2.imshow("Window", rect)
                 cv2.waitKey(30)
 
-                if self.tgts:
-                    cent = [i[0] for i in self.tgts]
-                    self.april_2D.append(cent)
-                    april_3D = self._2Dto3D(cent)
-                    self.april_3D.append(april_3D)
-                    if clicks_2D:
-                        val = [[a[0] - b[0], a[1] - b[1]] for a,b in zip(clicks_2D, cent)]
-                        print('    targeting reprojection pixel error:')
-                        for v in val:
-                            print(f'        {v}, 2-norm: {np.linalg.norm(v)}')
-                            self.reproj.append(v)
-                    if bproj:
-                        val = [[a[0] - b[0], a[1] - b[1]] for a,b in zip(april_3D, bproj)]
-                        print('    targeting reprojection metric error:')
-                        for v in val:
-                            print(f'        {v}, 2-norm: {np.linalg.norm(v)}')
-                            self.bproj_tgt.append(v)
-                    cnts = np.array([i[1] for i in self.tgts])
-                    for i, cnt in enumerate(cnts):
-                        self.contour.update(cnt)
-                        sA._mask.channels[:,:,i] = cv2.resize(self.contour.img, (512,384), cv2.INTER_CUBIC)
-                        sA._mask.update([['next',]]) # need to add class adjustment capability
-                        sA.mask = sA._mask.channels[:,:,sA._mask.index]
-                    # print(f'    second check: bE.frame_index: {self.frame_index}')
-                    sA._mask.update([['save', sA.frame_index, self.visual_save_name]])
-                else:
-                    cv2.imshow('Mask', np.zeros(self.contour.res))
-                    cv2.waitKey(30)
-                    # cv2.imshow("Window", img)
-                    # cv2.waitKey(30)
+                # if self.tgts:
+                #     cent = [i[0] for i in self.tgts]
+                #     self.april_2D.append(cent)
+                #     april_3D = self._2Dto3D(cent)
+                #     self.april_3D.append(april_3D)
+                #     if clicks_2D:
+                #         val = [[a[0] - b[0], a[1] - b[1]] for a,b in zip(clicks_2D, cent)]
+                #         print('    targeting reprojection pixel error:')
+                #         for v in val:
+                #             print(f'        {v}, 2-norm: {np.linalg.norm(v)}')
+                #             self.reproj.append(v)
+                #     if bproj:
+                #         val = [[a[0] - b[0], a[1] - b[1]] for a,b in zip(april_3D, bproj)]
+                #         print('    targeting reprojection metric error:')
+                #         for v in val:
+                #             print(f'        {v}, 2-norm: {np.linalg.norm(v)}')
+                #             self.bproj_tgt.append(v)
+                #     cnts = np.array([i[1] for i in self.tgts])
+                #     for i, cnt in enumerate(cnts):
+                #         self.contour.update(cnt)
+                #         sA._mask.channels[:,:,i] = cv2.resize(self.contour.img, (512,384), cv2.INTER_CUBIC)
+                #         sA._mask.update([['next',]]) # need to add class adjustment capability
+                #         sA.mask = sA._mask.channels[:,:,sA._mask.index]
+                #     # print(f'    second check: bE.frame_index: {self.frame_index}')
+                #     sA._mask.update([['save', sA.frame_index, self.visual_save_name]])
+                # else:
+                #     cv2.imshow('Mask', np.zeros(self.contour.res))
+                #     cv2.waitKey(30)
+                #     # cv2.imshow("Window", img)
+                #     # cv2.waitKey(30)
 
             if len(self.bproj) > 1:
                 # print('    new click')
@@ -378,17 +378,17 @@ class birdsEye():
                                 c='b', alpha=0.3, s=64)
             else:
                 pass  # nothing yet
-            if len(self.april_3D) > 1:
-                self.ax.scatter(np.array(self.april_3D)[:,:,0], \
-                                np.array(self.april_3D)[:,:,1], \
-                                np.array(self.april_3D)[:,:,2], \
-                                c='g', alpha=0.3, s=64, label='TagDet')
-            elif len(self.april_3D) == 1:
-                # print('    first aprilTag')
-                self.ax.scatter(self.april_3D[0][0][0], \
-                                self.april_3D[0][0][1], \
-                                self.april_3D[0][0][2], \
-                                c='g', alpha=0.3, s=64)
+            # if len(self.april_3D) > 1:
+            #     self.ax.scatter(np.array(self.april_3D)[:,:,0], \
+            #                     np.array(self.april_3D)[:,:,1], \
+            #                     np.array(self.april_3D)[:,:,2], \
+            #                     c='g', alpha=0.3, s=64, label='TagDet')
+            # elif len(self.april_3D) == 1:
+            #     # print('    first aprilTag')
+            #     self.ax.scatter(self.april_3D[0][0][0], \
+            #                     self.april_3D[0][0][1], \
+            #                     self.april_3D[0][0][2], \
+            #                     c='g', alpha=0.3, s=64)
             self.ax.set_xlim(frame[0]-15, frame[0]+15)
             self.ax.set_xlabel('X')
             self.ax.set_ylim(frame[1]-15, frame[1]+15)
@@ -414,19 +414,19 @@ class birdsEye():
 
         out_dict = {}
 
-        print()
-        tmp = np.squeeze(np.array(self.april_2D))
-        print('Visual Targeting Stats (2D):')
-        print(tmp.shape)
-        # print(f'    Tag UTM: {tmp.mean(axis=0)} +/- {tmp.std(axis=0)}')
-        out_dict['april_2D'] = tmp
-
-        print()
-        tmp = np.squeeze(np.array(self.april_3D))
-        print('Visual Targeting Stats (3D):')
-        print(tmp.shape)
-        # print(f'    Tag UTM: {tmp.mean(axis=0)} +/- {tmp.std(axis=0)}')
-        out_dict['april_3D'] = tmp
+        # print()
+        # tmp = np.squeeze(np.array(self.april_2D))
+        # print('Visual Targeting Stats (2D):')
+        # print(tmp.shape)
+        # # print(f'    Tag UTM: {tmp.mean(axis=0)} +/- {tmp.std(axis=0)}')
+        # out_dict['april_2D'] = tmp
+        #
+        # print()
+        # tmp = np.squeeze(np.array(self.april_3D))
+        # print('Visual Targeting Stats (3D):')
+        # print(tmp.shape)
+        # # print(f'    Tag UTM: {tmp.mean(axis=0)} +/- {tmp.std(axis=0)}')
+        # out_dict['april_3D'] = tmp
 
         print()
         tmp = np.squeeze(np.array(self.bproj))
@@ -435,12 +435,12 @@ class birdsEye():
         # print(f'    Click Back-Projection UTM: {tmp.mean(axis=0)} +/- {tmp.std(axis=0)}')
         out_dict['bproj'] = tmp
 
-        print()
-        tmp = np.squeeze(np.array(self.bproj_tgt))
-        print('GPS Targeting Stats (tgt vs click_bproj):')
-        print(tmp.shape)
-        # print(f'    Click Back-Projection UTM: {tmp.mean(axis=0)} +/- {tmp.std(axis=0)}')
-        out_dict['bproj_tgt'] = tmp
+        # print()
+        # tmp = np.squeeze(np.array(self.bproj_tgt))
+        # print('GPS Targeting Stats (tgt vs click_bproj):')
+        # print(tmp.shape)
+        # # print(f'    Click Back-Projection UTM: {tmp.mean(axis=0)} +/- {tmp.std(axis=0)}')
+        # out_dict['bproj_tgt'] = tmp
 
         print()
         tmp=np.squeeze(np.array(self.reproj))
