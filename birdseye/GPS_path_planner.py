@@ -42,8 +42,8 @@ def build_dji_plan(generate: bool = True):
     """
     """
     # NOTE: Set data path here.
-    filepath = "catch/data.csv"
-    #filepath = "Documents/hare/birdseye/birdseye/catch/data.csv"
+    #filepath = "catch/data.csv"
+    filepath = "Documents/hare/birdseye/birdseye/catch/data.csv"
     clicks_csv = os.path.join(os.path.expanduser('~'), filepath)
     savename = "parsed_flight/plan.kml"
     plan_kml = os.path.join(os.path.expanduser('~'), savename)
@@ -149,15 +149,15 @@ def build_dji_plan(generate: bool = True):
         dists.append(tmp)
 
     plan = []
+    places = [i for i in range(len(waypoints))]
+# print(places)
+    out = tsp(places, dists)
     for pt in waypoints[out]:
         plan.append(list(utm.to_latlon(pt[0], pt[1], u[-2], u[-1])))
     plan = np.array(plan)
 
     generate_csv_from_plan(plan)
 
-    places = [i for i in range(len(waypoints))]
-# print(places)
-    out = tsp(places, dists)
     spt = out[0]
     plt.plot(waypoints[spt,0], waypoints[spt,1], 'o', markerfacecolor='r', markeredgecolor='k', markersize=10)
     for pt in out[1:]:
@@ -165,8 +165,6 @@ def build_dji_plan(generate: bool = True):
         plt.plot(waypoints[pt,0], waypoints[pt,1], 'o', markerfacecolor='b', markeredgecolor='b', markersize=4)
         spt = pt
     plt.show()
-
-
     """
     kml=simplekml.Kml()
     for i in out:
