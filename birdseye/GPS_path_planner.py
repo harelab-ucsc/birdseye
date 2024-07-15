@@ -6,8 +6,10 @@ from sklearn import metrics
 import numpy as np
 import matplotlib.pyplot as plt
 
+import argparse
 import csv
 import os
+import sys
 import utm
 import simplekml
 
@@ -25,7 +27,7 @@ def _write_csv_file(path: str, rows: list[str]):
         writer = csv.writer(csvp, delimiter=",")
         writer.writerows(rows)
 
-def generate_csv_from_plan(plan):
+def generate_csv_from_plan(plan, fpath):
     """
     """
     lines = []
@@ -35,20 +37,44 @@ def generate_csv_from_plan(plan):
         str(pos[1]),
         str(index)
     ]) for index, pos in enumerate(plan)]
-    _write_csv_file("balthazar.csv", lines)
+    _write_csv_file(fpath, lines)
 
 
-def build_dji_plan(generate: bool = True):
+def build_dji_plan(
+        do_tsp: bool,
+        do_whifferdill: bool,
+        fp_in: str,
+        fp_out: str,
+        w_rad: float,
+        w_sides: int
+    ):
     """
+    Args:
+        do_tsp          (bool)  :
+        do_whifferdill  (bool)  :
+        fp_in           (str)   :
+        fp_out          (str)   :
+        w_rad           (float) :
+        w_sides         (int)   :
+
+    Todo:
+        * Add whifferdill options, including:
+            + # of edges
+            + radius
+            + enabled/disabled
+        * Add option for enabling/disabling TSP.
+        * Add option for enabling/disabling plotting.
     """
     # NOTE: Set data path here.
-    #filepath = "catch/data.csv"
-    filepath = "Documents/hare/birdseye/birdseye/catch/data.csv"
-    clicks_csv = os.path.join(os.path.expanduser('~'), filepath)
-    savename = "parsed_flight/plan.kml"
-    plan_kml = os.path.join(os.path.expanduser('~'), savename)
-
-# thetas = [i*60*np.pi/180 for i in range(6)]
+    #fp_in = "catch/data.csv"
+    #fp_in = "Documents/hare/birdseye/birdseye/catch/data.csv"
+    #savename = "parsed_flight/plan.kml"
+    #savename = fp_out
+    #plan_kml = os.path.join(os.path.expanduser('~'), savename)
+    clicks_csv = fp_in
+    plan_kml = fp_out
+    
+    # thetas = [i*60*np.pi/180 for i in range(6)]
     thetas = [i*90*np.pi/180 for i in range(4)]
     hex = lambda pt: [[pt[0] + np.cos(th), pt[1] + np.sin(th)] for th in thetas]
     square = lambda pt: [[pt[0] + np.cos(th), pt[1] + np.sin(th)] for th in thetas]
@@ -156,7 +182,7 @@ def build_dji_plan(generate: bool = True):
         plan.append(list(utm.to_latlon(pt[0], pt[1], u[-2], u[-1])))
     plan = np.array(plan)
 
-    generate_csv_from_plan(plan)
+    generate_csv_from_plan(plan, fp_out)
 
     spt = out[0]
     plt.plot(waypoints[spt,0], waypoints[spt,1], 'o', markerfacecolor='r', markeredgecolor='k', markersize=10)
@@ -174,4 +200,56 @@ def build_dji_plan(generate: bool = True):
     """
 
 if __name__ == "__main__":
-    build_dji_plan(generate=True)
+    parser = argparse.ArgumentParser()
+    parser.add_argument(
+        "-i",
+        "--input",
+        default="catch/data.csv",
+        help="Specify path to input [CSV] file.",
+        type=str
+    )
+    parser.add_argument(
+        "-o",
+        "--output",
+        default="flights/pilot.kml",
+        help="Specify path to output [KML] file; defaults to STDOUT.",
+        type=str
+    )
+    parser.add_argument(
+        "-r",
+        "--radius",
+        default=1.0,
+        help="Specify the radius of created Whifferdill [if enabled].",
+        type=float
+    )
+    parser.add_argument(
+        "-s",
+        "--sides",
+        default=4,
+        help="Specify the number of sides of created Whifferdill [if enabled].",
+        type=int
+    )
+    parser.add_argument(
+        "-t",
+        "--tsp",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="Find the shortest path between each point visited?"
+    )
+    parser.add_argument(
+        "-w",
+        "--whifferdill",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="Generate Whifferdill pattern around each point?"
+    )
+    args = parser.parse_args()
+
+    build_dji_plan(
+        do_tsp=args.tsp,
+        do_whifferdill=args.whifferdill,
+        fp_in=args.input,
+        fp_out=args.output,
+        w_rad=args.radius,
+        w_sides=args.sides
+    )
