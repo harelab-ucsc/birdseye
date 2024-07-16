@@ -1,3 +1,14 @@
+"""GPS_path_planner - convert clicks into a flight plan.
+Description:
+    Translate input clicks (CSV) into a complete flight plan (KML). The output
+    file can then be loaded to an SD card and used by a compatible drone.
+
+Usage:
+    TODO
+
+Todo:
+    TODO
+"""
 from scipy.spatial import ConvexHull
 from scipy.stats import multivariate_normal as mvn
 from sklearn.cluster import DBSCAN
