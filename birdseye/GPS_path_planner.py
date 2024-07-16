@@ -51,6 +51,29 @@ def generate_csv_from_plan(plan, fpath):
     _write_csv_file(fpath, lines)
 
 
+def build_polygon(
+        pt: tuple[float],
+        r: float,
+        n: int
+    ) -> tuple[tuple[float]]:
+    """build_polygon
+
+    Description:
+        Translate a point, radius, and number of sides into a set of points
+        defining a polygon.
+
+    Args:
+        pt (:obj:`tuple` of :obj:`float`): [x,y]
+        r (float): "Radius" == absolute distance from `pt` of each vertex.
+        n (int): Number of sides/vertices for polygon.
+    """
+    # Generate polygons around each point provided.
+    thetas = lambda n: [((i * 2 * np.pi) / n) for i in range(n)]
+    return [
+        [pt[0] + r * np.cos(th),
+         pt[1] + r * np.sin(th)] for th in thetas(n)
+    ]
+
 def build_dji_plan(
         do_tsp: bool,
         do_whifferdill: bool,
@@ -81,12 +104,6 @@ def build_dji_plan(
     clicks_csv = fp_in
     plan_kml = fp_out
     
-    # Generate polygons around each point provided.
-    thetas = lambda n: [((i * 2 * np.pi) / n) for i in range(n)]
-    poly = lambda pt, r, n: [
-        [pt[0] + r * np.cos(th),
-         pt[1] + r * np.sin(th)] for th in thetas(n)
-    ]
 
     LLrep = []
     UTMrep = []
@@ -149,9 +166,9 @@ def build_dji_plan(
         )
         for pt in xy:
             if skip_convhull:
-                waypoints += poly(pt, w_rad, w_sides)
+                waypoints += build_polygon(pt, w_rad, w_sides)
             else:
-                tmp += poly(pt, w_rad, w_sides)
+                tmp += build_polygon(pt, w_rad, w_sides)
 
         xy = UTMrep[class_member_mask & ~core_samples_mask]
         plt.plot(
@@ -164,9 +181,9 @@ def build_dji_plan(
         )
         for pt in xy:
             if skip_convhull:
-                waypoints += poly(pt, w_rad, w_sides)
+                waypoints += build_polygon(pt, w_rad, w_sides)
             else:
-                tmp += poly(pt, w_rad, w_sides)
+                tmp += build_polygon(pt, w_rad, w_sides)
 
         tmp = np.array(tmp)
 
