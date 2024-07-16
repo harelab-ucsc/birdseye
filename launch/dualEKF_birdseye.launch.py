@@ -24,6 +24,11 @@ def generate_launch_description():
             executable='static_transform_publisher',
             arguments = ['-0.015', '0', '0.33', '0', '0', '0', '1', 'base_link', 'gps']
             ),
+        launch_ros.actions.Node(
+            package='tf2_ros',
+            executable='static_transform_publisher',
+            arguments = ['0', '0', '-0.025', '0.8939967', '0', '0', '-0.4480736', 'base_link', 'radalt']
+            ),
         ExecuteProcess(
             cmd=['ros2', 'bag', 'play', launch.substitutions.LaunchConfiguration('bagpath'), '--read-ahead-queue-size', '10000'],
             output='screen'

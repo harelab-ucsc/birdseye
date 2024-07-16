@@ -682,8 +682,9 @@ if __name__ == '__main__':
 
     global preglob_tr
     global preglob_te
-    preglob_tr = glob.glob(PATH + '\\*.jpg')
-    preglob_te = glob.glob(PATH + '\\*.jpg')
+    
+    preglob = glob.glob(PATH + '\\*.png')
+    preglob_tr, preglob_te = tf.keras.utils.split_dataset(preglob, , left_size=0.8)
 
     train_ds = tf.data.Dataset.from_tensor_slices(preglob_tr)
     train_ds = train_ds.map(load_rle_train, num_parallel_calls=tf.data.experimental.AUTOTUNE)
