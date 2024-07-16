@@ -1,0 +1,28 @@
+
+<launch>
+
+  <arg name="sensorID" default="cam0"/>
+  <!-- <arg name="bagpath" default="/media/mwmaster/b9c5bbeb-67ca-493f-8b8a-3f9a36ac549b/polygon_04-08-2024-14-50/"/> -->
+  <arg name="sensors_yaml" default="camera_yamls/birdsEyeSensorParams.yaml"/>
+  <!-- <arg name="rl_launch_path" default='/home/mwmaster/ros2_ws/launch'/> -->
+  <arg name="clicks_csv" default="catch/data.csv"/>
+  <arg name="dir_name" default="parsed_flight"/>
+
+  <!-- <include file="$(var rl_launch_path)/dualEKF_navsat_gx5.launch.py"/> -->
+
+  <!-- <node name="image_proc" pkg="image_proc" exec="image_proc" namespace="$(var sensorID)">
+    <remap from="image" to="/$(var sensorID)/rgb_cam/image_raw" />
+    <remap from="camera_info" to="/$(var sensorID)/rgb_cam/camera_info" />
+  </node> -->
+
+  <node pkg="birdseye" exec="sub_node" name="sub_node" namespace="$(var sensorID)">
+    <remap from="/image" to="/$(var sensorID)/rgb_cam/image_raw" />
+    <remap from="/gps_flag" to="/ublox_gps_node/navpvt"/>
+    <param name="sensorID" value="$(var sensorID)"/>
+    <param name="sensors_yaml" value="$(var sensors_yaml)"/>
+    <param name="clicks_csv" value="$(var clicks_csv)"/>
+  </node>
+
+  <executable cmd="rqt_graph" />
+
+</launch>
