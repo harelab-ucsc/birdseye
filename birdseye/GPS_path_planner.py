@@ -32,14 +32,14 @@ MIN_SAMPLES = 2
 
 
 def _write_csv_file(path: str, rows: list[str]):
-    """
+    """Write rows of CSV to a file.
     """
     with open(path, "w+") as csvp:
         writer = csv.writer(csvp, delimiter=",")
         writer.writerows(rows)
 
 def generate_csv_from_plan(plan, fpath):
-    """
+    """Write the details of a flight plan to a CSV file.
     """
     lines = []
     lines.append(["lat","lon","point_name"])
