@@ -48,7 +48,7 @@ def generate_csv_from_plan(plan, fpath):
         str(pos[1]),
         str(index)
     ]) for index, pos in enumerate(plan)]
-    _write_csv_file(fpath, lines)
+    return lines
 
 
 def build_polygon(
@@ -92,18 +92,11 @@ def build_dji_plan(
         w_sides         (int)   :
 
     Todo:
-        * Integrate args into the below.
         * Cleanup.
     """
     # NOTE: Set data path here.
-    #fp_in = "catch/data.csv"
-    #fp_in = "Documents/hare/birdseye/birdseye/catch/data.csv"
-    #savename = "parsed_flight/plan.kml"
-    #savename = fp_out
-    #plan_kml = os.path.join(os.path.expanduser('~'), savename)
     clicks_csv = fp_in
     plan_kml = fp_out
-    
 
     LLrep = []
     UTMrep = []
@@ -142,7 +135,9 @@ def build_dji_plan(
     core_samples_mask[dbscan.core_sample_indices_] = True
     # print('core_samples_mask: ', core_samples_mask)
 
-    colors = [plt.cm.Spectral(each) for each in np.linspace(0, 1, len(unique_labels))]
+    colors = [
+        plt.cm.Spectral(each) for each in np.linspace(0, 1, len(unique_labels))
+    ]
     waypoints = []
     for k, col in zip(unique_labels, colors):
         tmp = []
@@ -207,15 +202,45 @@ def build_dji_plan(
     for pt in waypoints[out]:
         plan.append(list(utm.to_latlon(pt[0], pt[1], u[-2], u[-1])))
     plan = np.array(plan)
-
-    generate_csv_from_plan(plan, fp_out)
-
     spt = out[0]
     plt.plot(waypoints[spt,0], waypoints[spt,1], 'o', markerfacecolor='r', markeredgecolor='k', markersize=10)
     for pt in out[1:]:
         plt.plot([waypoints[spt,0], waypoints[pt,0]], [waypoints[spt,1], waypoints[pt,1]], 'k')
         plt.plot(waypoints[pt,0], waypoints[pt,1], 'o', markerfacecolor='b', markeredgecolor='b', markersize=4)
         spt = pt
+
+    return plan
+
+def plan_gps_path(
+        do_tsp: bool,
+        do_whifferdill: bool,
+        fp_in: str,
+        fp_out: str,
+        w_rad: float,
+        w_sides: int
+    ):
+    """Main.
+
+    Args:
+        do_tsp          (bool)  :
+        do_whifferdill  (bool)  :
+        fp_in           (str)   :
+        fp_out          (str)   :
+        w_rad           (float) :
+        w_sides         (int)   :
+
+    Todo:
+        * Integrate KML file generation.
+    """
+    flight_plan = build_dji_plan(
+        do_tsp=do_tsp,
+        do_whifferdill=do_whifferdill,
+        fp_in=fp_in,
+        fp_out=fp_out,
+        w_rad=w_rad,
+        w_sides=w_sides
+    )
+    generate_csv_from_plan(flight_plan, fp_out)
     plt.show()
     """
     kml=simplekml.Kml()
@@ -271,7 +296,7 @@ if __name__ == "__main__":
     )
     args = parser.parse_args()
 
-    build_dji_plan(
+    plan_gps_path(
         do_tsp=args.tsp,
         do_whifferdill=args.whifferdill,
         fp_in=args.input,
