@@ -24,7 +24,10 @@ plan.
 
 ### GPS\_path\_planner.py - Usage
 
-To see the list of available 
+To see the list of available options for this script, type:
+```bash
+$ python3 GPS_path_planner.py --help
+```
 
 # Deprecated v
 ## Getting started
