@@ -24,6 +24,7 @@ import sys
 import utm
 import simplekml
 
+from path_planning import write_plan
 from TSP import tsp
 
 
