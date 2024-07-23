@@ -208,7 +208,9 @@ def build_dji_plan(
         plan.append(list(utm.to_latlon(pt[0], pt[1], u[-2], u[-1])))
     plan = np.array(plan)
 
+    print(f"Generating flight plan at {fp_out}...")
     generate_csv_from_plan(plan, fp_out)
+    print("DONE.")
 
     spt = out[0]
     plt.plot(waypoints[spt,0], waypoints[spt,1], 'o', markerfacecolor='r', markeredgecolor='k', markersize=10)
@@ -237,7 +239,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "-o",
         "--output",
-        default="flights/pilot.kml",
+        default="flights/plan.csv",
         help="Specify path to output [KML] file; defaults to STDOUT.",
         type=str
     )
