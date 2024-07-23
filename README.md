@@ -1,5 +1,15 @@
 # birdsEye
 
+## Path planning
+
+The process of generating a new path involves physically collecting 
+"clicks" of latitudes/longitudes, then feeding the generated CSV file into the
+`GPS_path_planner.py` script located in the `./birdseye/` directory, i.e.:
+
+```bash
+python3 GPS_path_planner.py --input=${PATH_IN}.csv --output=${PATH_OUT}.kml
+```
+
 
 
 ## Getting started
