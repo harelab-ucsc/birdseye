@@ -12,7 +12,7 @@ be run from within the `./birdseye/` directory, chained together i.e.:
 ```bash
 $ cd ./birdseye/
 $ python3 GPS_path_planner.py --input=${CSV_IN}.csv --output=${CSV_OUT}.csv
-$ python3 csv2djipilot.py --csvfile=${CSV_OUT}.csv -o ${KML_OUT}.kml
+$ python3 csv2djipilot.py ${CSV_OUT}.csv -o ${KML_OUT}.kml
 ```
 
 In the above:
@@ -21,6 +21,10 @@ In the above:
 - `${KML_OUT}` is the path to the output/drone-readable KML-formatted flight 
 plan.
 
+
+### GPS\_path\_planner.py - Usage
+
+To see the list of available 
 
 # Deprecated v
 ## Getting started
