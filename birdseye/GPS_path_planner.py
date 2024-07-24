@@ -13,17 +13,20 @@ from scipy.spatial import ConvexHull
 from scipy.stats import multivariate_normal as mvn
 from sklearn.cluster import DBSCAN
 from sklearn import metrics
+from typing import Union
 
 import numpy as np
 import matplotlib.pyplot as plt
 
 import argparse
 import csv
+import logging
 import os
 import sys
 import utm
 import simplekml
 
+from path_planning import flight_plan_to_djipilot
 from TSP import tsp
 
 
@@ -37,6 +40,26 @@ def _write_csv_file(path: str, rows: list[str]):
     with open(path, "w+") as csvp:
         writer = csv.writer(csvp, delimiter=",")
         writer.writerows(rows)
+
+def _write_file(path: str, data: str):
+    """Write to a file.
+    """
+    with open(path, "w+") as fp:
+        fp.write(data)
+
+def read_csv(self, csv_path: str) -> list[dict]:
+    """
+    Args:
+        csv_path (str):    File path.
+
+
+    """
+    data = []
+    with open(csv_path) as csvp:
+        reader = csv.DictReader(csvp)
+        for line in reader:
+            data.append(line)
+    return data
 
 def generate_csv_from_plan(plan, fpath):
     """Write the details of a flight plan to a CSV file.
@@ -203,14 +226,25 @@ def build_dji_plan(
         plan.append(list(utm.to_latlon(pt[0], pt[1], u[-2], u[-1])))
     plan = np.array(plan)
 
-    print(f"Generating flight plan at {fp_out}...")
-    generate_csv_from_plan(plan, fp_out)
-    print("DONE.")
-
     spt = out[0]
-    plt.plot(waypoints[spt,0], waypoints[spt,1], 'o', markerfacecolor='r', markeredgecolor='k', markersize=10)
+    plt.plot(
+        waypoints[spt,0],
+        waypoints[spt,1],
+        'o',
+        markerfacecolor='r',
+        markeredgecolor='k',
+        markersize=10
+    )
     for pt in out[1:]:
-        plt.plot([waypoints[spt,0], waypoints[pt,0]], [waypoints[spt,1], waypoints[pt,1]], 'k')
+        plt.plot([
+                waypoints[spt,0],
+                waypoints[pt,0]
+            ], [
+                waypoints[spt,1],
+                waypoints[pt,1]
+            ],
+            'k'
+        )
         plt.plot(waypoints[pt,0], waypoints[pt,1], 'o', markerfacecolor='b', markeredgecolor='b', markersize=4)
         spt = pt
 
@@ -246,6 +280,12 @@ def plan_gps_path(
         w_sides=w_sides
     )
     generate_csv_from_plan(flight_plan, fp_out)
+    fp_out = "test.kml"
+    logging.info(f"Generating flight plan at {fp_out}...")
+    csv_plan = generate_csv_from_plan(plan, fp_out)
+    _write_file(fp_out, flight_plan_to_djipilot(csv_plan))
+    logging.success("DONE.")
+
     plt.show()
     """
     kml=simplekml.Kml()
@@ -255,7 +295,16 @@ def plan_gps_path(
     kml.save(plan_kml)
     """
 
+def configure_logger():
+    logger = logging.getLogger(__name__)
+    logging.basicConfig(
+            datefmt="%Y%m%d-%H:%M:%S",
+            format="%(asctime)s [%(levelname)s] %(message)s",
+            level=logging.INFO
+    )
+
 if __name__ == "__main__":
+    configure_logger()
     parser = argparse.ArgumentParser()
     parser.add_argument(
         "-i",
