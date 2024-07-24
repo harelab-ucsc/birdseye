@@ -11,13 +11,14 @@ import os
 import utm
 import simplekml
 
-from TSP import tsp
+# from TSP import tsp
+import fast_tsp
 
 
 EPS = 1.0
 MIN_SAMPLES = 2
 
-filepath = "catch/data.csv"
+filepath = "catch/data_farm_1.csv"
 clicks_csv = os.path.join(os.path.expanduser('~'), filepath)
 savename = "parsed_flight/plan.kml"
 plan_kml = os.path.join(os.path.expanduser('~'), savename)
@@ -36,18 +37,18 @@ with open(clicks_csv) as clicks:
         # break down line
         u = utm.from_latlon(float(line[0]), float(line[1]))
         ll = '(' + ','.join(line[:2]) + ')'
-        print('lat/lon click location: ', ll)
-        print('    utm conversion: ', u)
+        # print('lat/lon click location: ', ll)
+        # print('    utm conversion: ', u)
         tag = int(line[-1][-1])
         UTMrep.append([u[0], u[1]])
         # for _ in range(5):
         #     UTMrep.append(mvn.rvs(mean=[u[0], u[1]], cov=0.5).tolist())  # clicks in UTM coordinates, meter base unit
 UTMrep = np.array(UTMrep)
-print()
+print(UTMrep.shape)
 
 dbscan = DBSCAN(eps=EPS, min_samples=MIN_SAMPLES).fit(UTMrep)  # cluster in the UTM/cartesian representation
 labels = dbscan.labels_
-print('labels: ', labels)
+# print('labels: ', labels)
 # Number of clusters in labels, ignoring noise if present.
 n_clusters_ = len(set(labels)) - (1 if -1 in labels else 0)
 n_noise_ = list(labels).count(-1)
@@ -114,21 +115,19 @@ for k, col in zip(unique_labels, colors):
 waypoints = np.array(waypoints)
 plt.title(f"Estimated number of clusters: {n_clusters_}")
 # plt.show()
-for i, pti in enumerate(waypoints):
-    tmp = []
-    for j, ptj in enumerate(waypoints[i+1:]):
-        tmp.append(np.linalg.norm(pti-ptj))
-    dists.append(tmp)
+dists = metrics.pairwise_distances(waypoints)
+dists *= 1000  # convert to mm from m
+dists = dists.astype(np.int32)
 
-places = [i for i in range(len(waypoints))]
-# print(places)
-out = tsp(places, dists)
+out = fast_tsp.find_tour(dists)
+print(out)
 spt = out[0]
 plt.plot(waypoints[spt,0], waypoints[spt,1], 'o', markerfacecolor='r', markeredgecolor='k', markersize=10)
 for pt in out[1:]:
     plt.plot([waypoints[spt,0], waypoints[pt,0]], [waypoints[spt,1], waypoints[pt,1]], 'k')
     plt.plot(waypoints[pt,0], waypoints[pt,1], 'o', markerfacecolor='b', markeredgecolor='b', markersize=4)
     spt = pt
+plt.plot([waypoints[spt,0], waypoints[out[0],0]], [waypoints[spt,1], waypoints[out[0],1]], 'k')
 plt.show()
 
 plan = []
@@ -136,8 +135,8 @@ for pt in waypoints[out]:
     plan.append(list(utm.to_latlon(pt[0], pt[1], u[-2], u[-1])))
 plan = np.array(plan)
 
-kml=simplekml.Kml()
-for i in out:
-    print(plan[i])
-    kml.newpoint(name=str(places[i]), coords=[(plan[i][1], plan[i][0])])
-kml.save(plan_kml)
+# kml=simplekml.Kml()
+# for i in out:
+#     print(plan[i])
+#     kml.newpoint(name=str(places[i]), coords=[(plan[i][1], plan[i][0])])
+# kml.save(plan_kml)

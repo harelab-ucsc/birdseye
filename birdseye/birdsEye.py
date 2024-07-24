@@ -179,7 +179,8 @@ class birdsEye():
         #First, compose the image space. That is, take the world pose from the DB, and use a rigid transform to get the sensor frame
 
         # changing the dimensions of the click to be a 1x4
-        pins = np.concatenate((pins, (self.T_WC[2,3]-self.radalt)*np.ones((len(pins), 1)),np.ones((len(pins), 1))), axis=1)
+        pins = np.concatenate((pins,np.ones((len(pins), 1))), axis=1)
+        print(pins.shape)
 
         # projecting the image by x_image = K * T_{wc} * X_utm
         sensor_frame_pins = np.linalg.inv(self.T_WC)@pins.T
@@ -237,7 +238,7 @@ class birdsEye():
 
 
     def parseFlightDatabase(self):
-        clicks = self.dbc.getFrom('x, y', f"clicks_{self.db_name}")
+        clicks = self.dbc.getFrom('x, y, z', f"clicks_{self.db_name}")
         clicks = np.array(clicks)
         print("clicks: \n", clicks)
 
@@ -247,13 +248,11 @@ class birdsEye():
 
         # Create rectification and projection maps
         map1, map2 = cv2.initUndistortRectifyMap(self.K, self.D, None, self.K, (self.res[0], self.res[1]), cv2.CV_32FC1)
-        self._2DFrameVertices = cv2.undistortPointsIter(np.array(self._2DFrameVertices,dtype = np.float64), self.K, self.D, None, self.K, (cv2.TERM_CRITERIA_COUNT | cv2.TERM_CRITERIA_EPS, 40, 0.03))
+        self._2DFrameVertices = cv2.undistortPointsIter(np.array(self._2DFrameVertices,dtype = np.float64), self.K, self.D, None, self.K, (cv2.TERM_CRITERIA_COUNT | cv2.TERM_CRITERIA_EPS, 100, 0.003))
         self._2DFrameVertices = np.squeeze(self._2DFrameVertices).tolist()
 
-        # cv2.namedWindow("Mask", cv2.WINDOW_NORMAL)
-        # cv2.resizeWindow("Mask", 512, 384)
         cv2.namedWindow("Window", cv2.WINDOW_NORMAL)
-        cv2.resizeWindow("Window", 512, 384)
+        cv2.resizeWindow("Window", 1920, 1200)
 
         rtk_tracker = [0]*4
         for i, frame in enumerate(self.data):
@@ -267,7 +266,7 @@ class birdsEye():
             clicks_2D = self._3Dto2D(clicks)
             self.ax.scatter(clicks[:,0], \
                             clicks[:,1], \
-                            (self.T_WC[2,3]-self.radalt)*np.ones_like(clicks[:,1]), \
+                            clicks[:,2], \
                             marker='s', alpha=0.5, c='m', s=64, label='Click')
             self._3DFrameVertices = self._2Dto3D(self._2DFrameVertices)
             self.ax.scatter(np.array(self._3DFrameVertices)[:,0], \
@@ -313,7 +312,7 @@ class birdsEye():
                     self.ax.scatter(tmp[0], tmp[1], tmp[2], c=color, alpha=0.1, s=32)
 
             if self.radalt > 3.0:
-                print('cv2.imread')
+                print('  cv2.imread')
                 img = cv2.imread(frame[-2])
                 rect = cv2.remap(img, map1, map2, interpolation=cv2.INTER_LINEAR)
                 gray = cv2.cvtColor(rect, cv2.COLOR_BGR2GRAY)
@@ -327,7 +326,9 @@ class birdsEye():
                     for click in clicks_2D:
                         cv2.circle(rect, [int(click[0]), int(click[1])], 15, (0, 0, 255), -1)
                     if bproj is not None:
-                        self.bproj.append(bproj)
+                        self.bproj += bproj
+                        bp = np.array(self.bproj)
+                        bp = np.squeeze(bp)
                 else:
                     cv2.putText(rect, 'False', (1600,100), \
                         cv2.FONT_HERSHEY_SIMPLEX, 4, (0, 255, 0), 4)
@@ -337,16 +338,16 @@ class birdsEye():
                 cv2.waitKey(30)
 
             if len(self.bproj) > 1:
-                # print('    new click')
-                self.ax.scatter(np.array(self.bproj)[:,:,0], \
-                                np.array(self.bproj)[:,:,1], \
-                                np.array(self.bproj)[:,:,2], \
+                # print(f'    new clicks: \n    {bp}')
+                self.ax.scatter(bp[:,0], \
+                                bp[:,1], \
+                                bp[:,2], \
                                 c='b', alpha=0.3, s=64, label='BackProj')
             elif len(self.bproj) == 1:
-                # print('    first click')
-                self.ax.scatter(self.bproj[0][0][0], \
-                                self.bproj[0][0][1], \
-                                self.bproj[0][0][2], \
+                # print(f'    first click: \n    {bp}')
+                self.ax.scatter(bp[0], \
+                                bp[1], \
+                                bp[2], \
                                 c='b', alpha=0.3, s=64)
             else:
                 pass  # nothing yet
@@ -355,7 +356,7 @@ class birdsEye():
             self.ax.set_xlabel('X')
             self.ax.set_ylim(frame[1]-15, frame[1]+15)
             self.ax.set_ylabel('Y')
-            self.ax.set_zlim(-10, 10)
+            self.ax.set_zlim(frame[2]-20, frame[2]+1)
             self.ax.set_zlabel('Z')
             self.ax.legend()
 
@@ -363,7 +364,7 @@ class birdsEye():
             self.ax.set_box_aspect([1,1,1])
             self.ax.set_proj_type('ortho')
             self.fig.canvas.draw_idle()
-            plt.pause(0.05)
+            plt.pause(0.35)
             self.ax.cla()
             self.tgts = None
 
