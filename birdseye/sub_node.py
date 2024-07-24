@@ -22,6 +22,7 @@ from rclpy.node import Node
 from sensor_msgs.msg import Image
 from std_msgs.msg import String
 from ublox_msgs.msg import NavPVT
+from custom_msgs.msg import AltSNR
 
 from tf2_ros import TransformException
 from tf2_ros.buffer import Buffer
@@ -41,7 +42,7 @@ class subscriberNode(rclpy.node.Node):
         time.sleep(1)
         # node init
         super().__init__('flight_data_sub')
-        self.declare_parameter("sensorID", rclpy.Parameter.Type.STRING)
+        self.declare_parameter("sensorID", "cam0")
         self.sensor = self.get_parameter("sensorID").value
 
         self.declare_parameter("sensors_yaml", "sensor_params/birdsEyeSensorParams.yaml")
@@ -83,7 +84,11 @@ class subscriberNode(rclpy.node.Node):
         # camera subscriber
         self.cam_sub = self.create_subscription(
             Image, '/image', self.cam_cb, 100)
-        # ublox subscribers
+        # radalt subscriber
+        self.rad_sub = self.create_subscription(
+            AltSNR, '/rad_altitude', self.radalt_cb, 100)
+        self.radalt = None
+        # ublox subscriber
         self.ublox_health_sub = self.create_subscription(
             NavPVT, '/gps_flag', self.navpvt_cb, 100)
         self.RTK_STATUS = None
@@ -123,9 +128,10 @@ class subscriberNode(rclpy.node.Node):
             reader = csv.reader(clicks)
             for line in reader:
                 # breakdown line
+                # self.get_logger().info(f'{line}')
                 u = utm.from_latlon(float(line[0]), float(line[1]))
                 tag = int(line[-1][-1])
-                data.append([u[0], u[1], tag])
+                data.append([u[0], u[1], float(line[2]), float(line[3]), tag])
         self.dbc.insertClicks(f"clicks_{self.db_name}", data)
         self.get_logger().info('...Done reading clicks CSV file.')
 
@@ -219,24 +225,28 @@ class subscriberNode(rclpy.node.Node):
         data_loc = self.dir_name + "/" + self.sensor + '_' + time + ".png"
         image = self.br.imgmsg_to_cv2(msg, desired_encoding='passthrough')
 
-        if self.RTK_STATUS == 131:
+        # if self.RTK_STATUS == 131:
+        if self.RTK_STATUS == 67 or self.RTK_STATUS == 131:
         # if self.RTK_STATUS == 3 or self.RTK_STATUS == 67 or self.RTK_STATUS == 131:
             try:
                 t = self.tf_buffer.lookup_transform(
                     self.target_frame,
                     self.source_frame,
+                    # msg.header.stamp)
                     rclpy.time.Time())
                 t = t.transform
                 # self.get_logger().info(f'[{t.translation.x}, {t.translation.y}, {t.translation.z}]')
                 pos = [t.translation.x, t.translation.y, t.translation.z]
                 quat = [t.rotation.x, t.rotation.y, t.rotation.z, t.rotation.w]
                 cv2.imwrite(data_loc, image)
-                valsList = pos + quat + [self.RTK_STATUS, '\"'+data_loc+'\"', time]
+                valsList = pos + quat + [self.RTK_STATUS, self.radalt, '\"'+data_loc+'\"', time]
                 vals = ','.join([str(x) for x in valsList])
                 self.dbc.insertIgnoreInto(f"{self.sensor}_images_{self.db_name}", \
-                                            "x, y, z, q, u, a, t, rtk_fix, save_loc, time", vals)
-                # if self.RTK_STATUS != 131:
-                #     self.get_logger().info(f'Bad pose recorded... no RTK fix: {self.RTK_STATUS} should be 131')
+                                            "x, y, z, q, u, a, t, rtk_fix, radalt, save_loc, time", vals)
+                if self.RTK_STATUS != 131:
+                    self.get_logger().info(f'Unstable pose recorded... no RTK fix: {self.RTK_STATUS} should be 131')
+                else:
+                    self.get_logger().info(f'good RTK_STATUS {self.RTK_STATUS}')
             except TransformException as ex:
                 self.get_logger().info(
                     f'Could not transform {self.source_frame} to {self.target_frame}: {ex}')
@@ -244,6 +254,13 @@ class subscriberNode(rclpy.node.Node):
         else:
             # self.get_logger().info(f'bad RTK_STATUS {self.RTK_STATUS}; should be one of 3, 67, 131')
             self.get_logger().info(f'bad RTK_STATUS {self.RTK_STATUS}; should be 131')
+
+
+    def radalt_cb(self, msg: AltSNR):
+        if msg.snr > 13:
+            self.radalt = msg.altitude
+        else:
+            print('radalt measurement discarded; SNR too large')
 
 
     def navpvt_cb(self, msg: NavPVT):

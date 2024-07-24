@@ -24,7 +24,8 @@ import sys
 import utm
 import simplekml
 
-from TSP import tsp
+# from TSP import tsp
+import fast_tsp
 
 
 EPS = 1.0
@@ -103,7 +104,7 @@ def build_dji_plan(
     #plan_kml = os.path.join(os.path.expanduser('~'), savename)
     clicks_csv = fp_in
     plan_kml = fp_out
-    
+
 
     LLrep = []
     UTMrep = []
@@ -195,15 +196,23 @@ def build_dji_plan(
 
     waypoints = np.array(waypoints)
     plt.title(f"Estimated number of clusters: {n_clusters_}")
-    for i, pti in enumerate(waypoints):
-        tmp = []
-        for j, ptj in enumerate(waypoints[i+1:]):
-            tmp.append(np.linalg.norm(pti-ptj))
-        dists.append(tmp)
+    # plt.show()
+    dists = metrics.pairwise_distances(waypoints)
+    dists *= 1000  # convert to mm from m
+    dists = dists.astype(np.int32)
+
+    out = fast_tsp.find_tour(dists)
+    print(out)
+    spt = out[0]
+    plt.plot(waypoints[spt,0], waypoints[spt,1], 'o', markerfacecolor='r', markeredgecolor='k', markersize=10)
+    for pt in out[1:]:
+        plt.plot([waypoints[spt,0], waypoints[pt,0]], [waypoints[spt,1], waypoints[pt,1]], 'k')
+        plt.plot(waypoints[pt,0], waypoints[pt,1], 'o', markerfacecolor='b', markeredgecolor='b', markersize=4)
+        spt = pt
+    plt.plot([waypoints[spt,0], waypoints[out[0],0]], [waypoints[spt,1], waypoints[out[0],1]], 'k')
+    plt.show()
 
     plan = []
-    places = [i for i in range(len(waypoints))]
-    out = tsp(places, dists) if do_tsp else places
     for pt in waypoints[out]:
         plan.append(list(utm.to_latlon(pt[0], pt[1], u[-2], u[-1])))
     plan = np.array(plan)

@@ -11,7 +11,8 @@ def generate_launch_description():
         # DeclareLaunchArgument('cam_topic', default_value='/cam0/rgb_cam/image_rect'),
         DeclareLaunchArgument('cam_topic', default_value='/cam0/rgb_cam/image_raw'),
         DeclareLaunchArgument('sensors_yaml', default_value=os.path.join(os.path.expanduser('~'), 'sensor_params/birdsEyeSensorParams.yaml')),
-        DeclareLaunchArgument('clicks_csv', default_value=os.path.join(os.path.expanduser('~'),'catch/data_10.csv')),
+        DeclareLaunchArgument('clicks_csv', default_value=os.path.join(os.path.expanduser('~'),'catch/data_farmAlt_20250722.csv')),
+        # DeclareLaunchArgument('clicks_csv', default_value=os.path.join(os.path.expanduser('~'),'catch/data_lot_tests.csv')),
         DeclareLaunchArgument('dir_name', default_value='parsed_flight'),
 
         # Commented out image_proc node
@@ -44,8 +45,8 @@ def generate_launch_description():
         ),
 
         # Execute rqt_graph
-        ExecuteProcess(
-            cmd=['rqt_graph'],
-            output='screen'
-        ),
+        # ExecuteProcess(
+        #     cmd=['rqt_graph'],
+        #     output='screen'
+        # ),
     ])

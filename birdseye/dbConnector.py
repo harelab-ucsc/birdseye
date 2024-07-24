@@ -25,8 +25,8 @@ class dbConnector:
     def boot(self, db_name, sensor):
         # print(db_name, sensor)
         # self.setupTable(f"{sensor}_poses_{db_name}", "x REAL, y REAL, z REAL, q REAL, u REAL, a REAL, t REAL, rtk_fix INTEGER, rtk_time REAL, alt_time REAL, imu_time REAL")
-        self.setupTable(f"{sensor}_images_{db_name}", "x REAL, y REAL, z REAL, q REAL, u REAL, a REAL, t REAL, rtk_fix INTEGER, save_loc TEXT UNIQUE, time REAL")
-        self.setupTable(f"clicks_{db_name}", "x REAL, y REAL, tag INTEGER")
+        self.setupTable(f"{sensor}_images_{db_name}", "x REAL, y REAL, z REAL, q REAL, u REAL, a REAL, t REAL, rtk_fix INTEGER, radalt REAL, save_loc TEXT UNIQUE, time REAL")
+        self.setupTable(f"clicks_{db_name}", "x REAL, y REAL, z REAL, z_msl REAL, tag INTEGER")
         self.setupTable(f"parameters_{db_name}", f"sensorID TEXT UNIQUE, resolution array, intrinsics1 array, intrinsics2 array, extrinsics array")
 
 
@@ -101,7 +101,7 @@ class dbConnector:
     def insertClicks(self, table_name, vals):
         cur = self.db_c.cursor()
         # cur.executemany(f"INSERT INTO {table_name} (x, y, health) VALUES(?,?,?)", vals)
-        cur.executemany(f"INSERT INTO {table_name} (x, y, tag) VALUES(?,?,?)", vals)
+        cur.executemany(f"INSERT INTO {table_name} (x, y, z, z_msl, tag) VALUES(?,?,?,?,?)", vals)
         self.db_c.commit()
 
 
