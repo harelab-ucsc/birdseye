@@ -210,7 +210,6 @@ def build_dji_plan(
         plt.plot(waypoints[pt,0], waypoints[pt,1], 'o', markerfacecolor='b', markeredgecolor='b', markersize=4)
         spt = pt
     plt.plot([waypoints[spt,0], waypoints[out[0],0]], [waypoints[spt,1], waypoints[out[0],1]], 'k')
-    plt.show()
 
     plan = []
     for pt in waypoints[out]:
@@ -220,6 +219,8 @@ def build_dji_plan(
     print(f"Generating flight plan at {fp_out}...")
     generate_csv_from_plan(plan, fp_out)
     print("DONE.")
+
+    plt.show()
 
     """
     kml=simplekml.Kml()
