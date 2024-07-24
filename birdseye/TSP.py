@@ -1,3 +1,5 @@
+"""TSP.py - solve the Traveling Salesperson Problem with _elegance_.
+"""
 from itertools import product
 # from sys import stdout as out
 from mip import Model, xsum, minimize, BINARY
