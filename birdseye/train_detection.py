@@ -14,6 +14,7 @@ import scipy.ndimage as ndimage
 # from AMI_ContourClassFamily import Contour
 import glob
 import random
+import itertools
 # import pdb
 import matplotlib.pyplot as plt
 from sklearn.model_selection import train_test_split
@@ -29,8 +30,10 @@ IMG_HEIGHT = 384
 epochs = 1000
 
 # PATH = os.getcwd()
-dirname = 'farm_1'
-PATH = os.path.join(os.path.expanduser('~'), dirname)
+# dirname = 'farm_1'
+# PATH = os.path.join(os.path.expanduser('~'), dirname)
+dirnames = ['farm_1', 'farm_2']
+paths = [os.path.join(os.path.expanduser('~'), dirname) for dirname in dirnames]
 IMAGE_CHANNELS = 1
 
 tf.data.experimental.enable_debug_mode()
@@ -359,7 +362,8 @@ if __name__ == '__main__':
     global preglob_tr
     global preglob_te
 
-    preglob = glob.glob(os.path.join(PATH, '*.png'))
+    # preglob = glob.glob(os.path.join(PATH, '*.png'))
+    preglob = list(itertools.chain.from_itertable(glob.glob(os.path.join(path, '*.png')) for path in paths))
     random.shuffle(preglob)
     # print(type(preglob))
     preglob_tr, preglob_te = train_test_split(preglob, shuffle=True, test_size=0.3)
