@@ -30,8 +30,10 @@ IMG_HEIGHT = 384
 epochs = 1000
 
 # PATH = os.getcwd()
-dirname = 'parsed_flight'
-PATH = os.path.join(os.path.expanduser('~'), dirname)
+# dirname = 'parsed_flight'
+# PATH = os.path.join(os.path.expanduser('~'), dirname)
+dirnames = ['farm_1', 'farm_2']
+paths = [os.path.join(os.path.expanduser('~'), dirname) for dirname in dirnames]
 IMAGE_CHANNELS = 3
 
 tf.data.experimental.enable_debug_mode()
@@ -366,8 +368,9 @@ if __name__ == '__main__':
     global preglob_tr
     global preglob_te
 
-    preglob = glob.glob(os.path.join(PATH, '*.png'))
-    # random.shuffle(preglob)
+    # preglob = glob.glob(os.path.join(PATH, '*.png'))
+    preglob = list(itertools.chain.from_itertable(glob.glob(os.path.join(path, '*.png')) for path in paths))
+    # random.shuffle(preglob)   # you commented this out Morgan?
     # print(type(preglob))
     preglob_tr, preglob_te = train_test_split(preglob, shuffle=False, test_size=0.3)
 
