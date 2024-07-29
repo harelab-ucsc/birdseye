@@ -23,18 +23,16 @@ from sklearn.model_selection import train_test_split
 # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ #
 
 # define , filepaths, and model savenames
-BUFFER_SIZE = 4
-BATCH_SIZE = 1
+BUFFER_SIZE = 32
+BATCH_SIZE = 8
 IMG_WIDTH = 512
 IMG_HEIGHT = 384
 epochs = 1000
 
 # PATH = os.getcwd()
-# dirname = 'farm_1'
-# PATH = os.path.join(os.path.expanduser('~'), dirname)
-dirnames = ['farm_1', 'farm_2']
-paths = [os.path.join(os.path.expanduser('~'), dirname) for dirname in dirnames]
-IMAGE_CHANNELS = 1
+dirname = 'parsed_flight'
+PATH = os.path.join(os.path.expanduser('~'), dirname)
+IMAGE_CHANNELS = 3
 
 tf.data.experimental.enable_debug_mode()
 
@@ -56,21 +54,27 @@ class reduce_sum(tf.keras.layers.Layer):
         return tf.math.reduce_sum(x, axis=1, keepdims=False, name=None)
 
 
-def read_label_file(load_name, frame_index):
+def read_label_file(load_name, image_file, frame_index):
     try:
         f = open(f"{load_name}", "rb")
-        # print(f'    Label loaded: frame index {frame_index}, {load_name}')
+        print()
+        print(f'    Label loaded: frame index {frame_index}, {load_name}, {image_file}')
         while True:
             # print(i)
             mask = f.readline()
             tmp = mask.split()
-            if len(tmp) == 0:
-                break
-            if int(tmp[0]) == frame_index:
-                # print('tmp: ', tmp)
+            # print('tmp: ', tmp)
+            if tmp[1] == image_file:
+                print('        ', tmp, end=' ')
                 cl = float(tmp[2])
+                print(cl)
+                break
+            elif len(tmp) == 0:
+                # print('end')
+                break
         f.close()
     except FileNotFoundError:
+        # print('bonk')
         pass
     return cl
 
@@ -84,7 +88,7 @@ def load_rle(image_file):
         frame_index = preglob_te.index(image_file)
     tmp = os.path.join(os.path.split(tmp)[0], '*.txt')
     load_name = glob.glob(tmp)[0]
-    cl = read_label_file(load_name, frame_index)
+    cl = read_label_file(load_name, image_file, frame_index)
     load_name = None
     return cl
 
@@ -362,11 +366,10 @@ if __name__ == '__main__':
     global preglob_tr
     global preglob_te
 
-    # preglob = glob.glob(os.path.join(PATH, '*.png'))
-    preglob = list(itertools.chain.from_itertable(glob.glob(os.path.join(path, '*.png')) for path in paths))
-    random.shuffle(preglob)
+    preglob = glob.glob(os.path.join(PATH, '*.png'))
+    # random.shuffle(preglob)
     # print(type(preglob))
-    preglob_tr, preglob_te = train_test_split(preglob, shuffle=True, test_size=0.3)
+    preglob_tr, preglob_te = train_test_split(preglob, shuffle=False, test_size=0.3)
 
     train_ds = tf.data.Dataset.from_tensor_slices(preglob_tr)
     train_ds = train_ds.map(load_rle_train, num_parallel_calls=tf.data.experimental.AUTOTUNE)

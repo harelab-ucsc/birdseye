@@ -12,8 +12,12 @@ import sys
 def generate_launch_description():
     return LaunchDescription([
         DeclareLaunchArgument('bagpath', default_value='/home/mwmaster/catch/Thesis_polygons/polygon_flight_7'),
-        DeclareLaunchArgument('rl_launch_path', default_value='/home/mwmaster/ros2_ws/launch/dualEKF_navsat_gx5.launch.py'),
+        DeclareLaunchArgument('rl_launch_path', default_value='/home/mwmaster/ros2_ws/src/birdseye/launch/dualEKF_navsat_gx5.launch.py'),
         DeclareLaunchArgument('be_launch_path', default_value='/home/mwmaster/ros2_ws/src/birdseye/launch/subNode.launch.py'),
+        ExecuteProcess(
+            cmd=['ros2', 'bag', 'play', launch.substitutions.LaunchConfiguration('bagpath'), '--read-ahead-queue-size', '10000'],
+            output='screen'
+            ),
         launch_ros.actions.Node(
             package='tf2_ros',
             executable='static_transform_publisher',
@@ -29,10 +33,6 @@ def generate_launch_description():
             executable='static_transform_publisher',
             arguments = ['0', '0', '-0.025', '0.8939967', '0', '0', '-0.4480736', 'base_link', 'radalt']
             ),
-        ExecuteProcess(
-            cmd=['ros2', 'bag', 'play', launch.substitutions.LaunchConfiguration('bagpath'), '--read-ahead-queue-size', '10000'],
-            output='screen'
-        ),
         launch.actions.IncludeLaunchDescription(
             launch.launch_description_sources.PythonLaunchDescriptionSource([launch.substitutions.LaunchConfiguration('rl_launch_path')])
         ),

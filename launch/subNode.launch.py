@@ -10,7 +10,7 @@ def generate_launch_description():
         DeclareLaunchArgument('sensorID', default_value='cam0'),
         # DeclareLaunchArgument('cam_topic', default_value='/cam0/rgb_cam/image_rect'),
         DeclareLaunchArgument('cam_topic', default_value='/cam0/rgb_cam/image_raw'),
-        DeclareLaunchArgument('sensors_yaml', default_value=os.path.join(os.path.expanduser('~'), 'sensor_params/birdsEyeSensorParams.yaml')),
+        DeclareLaunchArgument('sensors_yaml', default_value=os.path.join(os.path.expanduser('~'), 'ros2_ws/src/birdseys/config/birdsEyeSensorParams.yaml')),
         DeclareLaunchArgument('clicks_csv', default_value=os.path.join(os.path.expanduser('~'),'catch/data_farmAlt_20250722.csv')),
         # DeclareLaunchArgument('clicks_csv', default_value=os.path.join(os.path.expanduser('~'),'catch/data_lot_tests.csv')),
         DeclareLaunchArgument('dir_name', default_value='parsed_flight'),

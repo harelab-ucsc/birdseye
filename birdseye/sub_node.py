@@ -11,6 +11,7 @@ import cv2
 import glob2
 import stat
 import time
+import sqlite3
 import numpy as np
 
 # from . import simRotTools
@@ -224,9 +225,10 @@ class subscriberNode(rclpy.node.Node):
         time = f'{sec}.{nsec}'
         data_loc = self.dir_name + "/" + self.sensor + '_' + time + ".png"
         image = self.br.imgmsg_to_cv2(msg, desired_encoding='passthrough')
+        image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
 
-        # if self.RTK_STATUS == 131:
-        if self.RTK_STATUS == 67 or self.RTK_STATUS == 131:
+        if self.RTK_STATUS == 131:
+        # if self.RTK_STATUS == 67 or self.RTK_STATUS == 131:
         # if self.RTK_STATUS == 3 or self.RTK_STATUS == 67 or self.RTK_STATUS == 131:
             try:
                 t = self.tf_buffer.lookup_transform(
@@ -250,6 +252,9 @@ class subscriberNode(rclpy.node.Node):
             except TransformException as ex:
                 self.get_logger().info(
                     f'Could not transform {self.source_frame} to {self.target_frame}: {ex}')
+                pass
+            except sqlite3.OperationalError as ex:
+                self.get_logger().info(f'attempted to insert bad pose: {ex}')
                 pass
         else:
             # self.get_logger().info(f'bad RTK_STATUS {self.RTK_STATUS}; should be one of 3, 67, 131')

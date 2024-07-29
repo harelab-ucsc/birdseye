@@ -1,0 +1,110 @@
+ekf_filter_node_odom:
+  ros__parameters:
+    frequency: 30.0
+    sensor_timeout: 0.2
+    two_d_mode: false
+    transform_time_offset: 0.061112865886248625
+    # transform_time_offset: 0.0
+    transform_timeout: 0.0
+    publish_tf: true
+    permit_corrected_publication: true
+    smooth_lagged_data: true
+    print_diagnostics: true
+    debug: false
+
+    # map_frame: map
+    odom_frame: odom
+    base_link_frame: base_link
+    world_frame: odom
+
+    twist0: ublox_gps_node/fix_velocity
+    twist0_config: [false,  false,  false,  # pose XYZ
+                    false, false, false,  # orientation RPY
+                    true,  true,  true,     # linear velocities XYZ
+                    false, false, false,  # angular velocities RPY
+                    false, false, false]  # linear accelerations XYZ
+    twist0_queue_size: 100
+    twist0_nodelay: true
+
+    imu0: imu/data
+    imu0_config: [false, false, false,
+                  true,  true,  true,
+                  false, false, false,
+                  true,  true,  true,
+                  true,  true,  true]
+    imu0_differential: false
+    imu0_relative: false
+    imu0_queue_size: 100
+    imu0_remove_gravitational_acceleration: true
+    imu0_nodelay: true
+
+    use_control: false
+    process_noise_covariance: [0.3, 0.3, 0.3, 0.001, 0.001, 0.001, 0.1, 0.1, 0.1, 0.001, 0.001, 0.001, 0.001, 0.001, 0.001]
+    initial_estimate_covariance: [0.01, 0.01, 0.01, 0.001, 0.001, 0.001, 0.001, 0.001, 0.001, 0.001, 0.001, 0.001, 0.001, 0.001, 0.001]
+
+ekf_filter_node_map:
+  ros__parameters:
+    frequency: 30.0
+    sensor_timeout: 0.2
+    two_d_mode: false
+    transform_time_offset: 0.0
+    transform_time_offset: 0.061112865886248625
+    # transform_timeout: 0.0
+    publish_tf: true
+    permit_corrected_publication: true
+    smooth_lagged_data: true
+    print_diagnostics: true
+    debug: false
+
+    map_frame: map
+    odom_frame: odom
+    base_link_frame: base_link
+    world_frame: map
+
+    odom0: odometry/gps
+    odom0_config: [true,  true,  true,
+                  false, false, false,
+                  false, false, false,
+                  false, false, false,
+                  false, false, false]
+    odom0_queue_size: 10
+    odom0_differential: false
+    odom0_relative: false
+    odom0_nodelay: true
+
+    # twist0: ublox_gps_node/fix_velocity
+    # twist0_config: [false,  false,  false,  # pose XYZ
+    #                 false, false, false,  # orientation RPY
+    #                 true,  true,  true,     # linear velocities XYZ
+    #                 false, false, false,  # angular velocities RPY
+    #                 false, false, false]  # linear accelerations XYZ
+    # twist0_queue_size: 10
+
+    imu0: imu/data
+    imu0_config: [false, false, false,
+                  true,  true,  true,
+                  false, false, false,
+                  true,  true,  true,
+                  true,  true,  true]
+    imu0_differential: false
+    imu0_relative: false
+    imu0_queue_size: 10
+    imu0_nodelay: true
+    imu0_remove_gravitational_acceleration: true
+
+    use_control: false
+    process_noise_covariance: [0.001, 0.001, 0.001, 0.001, 0.001, 0.001, 0.1, 0.1, 0.1, 0.001, 0.001, 0.001, 0.001, 0.001, 0.001]
+    initial_estimate_covariance: [0.1, 0.1, 0.1, 0.001, 0.001, 0.001, 0.001, 0.001, 0.001, 0.001, 0.001, 0.001, 0.001, 0.001, 0.001]
+
+navsat_transform:
+  ros__parameters:
+    frequency: 30.0
+    delay: 1.0
+    magnetic_declination_radians: 0.2232  # For 36.98316° N, 122.05595149999999° W , WMM-2020 model
+    yaw_offset: -0.453785222
+    zero_altitude: false
+    broadcast_cartesian_transform: true
+    broadcast_cartesian_transform_as_parent: true
+    publish_filtered_gps: false
+    use_odometry_yaw: false
+    wait_for_datum: false

@@ -180,7 +180,7 @@ class birdsEye():
 
         # changing the dimensions of the click to be a 1x4
         pins = np.concatenate((pins,np.ones((len(pins), 1))), axis=1)
-        print(pins.shape)
+        # print(pins.shape)
 
         # projecting the image by x_image = K * T_{wc} * X_utm
         sensor_frame_pins = np.linalg.inv(self.T_WC)@pins.T
@@ -238,9 +238,9 @@ class birdsEye():
 
 
     def parseFlightDatabase(self):
-        clicks = self.dbc.getFrom('x, y, z', f"clicks_{self.db_name}")
-        clicks = np.array(clicks)
-        print("clicks: \n", clicks)
+        clks = self.dbc.getFrom('x, y', f"clicks_{self.db_name}")
+        clks = np.array(clks)
+        print("clicks: \n", clks, "\n clicks.shape:", clks.shape)
 
         self.data = self.dbc.getFrom('x, y, z, q, u, a, t, rtk_fix, radalt, save_loc, time', f'{self.sensor}_images_{self.db_name}')
         save_name = os.path.join(self.img_dir, self.img_dir.split(os.sep)[-2])
@@ -259,6 +259,9 @@ class birdsEye():
             print(f'frame: {i+1} of {len(self.data)}')
             self.frame_index = i
             sA.frame_index = i
+
+            clicks = np.hstack((clks, np.ones_like(clks[:,0]).reshape(-1,1)*(frame[2]-frame[-3])))
+            # print("clicks: \n", clicks, "\n clicks.shape:", clicks.shape)
 
             self.T_WC = poseRowToTransform(frame[:7])  # our base link maps from the world origin to the base link
             self.radalt = frame[-3]
@@ -311,28 +314,45 @@ class birdsEye():
                         color = 'k'
                     self.ax.scatter(tmp[0], tmp[1], tmp[2], c=color, alpha=0.1, s=32)
 
-            if self.radalt > 3.0:
-                print('  cv2.imread')
+            if self.radalt > 3.0 and frame[-4] == 131:
+                # print('  cv2.imread')
                 img = cv2.imread(frame[-2])
+                # img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
                 rect = cv2.remap(img, map1, map2, interpolation=cv2.INTER_LINEAR)
                 gray = cv2.cvtColor(rect, cv2.COLOR_BGR2GRAY)
                 cv2.putText(rect, f'{frame[-1]}', (50,100), \
                     cv2.FONT_HERSHEY_SIMPLEX, 4, (0, 255, 0), 4)
 
                 if len(clicks_2D) > 0:
+                    if frame[-4] == 131:
+                        color = (0,255,0)
+                    elif frame[-4] == 67:
+                        color = (0,255,255)
+                    elif frame[-4] == 3:
+                        color = (0,0,255)
+                    else:
+                        color == (0,0,0)
                     cv2.putText(rect, 'True', (1600,100), \
                         cv2.FONT_HERSHEY_SIMPLEX, 4, (0, 255, 0), 4)
-                    self.annotate(frame[-2], 1.0)
+
+                    if frame[-4] == 131:
+                        self.annotate(frame[-2], 1.0)
+                    else:
+                        print(f'    skipping annotation: bad RTK_STATUS, {frame[-4]}')
+
                     for click in clicks_2D:
-                        cv2.circle(rect, [int(click[0]), int(click[1])], 15, (0, 0, 255), -1)
+                        cv2.circle(rect, [int(click[0]), int(click[1])], 15, color, -1)
                     if bproj is not None:
                         self.bproj += bproj
                         bp = np.array(self.bproj)
                         bp = np.squeeze(bp)
                 else:
                     cv2.putText(rect, 'False', (1600,100), \
-                        cv2.FONT_HERSHEY_SIMPLEX, 4, (0, 255, 0), 4)
-                    self.annotate(frame[-2], 0.0)
+                        cv2.FONT_HERSHEY_SIMPLEX, 4, (0, 0, 255), 4)
+                    if frame[-4] == 131:
+                        self.annotate(frame[-2], 0.0)
+                    else:
+                        print(f'    skipping annotation: bad RTK_STATUS, {frame[-4]}')
 
                 cv2.imshow("Window", rect)
                 cv2.waitKey(30)
