@@ -23,8 +23,8 @@ from sklearn.model_selection import train_test_split
 # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ #
 
 # define , filepaths, and model savenames
-BUFFER_SIZE = 32
-BATCH_SIZE = 8
+BUFFER_SIZE = 64
+BATCH_SIZE = 16
 IMG_WIDTH = 512
 IMG_HEIGHT = 384
 epochs = 1000
@@ -32,7 +32,7 @@ epochs = 1000
 # PATH = os.getcwd()
 # dirname = 'parsed_flight'
 # PATH = os.path.join(os.path.expanduser('~'), dirname)
-dirnames = ['farm_1', 'farm_2']
+dirnames = ['farm_0_20240725', 'farm_1_20240725', 'farm_2_20240729', 'farm_3_20240729']
 paths = [os.path.join(os.path.expanduser('~'), dirname) for dirname in dirnames]
 IMAGE_CHANNELS = 3
 
@@ -56,20 +56,20 @@ class reduce_sum(tf.keras.layers.Layer):
         return tf.math.reduce_sum(x, axis=1, keepdims=False, name=None)
 
 
-def read_label_file(load_name, image_file, frame_index):
+def read_label_file(load_name, image_file):
     try:
         f = open(f"{load_name}", "rb")
-        print()
-        print(f'    Label loaded: frame index {frame_index}, {load_name}, {image_file}')
+        # print()
+        # print(f'    Label loaded: {load_name}, {image_file}')
         while True:
             # print(i)
             mask = f.readline()
             tmp = mask.split()
             # print('tmp: ', tmp)
-            if tmp[1] == image_file:
-                print('        ', tmp, end=' ')
+            if os.path.split(tmp[1])[1] == os.path.split(image_file.numpy())[1]:
+                # print('        ', tmp, end=' ')
                 cl = float(tmp[2])
-                print(cl)
+                # print(cl)
                 break
             elif len(tmp) == 0:
                 # print('end')
@@ -84,13 +84,13 @@ def read_label_file(load_name, image_file, frame_index):
 def load_rle(image_file):
     load_name = None
     tmp = tf.keras.backend.get_value(image_file).decode('utf-8')
-    try:
-        frame_index = preglob_tr.index(image_file)
-    except ValueError:
-        frame_index = preglob_te.index(image_file)
+    # try:
+    #     frame_index = preglob_tr.index(image_file)
+    # except ValueError:
+    #     frame_index = preglob_te.index(image_file)
     tmp = os.path.join(os.path.split(tmp)[0], '*.txt')
     load_name = glob.glob(tmp)[0]
-    cl = read_label_file(load_name, image_file, frame_index)
+    cl = read_label_file(load_name, image_file)
     load_name = None
     return cl
 
@@ -320,8 +320,11 @@ def out_block(x, filters, size, use_bias, ker_reg, ker_con, bias_reg, bias_con, 
 def baseline_net(inputs, use_bias, ker_reg, ker_con, bias_reg, bias_con, act_reg, ker=3):
     """ this model trains reliably """
     x = in_block(inputs, [32, 64], ker, [1, 1], use_bias, ker_reg, ker_con, bias_reg, bias_con, act_reg)  # 32, 64
-    x = down_block(x, 128, ker, use_bias, ker_reg, ker_con, bias_reg, bias_con, act_reg)  # 128
-    x = down_block(x, 128, ker, use_bias, ker_reg, ker_con, bias_reg, bias_con, act_reg)  # 256
+    x = down_block(x, 64, ker, use_bias, ker_reg, ker_con, bias_reg, bias_con, act_reg)  # 128
+    x = down_block(x, 64, ker, use_bias, ker_reg, ker_con, bias_reg, bias_con, act_reg)  # 256
+    x = down_block(x, 64, ker, use_bias, ker_reg, ker_con, bias_reg, bias_con, act_reg)  # 256
+    x = down_block(x, 64, ker, use_bias, ker_reg, ker_con, bias_reg, bias_con, act_reg)  # 256
+
     # x = down_block(x, 512, ker, use_bias, ker_reg, ker_con, bias_reg, bias_con, act_reg)  # 512
     # x = down_block(x, 1024, ker, use_bias, ker_reg, ker_con, bias_reg, bias_con, act_reg)  # 1024
     # x = down_block(x, 1024, ker, use_bias, ker_reg, ker_con, bias_reg, bias_con, act_reg)  # 1024
@@ -336,7 +339,7 @@ def generator(use_bias, ker_reg, ker_con, bias_reg, bias_con, act_reg, h=IMG_HEI
 
 
 if __name__ == '__main__':
-    filename = f'ucsc_{IMG_WIDTH}_{IMG_HEIGHT}_02'.format(IMG_WIDTH, IMG_HEIGHT)
+    filename = f'ucsc_{IMG_WIDTH}_{IMG_HEIGHT}_03'.format(IMG_WIDTH, IMG_HEIGHT)
 
     use_bias = True
     use_regularizers = True
@@ -369,8 +372,10 @@ if __name__ == '__main__':
     global preglob_te
 
     # preglob = glob.glob(os.path.join(PATH, '*.png'))
-    preglob = list(itertools.chain.from_itertable(glob.glob(os.path.join(path, '*.png')) for path in paths))
-    # random.shuffle(preglob)   # you commented this out Morgan?
+    preglob = []
+    for path in paths:
+        preglob += glob.glob(os.path.join(path, '*.png'))
+    random.shuffle(preglob)   # you commented this out Morgan?
     # print(type(preglob))
     preglob_tr, preglob_te = train_test_split(preglob, shuffle=False, test_size=0.3)
 
@@ -399,6 +404,8 @@ if __name__ == '__main__':
                                 tf.keras.metrics.TrueNegatives(name='TN'), \
                                 tf.keras.metrics.TruePositives(name='TP')])
     generator.summary()
+
+    print(len(preglob), 'training samples: ', len(preglob_tr), 'training, ', len(preglob_te), 'testing')
 
     callbacks = [tf.keras.callbacks.ReduceLROnPlateau(monitor='val_loss', factor=0.5, patience=3, min_lr=0),
                  tf.keras.callbacks.EarlyStopping(monitor='val_loss', patience=9),
