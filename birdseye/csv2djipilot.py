@@ -15,6 +15,7 @@ DEFAULT_ACTIONS_SEQUENCE: Union[str, None] = None
 DEFAULT_GIMBAL: Union[float, None] = None
 DEFAULT_HEADING: Union[float, None] = None
 DEFAULT_HEIGHT = 10    # m
+DEFAULT_NAME = "xatu"
 DEFAULT_SPEED = 2.3    # m/s
 DEFAULT_TURNMODE = 'AUTO'
 
@@ -49,258 +50,124 @@ def _write_file(path: str, data: any):
     with open(path, "w+") as fp:
         fp.write(data)
 
-template_base = """
+"""
+Args:
+    author      (str)
+    now         (str((int))):           Epoch file creation time in ms.
+    height      (str(float))
+    WAYPOINTS   (str(list(Template]))): List of waypoint templates.
+"""
+template_plan_base = Template("""
 <?xml version="1.0" encoding="UTF-8"?>
 <kml xmlns="http://www.opengis.net/kml/2.2" xmlns:wpml="http://www.dji.com/wpmz/1.0.2">
 <Document>
 
-  <!-- Step 1: Implement File Creation Information -->
-  <wpml:author>${author}</wpml:author>
-  <wpml:createTime>${now}</wpml:createTime>
-  <wpml:updateTime>${now}</wpml:updateTime>
- 
-  <!-- Step 2: Setup Mission Configuration -->
-  <wpml:missionConfig>
-    <wpml:flyToWaylineMode>safely</wpml:flyToWaylineMode>
-    <wpml:finishAction>goHome</wpml:finishAction>
-    <wpml:exitOnRCLost>goContinue</wpml:exitOnRCLost>
-    <wpml:executeRCLostAction>hover</wpml:executeRCLostAction>
-    <wpml:takeOffSecurityHeight>20</wpml:takeOffSecurityHeight>
-    <wpml:takeOffRefPoint>23.98057,115.987663,100</wpml:takeOffRefPoint>
-    <wpml:takeOffRefPointAGLHeight>35</wpml:takeOffRefPointAGLHeight>
-    <wpml:globalTransitionalSpeed>8</wpml:globalTransitionalSpeed>
-    <wpml:droneInfo>
-      <!-- Declare drone model with M30 -->
-      <wpml:droneEnumValue>67</wpml:droneEnumValue>
-      <wpml:droneSubEnumValue>0</wpml:droneSubEnumValue>
-    </wpml:droneInfo>
-    <wpml:payloadInfo>
-      <!-- Declare payload model with M30 -->
-      <wpml:payloadEnumValue>52</wpml:payloadEnumValue>
-      <wpml:payloadPositionIndex>0</wpml:payloadPositionIndex>
-    </wpml:payloadInfo>
-  </wpml:missionConfig>
- 
-  <!-- Step 3: Setup A Folder for Waypoint Template -->
-  <Folder>
-    <wpml:templateType>waypoint</wpml:templateType>
-    <wpml:useGlobalTransitionalSpeed>0</wpml:useGlobalTransitionalSpeed>
-    <wpml:templateId>0</wpml:templateId>
-    <wpml:waylineCoordinateSysParam>
-      <wpml:coordinateMode>WGS84</wpml:coordinateMode>
-      <wpml:heightMode>EGM96</wpml:heightMode>
-      <wpml:globalShootHeight>50</wpml:globalShootHeight>
-      <wpml:positioningType>GPS</wpml:positioningType>
-      <wpml:surfaceFollowModeEnable>1</wpml:surfaceFollowModeEnable>
-      <wpml:surfaceRelativeHeight>100</wpml:surfaceRelativeHeight>
-    </wpml:waylineCoordinateSysParam>
-    <wpml:autoFlightSpeed>7</wpml:autoFlightSpeed>
-    <wpml:gimbalPitchMode>usePointSetting</wpml:gimbalPitchMode>
-    <wpml:globalWaypointHeadingParam>
-      <wpml:waypointHeadingMode>followWayline</wpml:waypointHeadingMode>
-      <wpml:waypointHeadingAngle>45</wpml:waypointHeadingAngle>
-      <wpml:waypointPoiPoint>24.323345,116.324532,31.000000</wpml:waypointPoiPoint>
-      <wpml:waypointHeadingPathMode>clockwise</wpml:waypointHeadingPathMode>
-    </wpml:globalWaypointHeadingParam>
-    <wpml:globalWaypointTurnMode>toPointAndStopWithDiscontinuityCurvature</wpml:globalWaypointTurnMode>
-    <wpml:globalUseStraightLine>0</wpml:globalUseStraightLine>
-    <Placemark>
-      <Point>
-        <!-- Fill longitude and latitude here -->
-        <coordinates>
-          longitude,latitude
-        </coordinates>
-      </Point>
-      <wpml:index>0</wpml:index>
-      <wpml:ellipsoidHeight>90.2</wpml:ellipsoidHeight>
-      <wpml:height>100</wpml:height>
-      <wpml:useGlobalHeight>1</wpml:useGlobalHeight>
-      <wpml:useGlobalSpeed>1</wpml:useGlobalSpeed>
-      <wpml:useGlobalHeadingParam>1</wpml:useGlobalHeadingParam>
-      <wpml:useGlobalTurnParam>1</wpml:useGlobalTurnParam>
-      <wpml:gimbalPitchAngle>0</wpml:gimbalPitchAngle>
-    </Placemark>
-    <Placemark>
-      <Point>
-        <!-- Fill longitude and latitude here -->
-        <coordinates>
-          longitude,latitude
-        </coordinates>
-      </Point>
-      <wpml:index>1</wpml:index>
-      <wpml:ellipsoidHeight>90.2</wpml:ellipsoidHeight>
-      <wpml:height>100</wpml:height>
-      <wpml:useGlobalHeight>1</wpml:useGlobalHeight>
-      <wpml:useGlobalSpeed>1</wpml:useGlobalSpeed>
-      <wpml:useGlobalHeadingParam>1</wpml:useGlobalHeadingParam>
-      <wpml:useGlobalTurnParam>1</wpml:useGlobalTurnParam>
-      <wpml:gimbalPitchAngle>0</wpml:gimbalPitchAngle>
-      <!-- Declare action group for waypoint 1# -->
-      <wpml:actionGroup>
-        <wpml:actionGroupId>0</wpml:actionGroupId>
-        <wpml:actionGroupStartIndex>1</wpml:actionGroupStartIndex>
-        <wpml:actionGroupEndIndex>1</wpml:actionGroupEndIndex>
-        <wpml:actionGroupMode>sequence</wpml:actionGroupMode>
-        <wpml:actionTrigger>
-          <wpml:actionTriggerType>reachPoint</wpml:actionTriggerType>
-        </wpml:actionTrigger>
-        <!-- Declare the 1st action: rotate gimbal -->
-        <wpml:action>
-          <wpml:actionId>0</wpml:actionId>
-          <wpml:actionActuatorFunc>hover</wpml:actionActuatorFunc>
-          <wpml:actionActuatorFuncParam>
-            <wpml:gimbalRotateMode>absoluteAngle</wpml:gimbalRotateMode>
-            <wpml:gimbalPitchRotateEnable>0</wpml:gimbalPitchRotateEnable>
-            <wpml:gimbalPitchRotateAngle>0</wpml:gimbalPitchRotateAngle>
-            <wpml:gimbalRollRotateEnable>0</wpml:gimbalRollRotateEnable>
-            <wpml:gimbalRollRotateAngle>0</wpml:gimbalRollRotateAngle>
-            <wpml:gimbalYawRotateEnable>1</wpml:gimbalYawRotateEnable>
-            <wpml:gimbalYawRotateAngle>30</wpml:gimbalYawRotateAngle>
-            <wpml:gimbalRotateTimeEnable>0</wpml:gimbalRotateTimeEnable>
-            <wpml:gimbalRotateTime>0</wpml:gimbalRotateTime>
+    <!-- Step 1: Implement File Creation Information. -->
+    <wpml:author>$author</wpml:author>
+    <wpml:createTime>$now</wpml:createTime>
+    <wpml:updateTime>$now</wpml:updateTime>
+
+    <!-- Step 2: Setup Mission Configuration. -->
+    <wpml:missionConfig>
+        <wpml:flyToWaylineMode>safely</wpml:flyToWaylineMode>
+        <wpml:finishAction>goHome</wpml:finishAction>
+        <wpml:exitOnRCLost>goContinue</wpml:exitOnRCLost>
+        <wpml:executeRCLostAction>hover</wpml:executeRCLostAction>
+        <wpml:takeOffSecurityHeight>$height</wpml:takeOffSecurityHeight>
+        <wpml:globalTransitionalSpeed>$speed</wpml:globalTransitionalSpeed>
+        <wpml:droneInfo>
+          <!-- Declare drone model with M300. -->
+            <wpml:droneEnumValue>60</wpml:droneEnumValue>
+        </wpml:droneInfo>
+        <!-- Try to get rid of this. -->
+        <wpml:payloadInfo>
+            <!-- Declare payload model with Matrice 3D camera. -->
+            <wpml:payloadEnumValue>80</wpml:payloadEnumValue>
             <wpml:payloadPositionIndex>0</wpml:payloadPositionIndex>
-          </wpml:actionActuatorFuncParam>
-        </wpml:action>
-        <!-- Declare the 2nd action: take photo -->
-        <wpml:action>
-          <wpml:actionId>1</wpml:actionId>
-          <wpml:actionActuatorFunc>takePhoto</wpml:actionActuatorFunc>
-          <wpml:actionActuatorFuncParam>
-            <wpml:fileSuffix>point1</wpml:fileSuffix>
-            <wpml:payloadPositionIndex>0</wpml:payloadPositionIndex>
-          </wpml:actionActuatorFuncParam>
-        </wpml:action>
-      </wpml:actionGroup>
-    </Placemark>
-  </Folder>
+        </wpml:payloadInfo>
+    </wpml:missionConfig>
+    $WAYPOINTS
 </Document>
 </kml>
+""")
+
 """
+Args:
+    waypoint_id (str(int)):     Index of waypoint. 
+    height_mode (str):          RelativeToStartPoint is good.
+    height      (str(float))
+    hover_time
+    speed
+"""
+template_waypoint = Template("""
+<!-- Step 3: Setup A Folder for Waypoint Template -->
+<Folder>
+    <wpml:templateType>waypoint</wpml:templateType>
+    <wpml:useGlobalTransitionalSpeed>0</wpml:useGlobalTransitionalSpeed>
+    <wpml:templateId>$waypoint_id</wpml:templateId>
+    <wpml:waylineCoordinateSysParam>
+        <wpml:heightMode>$height_mode</wpml:heightMode>
+        <!-- Remove?    -->
+        <wpml:globalShootHeight>$height</wpml:globalShootHeight>
+        <wpml:positioningType>GPS</wpml:positioningType>
+        <!-- Remove?    -->
+        <wpml:surfaceFollowModeEnable>1</wpml:surfaceFollowModeEnable>
+        <!-- Remove?    -->
+        <wpml:surfaceRelativeHeight>$height</wpml:surfaceRelativeHeight>
+    </wpml:waylineCoordinateSysParam>
+    <wpml:autoFlightSpeed>$speed</wpml:autoFlightSpeed>
+    <!-- Remove?    -->
+    <wpml:gimbalPitchMode>usePointSetting</wpml:gimbalPitchMode>
+    <wpml:globalWaypointHeadingParam>
+        <wpml:waypointHeadingMode>followWayline</wpml:waypointHeadingMode>
+        <!-- Verify.    -->
+        <wpml:waypointHeadingAngle>0</wpml:waypointHeadingAngle>
+        <!-- Verify.    -->
+        <wpml:waypointPoiPoint>$lat,$lon,$height</wpml:waypointPoiPoint>
+        <!-- Verify. [clockwise, counterClockwise, followBadAngle]    -->
+        <wpml:waypointHeadingPathMode>followBadArc</wpml:waypointHeadingPathMode>
+    </wpml:globalWaypointHeadingParam>
+    <!-- Verify.    -->
+    <wpml:globalWaypointTurnMode>toPointAndStopWithDiscontinuityCurvature</wpml:globalWaypointTurnMode>
+    <!-- Verify. [0,1]   -->
+    <wpml:globalUseStraightLine>0</wpml:globalUseStraightLine>
+    <Placemark>
+        <Point>
+            <!-- Fill longitude and latitude here -->
+            <coordinates>
+                $lon,$lat
+            </coordinates>
+        </Point>
+        <wpml:index>$waypoint_id</wpml:index>
+        <wpml:ellipsoidHeight>$height</wpml:ellipsoidHeight>
+        <wpml:height>$height</wpml:height>
+        <wpml:useGlobalHeight>1</wpml:useGlobalHeight>
+        <wpml:useGlobalSpeed>1</wpml:useGlobalSpeed>
+        <wpml:useGlobalHeadingParam>1</wpml:useGlobalHeadingParam>
+        <wpml:useGlobalTurnParam>1</wpml:useGlobalTurnParam>
+        <wpml:gimbalPitchAngle>0</wpml:gimbalPitchAngle>
+        <wpml:actionGroup>
+            <wpml:actionGroupId>$waypoint_id</wpml:actionGroupId>
+            <wpml:actionGroupStartIndex>1</wpml:actionGroupStartIndex>
+            <wpml:actionGroupEndIndex>1</wpml:actionGroupEndIndex>
+            <wpml:actionGroupMode>sequence</wpml:actionGroupMode>
+            <wpml:actionTrigger>
+                <wpml:actionTriggerType>reachPoint</wpml:actionTriggerType>
+            </wpml:actionTrigger>
+            <!-- Declare the action: hover. -->
+            <wpml:action>
+                <wpml:actionId>$waypoint_id</wpml:actionId>
+                <wpml:actionActuatorFunc>hover</wpml:actionActuatorFunc>
+                <wpml:actionActuatorFuncParam>
+                    <wpml:hoverTime>$hover_time</wpml:hoverTime>
+                </wpml:actionActuatorFuncParam>
+            </wpml:action>
+        </wpml:actionGroup>
+    </Placemark>
+</Folder>
+""")
+
 def csv2djipilot():
-    XML_string = """<?xml version="1.0" encoding="UTF-8"?>
-
-    <kml xmlns="http://www.opengis.net/kml/2.2">
-      <Document xmlns="">
-        <name>chambon_small</name>
-        <open>1</open>
-        <ExtendedData xmlns:mis="www.dji.com">
-          <mis:type>Waypoint</mis:type>
-          <mis:stationType>0</mis:stationType>
-        </ExtendedData>
-        <Style id="waylineGreenPoly">
-          <LineStyle>
-            <color>FF0AEE8B</color>
-            <width>6</width>
-          </LineStyle>
-        </Style>
-        <Style id="waypointStyle">
-          <IconStyle>
-            <Icon>
-              <href>https://cdnen.dji-flighthub.com/static/app/images/point.png</href>
-            </Icon>
-          </IconStyle>
-        </Style>
-        <Folder>
-          <name>Waypoints</name>
-          <description>Waypoints in the Mission.</description>\n"""
-#name = None
-#lon = None
-#lat = None
-#height = None
-#heading = None
-##gimbal = None
-    all_coordinates = ""
-    waypoint_number = 1
-
-    waypoint_start = Template("""      <Placemark>
-            <name>Waypoint$waypoint_number</name>
-            <visibility>1</visibility>
-            <description>Waypoint</description>
-            <styleUrl>#waypointStyle</styleUrl>
-            <ExtendedData xmlns:mis="www.dji.com">
-              <mis:useWaylineAltitude>false</mis:useWaylineAltitude>
-              <mis:heading>$heading</mis:heading>
-              <mis:turnMode>$turnmode</mis:turnMode>
-              <mis:gimbalPitch>$gimbal</mis:gimbalPitch>
-              <mis:useWaylineSpeed>false</mis:useWaylineSpeed>
-              <mis:speed>$speed</mis:speed>
-              <mis:useWaylineHeadingMode>true</mis:useWaylineHeadingMode>
-              <mis:useWaylinePointType>true</mis:useWaylinePointType>
-              <mis:pointType>LineStop</mis:pointType>
-              <mis:cornerRadius>0.2</mis:cornerRadius>""")
-
-    waypoint_start_no_heading = Template("""      <Placemark>
-            <name>Waypoint$waypoint_number</name>
-            <visibility>1</visibility>
-            <description>Waypoint</description>
-            <styleUrl>#waypointStyle</styleUrl>
-            <ExtendedData xmlns:mis="www.dji.com">
-              <mis:useWaylineAltitude>true</mis:useWaylineAltitude>
-              <mis:speed>2.3</mis:speed>#
-              <mis:useWaylineHeadingMode>true</mis:useWaylineHeadingMode>
-              <mis:useWaylinePointType>true</mis:useWaylinePointType>
-              <mis:pointType>LineStop</mis:pointType>
-              <mis:cornerRadius>0.2</mis:cornerRadius>""")
-
-
-
-    waypoint_end = Template("""
-            </ExtendedData>
-            <Point>
-              <altitudeMode>relativeToGround</altitudeMode>
-              <coordinates>$lon,$lat,$height</coordinates>
-            </Point>
-          </Placemark>""")
-    hover_template = Template("""
-              <mis:actions param="$length" accuracy="0" cameraIndex="0" payloadType="0" payloadIndex="0">Hovering</mis:actions>""")
-    shoot_template = Template("""
-              <mis:actions param="0" accuracy="0" cameraIndex="0" payloadType="0" payloadIndex="0">ShootPhoto</mis:actions>""")
-
-    gimbal_template = Template("""
-              <mis:actions param="$gimbal_angle" accuracy="1" cameraIndex="0" payloadType="0" payloadIndex="0">GimbalPitch</mis:actions>""")
-    aircraftyaw_template = Template("""
-              <mis:actions param="$aircraftyaw" accuracy="0" cameraIndex="0" payloadType="0" payloadIndex="0">AircraftYaw</mis:actions>""")
-    record_template = Template("""
-              <mis:actions param="0" accuracy="0" cameraIndex="0" payloadType="0" payloadIndex="0">StartRecording</mis:actions>""")
-    stoprecord_template = Template("""
-              <mis:actions param="0" accuracy="0" cameraIndex="0" payloadType="0" payloadIndex="0">StopRecording</mis:actions>""")
-
-
-    all_coordinates_template = Template("$lon,$lat,$height")
-#        <mis:altitude>$_CURRENT_ALTITUDE</mis:altitude>
-    xml_end = Template("""    </Folder>
-        <Placemark>
-          <name>Wayline</name>
-          <description>Wayline</description>
-          <visibility>1</visibility>
-          <ExtendedData xmlns:mis="www.dji.com">
-            <mis:autoFlightSpeed>2.3</mis:autoFlightSpeed>
-            <mis:actionOnFinish>$ON_FINISH</mis:actionOnFinish>
-            <mis:headingMode>UsePointSetting</mis:headingMode>
-            <mis:gimbalPitchMode>UsePointSetting</mis:gimbalPitchMode>
-            <mis:powerSaveMode>false</mis:powerSaveMode>
-            <mis:waypointType>LineStop</mis:waypointType>
-            <mis:droneInfo>
-              <mis:droneType>COMMON</mis:droneType>
-              <mis:advanceSettings>false</mis:advanceSettings>
-              <mis:droneCameras/>
-              <mis:droneHeight>
-                <mis:useAbsolute>false</mis:useAbsolute>
-                <mis:hasTakeoffHeight>false</mis:hasTakeoffHeight>
-                <mis:takeoffHeight>0.0</mis:takeoffHeight>
-              </mis:droneHeight>
-            </mis:droneInfo>
-          </ExtendedData>
-          <styleUrl>#waylineGreenPoly</styleUrl>
-          <LineString>
-            <tessellate>1</tessellate>
-            <altitudeMode>relativeToGround</altitudeMode>
-            <coordinates>$all_coordinates</coordinates>
-          </LineString>
-        </Placemark>
-      </Document>
-    </kml>""")
-
     with open(CsvFile, newline='') as csvfile:
         # TODO(nubby): allow for the import of other delimiters.
         # NOTE - Required attributes:
@@ -308,100 +175,40 @@ def csv2djipilot():
         #           * lat
         #           * lon
         csv_lines = csv.DictReader(csvfile)
-        for row in csv_lines:
+        waypoint_templates = []
+        author = DEFAULT_NAME
+        now = 1
+        height = 20
+        height_mode = "relativeToStartPoint"
+        hover_time = 3
+        speed = 2.3
+        for waypoint_id, row in enumerate(csv_lines):
+            print(row, waypoint_id)
             name = row['point_name']
             lon = row['lon']
             lat = row['lat']
-            if lon[0] == '_':
-                lon = lon[1:]
-            if lat[0] == '_':
-                lon = lat[1:]
-            gimbal = row['gimbal'] if 'speed' in row.keys() else DEFAULT_GIMBAL
-            heading = row['heading'] if 'heading' in row.keys() else DEFAULT_HEADING
-            height = row['height'] if 'height' in row.keys() else DEFAULT_HEIGHT
-            speed = row['speed'] if 'speed' in row.keys() else DEFAULT_SPEED
-            if 'turnmode' in row.keys():
-                turnmode = row['turnmode'] 
-            else:
-                turnmode = DEFAULT_TURNMODE
-            if 'actions_sequence' in row.keys():
-                actions_sequence = row['actions_sequence'] 
-            else:
-                actions_sequence = DEFAULT_ACTIONS_SEQUENCE
-
-            if (float(speed) > 15) or (float(speed) <= 0):
-                sys.exit('speed should be >0 or <=15 m/s for {}'.format(name))
-            """
-            if '.' not in speed:
-                speed = speed+'.0'
-            """
-
-            if gimbal and '.' not in gimbal:
-                gimbal = gimbal+'.0'
-
-            if turnmode == 'AUTO':
-                turnmode = 'Auto'
-            elif turnmode == 'C':
-                turnmode = 'Clockwise'
-            elif turnmode == 'CC':
-                turnmode = 'Counterclockwise'
-            else:
-                sys.exit('turnmode shoud be AUTO C or CC for {}'.format(name))
-
-            if not heading:
-                XML_string += waypoint_start_no_heading.substitute(
-                    turnmode=turnmode,
-                    waypoint_number=waypoint_number,
-                    speed=speed,
+            waypoint_templates.append(
+                template_waypoint.substitute(
+                    waypoint_id=str(waypoint_id),
+                    height=str(height),
+                    height_mode=height_mode,
+                    hover_time=str(hover_time),
+                    lat=str(lat),
+                    lon=str(lon),
+                    speed=str(speed)
                 )
-            else:
-                XML_string += waypoint_start.substitute(
-                    turnmode=turnmode,
-                    waypoint_number=waypoint_number,
-                    speed=speed,
-                    heading=heading,
-                    gimbal=gimbal
-                )
+            )
+        kml_str_out = template_plan_base.substitute(
+            author=author,
+            now=str(now),
+            height=str(height),
+            speed=str(speed),
+            WAYPOINTS="".join(waypoint_templates)
+        )
+        print(kml_str_out)
 
-            # Actions decoding
-            if actions_sequence:
-                action_list = actions_sequence.split('.')
-                for action in action_list:
-                    if action == 'SHOOT':
-                        XML_string += shoot_template.substitute()
-                    elif action == 'REC':
-                        XML_string += record_template.substitute()
-                    elif action == 'STOPREC':
-                        XML_string += stoprecord_template.substitute()
-                    # Gimbal orientation
-                    elif action[0] == 'G':
-                        XML_string += gimbal_template.substitute(
-                            gimbal_angle=action[1:])
-                    # Aircraft orientation
-                    elif action[0] == 'A':
-                        XML_string += aircraftyaw_template.substitute(
-                            aircraftyaw=action[1:])
-                    elif action[0] == 'H':
-                        if float(action[1:]) < 500:
-                            print(float(action[1:]))
-                            sys.exit(
-                                'Hover length is in ms and should be >500  for {}'.format(name))
-                        XML_string += hover_template.substitute(
-                            length=action[1:])
-
-            XML_string += "\n" + \
-                waypoint_end.substitute(lon=lon, lat=lat, height=height,)+"\n"
-
-            all_coordinates += all_coordinates_template.substitute(
-                lon=lon, lat=lat, height=height)+" "
-        waypoint_number += 1
-# remove last space from coordinates string
-    all_coordinates = all_coordinates[:-1]
-    XML_string += xml_end.substitute(all_coordinates=all_coordinates,
-                                     ON_FINISH=ON_FINISH)
-    #_write_file(path=args.output, data=XML_string)
     with args.output as outpoofile:
-        outpoofile.write(XML_string)
+        outpoofile.write(kml_str_out)
     
 
 if __name__ == "__main__":
