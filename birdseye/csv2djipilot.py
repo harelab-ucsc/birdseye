@@ -49,7 +49,133 @@ def _write_file(path: str, data: any):
     with open(path, "w+") as fp:
         fp.write(data)
 
+template_base = """
+<?xml version="1.0" encoding="UTF-8"?>
+<kml xmlns="http://www.opengis.net/kml/2.2" xmlns:wpml="http://www.dji.com/wpmz/1.0.2">
+<Document>
 
+  <!-- Step 1: Implement File Creation Information -->
+  <wpml:author>${author}</wpml:author>
+  <wpml:createTime>${now}</wpml:createTime>
+  <wpml:updateTime>${now}</wpml:updateTime>
+ 
+  <!-- Step 2: Setup Mission Configuration -->
+  <wpml:missionConfig>
+    <wpml:flyToWaylineMode>safely</wpml:flyToWaylineMode>
+    <wpml:finishAction>goHome</wpml:finishAction>
+    <wpml:exitOnRCLost>goContinue</wpml:exitOnRCLost>
+    <wpml:executeRCLostAction>hover</wpml:executeRCLostAction>
+    <wpml:takeOffSecurityHeight>20</wpml:takeOffSecurityHeight>
+    <wpml:takeOffRefPoint>23.98057,115.987663,100</wpml:takeOffRefPoint>
+    <wpml:takeOffRefPointAGLHeight>35</wpml:takeOffRefPointAGLHeight>
+    <wpml:globalTransitionalSpeed>8</wpml:globalTransitionalSpeed>
+    <wpml:droneInfo>
+      <!-- Declare drone model with M30 -->
+      <wpml:droneEnumValue>67</wpml:droneEnumValue>
+      <wpml:droneSubEnumValue>0</wpml:droneSubEnumValue>
+    </wpml:droneInfo>
+    <wpml:payloadInfo>
+      <!-- Declare payload model with M30 -->
+      <wpml:payloadEnumValue>52</wpml:payloadEnumValue>
+      <wpml:payloadPositionIndex>0</wpml:payloadPositionIndex>
+    </wpml:payloadInfo>
+  </wpml:missionConfig>
+ 
+  <!-- Step 3: Setup A Folder for Waypoint Template -->
+  <Folder>
+    <wpml:templateType>waypoint</wpml:templateType>
+    <wpml:useGlobalTransitionalSpeed>0</wpml:useGlobalTransitionalSpeed>
+    <wpml:templateId>0</wpml:templateId>
+    <wpml:waylineCoordinateSysParam>
+      <wpml:coordinateMode>WGS84</wpml:coordinateMode>
+      <wpml:heightMode>EGM96</wpml:heightMode>
+      <wpml:globalShootHeight>50</wpml:globalShootHeight>
+      <wpml:positioningType>GPS</wpml:positioningType>
+      <wpml:surfaceFollowModeEnable>1</wpml:surfaceFollowModeEnable>
+      <wpml:surfaceRelativeHeight>100</wpml:surfaceRelativeHeight>
+    </wpml:waylineCoordinateSysParam>
+    <wpml:autoFlightSpeed>7</wpml:autoFlightSpeed>
+    <wpml:gimbalPitchMode>usePointSetting</wpml:gimbalPitchMode>
+    <wpml:globalWaypointHeadingParam>
+      <wpml:waypointHeadingMode>followWayline</wpml:waypointHeadingMode>
+      <wpml:waypointHeadingAngle>45</wpml:waypointHeadingAngle>
+      <wpml:waypointPoiPoint>24.323345,116.324532,31.000000</wpml:waypointPoiPoint>
+      <wpml:waypointHeadingPathMode>clockwise</wpml:waypointHeadingPathMode>
+    </wpml:globalWaypointHeadingParam>
+    <wpml:globalWaypointTurnMode>toPointAndStopWithDiscontinuityCurvature</wpml:globalWaypointTurnMode>
+    <wpml:globalUseStraightLine>0</wpml:globalUseStraightLine>
+    <Placemark>
+      <Point>
+        <!-- Fill longitude and latitude here -->
+        <coordinates>
+          longitude,latitude
+        </coordinates>
+      </Point>
+      <wpml:index>0</wpml:index>
+      <wpml:ellipsoidHeight>90.2</wpml:ellipsoidHeight>
+      <wpml:height>100</wpml:height>
+      <wpml:useGlobalHeight>1</wpml:useGlobalHeight>
+      <wpml:useGlobalSpeed>1</wpml:useGlobalSpeed>
+      <wpml:useGlobalHeadingParam>1</wpml:useGlobalHeadingParam>
+      <wpml:useGlobalTurnParam>1</wpml:useGlobalTurnParam>
+      <wpml:gimbalPitchAngle>0</wpml:gimbalPitchAngle>
+    </Placemark>
+    <Placemark>
+      <Point>
+        <!-- Fill longitude and latitude here -->
+        <coordinates>
+          longitude,latitude
+        </coordinates>
+      </Point>
+      <wpml:index>1</wpml:index>
+      <wpml:ellipsoidHeight>90.2</wpml:ellipsoidHeight>
+      <wpml:height>100</wpml:height>
+      <wpml:useGlobalHeight>1</wpml:useGlobalHeight>
+      <wpml:useGlobalSpeed>1</wpml:useGlobalSpeed>
+      <wpml:useGlobalHeadingParam>1</wpml:useGlobalHeadingParam>
+      <wpml:useGlobalTurnParam>1</wpml:useGlobalTurnParam>
+      <wpml:gimbalPitchAngle>0</wpml:gimbalPitchAngle>
+      <!-- Declare action group for waypoint 1# -->
+      <wpml:actionGroup>
+        <wpml:actionGroupId>0</wpml:actionGroupId>
+        <wpml:actionGroupStartIndex>1</wpml:actionGroupStartIndex>
+        <wpml:actionGroupEndIndex>1</wpml:actionGroupEndIndex>
+        <wpml:actionGroupMode>sequence</wpml:actionGroupMode>
+        <wpml:actionTrigger>
+          <wpml:actionTriggerType>reachPoint</wpml:actionTriggerType>
+        </wpml:actionTrigger>
+        <!-- Declare the 1st action: rotate gimbal -->
+        <wpml:action>
+          <wpml:actionId>0</wpml:actionId>
+          <wpml:actionActuatorFunc>hover</wpml:actionActuatorFunc>
+          <wpml:actionActuatorFuncParam>
+            <wpml:gimbalRotateMode>absoluteAngle</wpml:gimbalRotateMode>
+            <wpml:gimbalPitchRotateEnable>0</wpml:gimbalPitchRotateEnable>
+            <wpml:gimbalPitchRotateAngle>0</wpml:gimbalPitchRotateAngle>
+            <wpml:gimbalRollRotateEnable>0</wpml:gimbalRollRotateEnable>
+            <wpml:gimbalRollRotateAngle>0</wpml:gimbalRollRotateAngle>
+            <wpml:gimbalYawRotateEnable>1</wpml:gimbalYawRotateEnable>
+            <wpml:gimbalYawRotateAngle>30</wpml:gimbalYawRotateAngle>
+            <wpml:gimbalRotateTimeEnable>0</wpml:gimbalRotateTimeEnable>
+            <wpml:gimbalRotateTime>0</wpml:gimbalRotateTime>
+            <wpml:payloadPositionIndex>0</wpml:payloadPositionIndex>
+          </wpml:actionActuatorFuncParam>
+        </wpml:action>
+        <!-- Declare the 2nd action: take photo -->
+        <wpml:action>
+          <wpml:actionId>1</wpml:actionId>
+          <wpml:actionActuatorFunc>takePhoto</wpml:actionActuatorFunc>
+          <wpml:actionActuatorFuncParam>
+            <wpml:fileSuffix>point1</wpml:fileSuffix>
+            <wpml:payloadPositionIndex>0</wpml:payloadPositionIndex>
+          </wpml:actionActuatorFuncParam>
+        </wpml:action>
+      </wpml:actionGroup>
+    </Placemark>
+  </Folder>
+</Document>
+</kml>
+"""
 def csv2djipilot():
     XML_string = """<?xml version="1.0" encoding="UTF-8"?>
 
