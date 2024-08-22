@@ -30,6 +30,7 @@ import fast_tsp
 
 EPS = 1.0
 MIN_SAMPLES = 2
+HOVER_DURATION = 3
 
 
 def _write_csv_file(path: str, rows: list[str]):
@@ -43,11 +44,12 @@ def generate_csv_from_plan(plan, fpath):
     """Write the details of a flight plan to a CSV file.
     """
     lines = []
-    lines.append(["lat","lon","point_name"])
+    lines.append(["lat","lon","point_name", "actions_sequence"])
     [lines.append([
         str(pos[0]),
         str(pos[1]),
-        str(index)
+        str(index),
+        f"H{HOVER_DURATION}000"
     ]) for index, pos in enumerate(plan)]
     _write_csv_file(fpath, lines)
 
@@ -222,13 +224,6 @@ def build_dji_plan(
 
     plt.show()
 
-    """
-    kml=simplekml.Kml()
-    for i in out:
-        print(plan[i])
-        kml.newpoint(name=str(places[i]), coords=[(plan[i][1], plan[i][0])])
-    kml.save(plan_kml)
-    """
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()

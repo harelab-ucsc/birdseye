@@ -183,7 +183,7 @@ def csv2djipilot():
         #           * lon
         csv_lines = csv.DictReader(csvfile)
         for row in csv_lines:
-            name = row['point_name']
+            #name = row['point_name']
             lon = row['lon']
             lat = row['lat']
             if lon[0] == '_':
@@ -261,7 +261,8 @@ def csv2djipilot():
                             sys.exit(
                                 'Hover length is in ms and should be >500  for {}'.format(name))
                         XML_string += hover_template.substitute(
-                            length=action[1:])
+                            length=action[1:]
+                        )
 
             XML_string += "\n" + \
                 waypoint_end.substitute(lon=lon, lat=lat, height=height,)+"\n"
