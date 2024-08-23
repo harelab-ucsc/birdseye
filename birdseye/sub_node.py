@@ -20,7 +20,7 @@ from . import dbConnector
 from . import utilities
 from cv_bridge import CvBridge
 from rclpy.node import Node
-from sensor_msgs.msg import Image
+from sensor_msgs.msg import Image, Imu, NavSatFix
 from std_msgs.msg import String
 from ublox_msgs.msg import NavPVT
 from custom_msgs.msg import AltSNR
@@ -85,13 +85,18 @@ class subscriberNode(rclpy.node.Node):
         # camera subscriber
         self.cam_sub = self.create_subscription(
             Image, '/image', self.cam_cb, 100)
+        # ahrs subscriber
+        self.arhs_sub = self.create_subscription(
+            Imu, '/imu/data', self.ahrs_cb, 100)
         # radalt subscriber
         self.rad_sub = self.create_subscription(
             AltSNR, '/rad_altitude', self.radalt_cb, 100)
         self.radalt = None
-        # ublox subscriber
+        # ublox subscribers
+        self.ublox = self.create_subscription(
+            NavSatFix, '/rtk/fix', self.ublox_cb, 100)
         self.ublox_health_sub = self.create_subscription(
-            NavPVT, '/gps_flag', self.navpvt_cb, 100)
+            NavPVT, '/rtk/fix_status', self.navpvt_cb, 100)
         self.RTK_STATUS = None
 
 
@@ -227,7 +232,7 @@ class subscriberNode(rclpy.node.Node):
         image = self.br.imgmsg_to_cv2(msg, desired_encoding='passthrough')
         image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
 
-        if self.RTK_STATUS == 131:
+        if self.RTK_STATUS == 131 and self.radalt is not None:
         # if self.RTK_STATUS == 67 or self.RTK_STATUS == 131:
         # if self.RTK_STATUS == 3 or self.RTK_STATUS == 67 or self.RTK_STATUS == 131:
             try:
@@ -268,8 +273,33 @@ class subscriberNode(rclpy.node.Node):
             print('radalt measurement discarded; SNR too large')
 
 
+    def ublox_cb(self, msg: NavSatFix):
+        tmp = self.get_clock().now().to_msg()
+
+        sec = str(tmp.sec)
+        nsec = str(tmp.nanosec).rjust(9,str(0))
+        time = f'{sec}.{nsec}'
+        valsList = [msg.latitude, msg.longitude, msg.altitude, msg.status.status, time]
+        vals = ','.join([str(x) for x in valsList])
+        self.dbc.insertIgnoreInto(f"rtk_data_{self.db_name}", \
+                                    "lat, lon, altitude, rtk_fix, time", vals)
+
+
     def navpvt_cb(self, msg: NavPVT):
         self.RTK_STATUS = msg.flags  # in {3:GPS, 67:RTK_FLOAT, 131:RTK_FIX}
+
+
+    def ahrs_cb(self, msg: Imu):
+        sec = str(msg.header.stamp.sec)
+        nsec = str(msg.header.stamp.nanosec).rjust(9,str(0))
+        time = f'{sec}.{nsec}'
+        quat = [msg.orientation.x, msg.orientation.y, msg.orientation.z, msg.orientation.w]
+        avel = [msg.angular_velocity.x, msg.angular_velocity.y, msg.angular_velocity.z]
+        accl = [msg.linear_acceleration.x, msg.linear_acceleration.y, msg.linear_acceleration.z]
+        valsList = quat + avel + accl + [time]
+        vals = ','.join([str(x) for x in valsList])
+        self.dbc.insertIgnoreInto(f"ahrs_data_{self.db_name}", \
+                    "q, u, a, t, v_a, v_b, v_g, a_x, a_y, a_z, time", vals)
 
 
 def main(args=None):

@@ -60,14 +60,14 @@ def read_label_file(load_name, image_file):
     try:
         f = open(f"{load_name}", "rb")
         # print()
-        # print(f'    Label loaded: {load_name}, {image_file}')
+        # print(f'    Loading label : {load_name}, {image_file}')
         while True:
             # print(i)
             mask = f.readline()
             tmp = mask.split()
             # print('tmp: ', tmp)
             if os.path.split(tmp[1])[1] == os.path.split(image_file.numpy())[1]:
-                # print('        ', tmp, end=' ')
+                # print('        Loaded :', tmp, end=' ')
                 cl = float(tmp[2])
                 # print(cl)
                 break
@@ -223,6 +223,7 @@ def in_block(x, filters, size, dr, use_bias, ker_reg, ker_con, bias_reg, bias_co
                                bias_constraint=bias_con,
                                activity_regularizer=act_reg)(x)
     x = tf.keras.layers.LeakyReLU()(x)
+    # x = tf.keras.layers.ReLU()(x)
     x = tf.keras.layers.BatchNormalization()(x)
 
     x = tf.keras.layers.Conv2D(filters[1], size,
@@ -236,6 +237,7 @@ def in_block(x, filters, size, dr, use_bias, ker_reg, ker_con, bias_reg, bias_co
                                bias_constraint=bias_con,
                                activity_regularizer=act_reg)(x)
     x = tf.keras.layers.LeakyReLU()(x)
+    # x = tf.keras.layers.ReLU()(x)
     x = tf.keras.layers.BatchNormalization()(x)
     x = tf.keras.layers.MaxPool2D(pool_size=3, strides=2, padding='same')(x)
     return x
@@ -263,6 +265,7 @@ def down_block(x, filters, size, use_bias, ker_reg, ker_con, bias_reg, bias_con,
                                         bias_constraint=bias_con,
                                         activity_regularizer=act_reg)(x)
     x = tf.keras.layers.LeakyReLU()(x)
+    # x = tf.keras.layers.ReLU()(x)
     x = tf.keras.layers.BatchNormalization()(x)
 
     x = tf.keras.layers.SeparableConv2D(filters, size,
@@ -277,6 +280,7 @@ def down_block(x, filters, size, use_bias, ker_reg, ker_con, bias_reg, bias_con,
                                         bias_constraint=bias_con,
                                         activity_regularizer=act_reg)(x)
     x = tf.keras.layers.LeakyReLU()(x)
+    # x = tf.keras.layers.ReLU()(x)
     x = tf.keras.layers.BatchNormalization()(x)
 
     x = tf.keras.layers.MaxPool2D(pool_size=3, strides=2, padding='same')(x)
@@ -286,7 +290,6 @@ def down_block(x, filters, size, use_bias, ker_reg, ker_con, bias_reg, bias_con,
 
 
 def out_block(x, filters, size, use_bias, ker_reg, ker_con, bias_reg, bias_con, act_reg):
-    x = reduce_sum()(x)
     x = tf.keras.layers.Dense(filters[0],
                             use_bias=use_bias,
                             kernel_regularizer=ker_reg,
@@ -295,6 +298,7 @@ def out_block(x, filters, size, use_bias, ker_reg, ker_con, bias_reg, bias_con, 
                             bias_constraint=bias_con,
                             activity_regularizer=act_reg)(x)
     x = tf.keras.layers.LeakyReLU()(x)
+    # x = tf.keras.layers.ReLU()(x)
     x = tf.keras.layers.BatchNormalization()(x)
     x = reduce_sum()(x)
     x = tf.keras.layers.Dense(int(filters[1]),
@@ -305,6 +309,28 @@ def out_block(x, filters, size, use_bias, ker_reg, ker_con, bias_reg, bias_con, 
                                 bias_constraint=bias_con,
                                 activity_regularizer=act_reg)(x)
     x = tf.keras.layers.LeakyReLU()(x)
+    # x = tf.keras.layers.ReLU()(x)
+    x = tf.keras.layers.BatchNormalization()(x)
+    x = reduce_sum()(x)
+    x = tf.keras.layers.Dense(int(filters[1]),
+                                use_bias=use_bias,
+                                kernel_regularizer=ker_reg,
+                                kernel_constraint=ker_con,
+                                bias_regularizer=bias_reg,
+                                bias_constraint=bias_con,
+                                activity_regularizer=act_reg)(x)
+    x = tf.keras.layers.LeakyReLU()(x)
+    # x = tf.keras.layers.ReLU()(x)
+    x = tf.keras.layers.BatchNormalization()(x)
+    x = tf.keras.layers.Dense(int(filters[1]),
+                                use_bias=use_bias,
+                                kernel_regularizer=ker_reg,
+                                kernel_constraint=ker_con,
+                                bias_regularizer=bias_reg,
+                                bias_constraint=bias_con,
+                                activity_regularizer=act_reg)(x)
+    x = tf.keras.layers.LeakyReLU()(x)
+    # x = tf.keras.layers.ReLU()(x)
     x = tf.keras.layers.BatchNormalization()(x)
     x = tf.keras.layers.Dense(1,
                                 use_bias=use_bias,
@@ -322,9 +348,6 @@ def baseline_net(inputs, use_bias, ker_reg, ker_con, bias_reg, bias_con, act_reg
     x = in_block(inputs, [32, 64], ker, [1, 1], use_bias, ker_reg, ker_con, bias_reg, bias_con, act_reg)  # 32, 64
     x = down_block(x, 64, ker, use_bias, ker_reg, ker_con, bias_reg, bias_con, act_reg)  # 128
     x = down_block(x, 64, ker, use_bias, ker_reg, ker_con, bias_reg, bias_con, act_reg)  # 256
-    x = down_block(x, 64, ker, use_bias, ker_reg, ker_con, bias_reg, bias_con, act_reg)  # 256
-    x = down_block(x, 64, ker, use_bias, ker_reg, ker_con, bias_reg, bias_con, act_reg)  # 256
-
     # x = down_block(x, 512, ker, use_bias, ker_reg, ker_con, bias_reg, bias_con, act_reg)  # 512
     # x = down_block(x, 1024, ker, use_bias, ker_reg, ker_con, bias_reg, bias_con, act_reg)  # 1024
     # x = down_block(x, 1024, ker, use_bias, ker_reg, ker_con, bias_reg, bias_con, act_reg)  # 1024
@@ -332,19 +355,49 @@ def baseline_net(inputs, use_bias, ker_reg, ker_con, bias_reg, bias_con, act_reg
     return out
 
 
+def testing_net(inputs, use_bias, ker_reg, ker_con, bias_reg, bias_con, act_reg, ker=3):
+    """ this model trains reliably """
+    x = in_block(inputs, [32, 64], ker, [1, 1], use_bias, ker_reg, ker_con, bias_reg, bias_con, act_reg)  # 32, 64
+    x = down_block(x, 128, ker, use_bias, ker_reg, ker_con, bias_reg, bias_con, act_reg)  # 128
+    x = down_block(x, 256, ker, use_bias, ker_reg, ker_con, bias_reg, bias_con, act_reg)  # 256
+    x = down_block(x, 512, ker, use_bias, ker_reg, ker_con, bias_reg, bias_con, act_reg)  # 512
+    x = down_block(x, 1024, ker, use_bias, ker_reg, ker_con, bias_reg, bias_con, act_reg)  # 1024
+    x = down_block(x, 1024, ker, use_bias, ker_reg, ker_con, bias_reg, bias_con, act_reg)  # 1024
+    out = out_block(x, [64, 32], ker, use_bias, ker_reg, ker_con, bias_reg, bias_con, act_reg)
+    return out
+
+
+def columnar_net(inputs, use_bias, ker_reg, ker_con, bias_reg, bias_con, act_reg, ker=3):
+    x = in_block(inputs, [32, 64], ker, [1, 1], use_bias, ker_reg, ker_con, bias_reg, bias_con, act_reg)  # 32, 64
+    x1 = down_block(x, 32, ker, use_bias, ker_reg, ker_con, bias_reg, bias_con, act_reg)  # 128
+    x2 = down_block(x, 32, ker, use_bias, ker_reg, ker_con, bias_reg, bias_con, act_reg)  # 256
+    x3 = down_block(x, 32, ker, use_bias, ker_reg, ker_con, bias_reg, bias_con, act_reg)  # 128
+    x4 = down_block(x, 32, ker, use_bias, ker_reg, ker_con, bias_reg, bias_con, act_reg)  # 128
+    add = tf.keras.layers.concatenate([x1, x2, x3, x4])
+    # add = tf.keras.layers.concatenate([x1, x2])
+    x1 = down_block(x, 32, ker, use_bias, ker_reg, ker_con, bias_reg, bias_con, act_reg)  # 128
+    x2 = down_block(x, 32, ker, use_bias, ker_reg, ker_con, bias_reg, bias_con, act_reg)  # 256
+    x3 = down_block(x, 32, ker, use_bias, ker_reg, ker_con, bias_reg, bias_con, act_reg)  # 128
+    x4 = down_block(x, 32, ker, use_bias, ker_reg, ker_con, bias_reg, bias_con, act_reg)  # 128
+    add = tf.keras.layers.concatenate([x1, x2, x3, x4])
+    # add = tf.keras.layers.concatenate([x1, x2])
+    out = out_block(add, [32, 16], ker, use_bias, ker_reg, ker_con, bias_reg, bias_con, act_reg)
+    return out
+
 def generator(use_bias, ker_reg, ker_con, bias_reg, bias_con, act_reg, h=IMG_HEIGHT, w=IMG_WIDTH, c=IMAGE_CHANNELS, ker=3):
     inp = tf.keras.Input(shape=(h, w, c), name='inp_layer')
-    out = baseline_net(inp, use_bias, ker_reg, ker_con, bias_reg, bias_con, act_reg, ker=ker)
+    out = testing_net(inp, use_bias, ker_reg, ker_con, bias_reg, bias_con, act_reg, ker=ker)
+    # out = columnar_net(inp, use_bias, ker_reg, ker_con, bias_reg, bias_con, act_reg, ker=ker)
     return tf.keras.Model(inputs=inp, outputs=out)
 
 
 if __name__ == '__main__':
-    filename = f'ucsc_{IMG_WIDTH}_{IMG_HEIGHT}_03'.format(IMG_WIDTH, IMG_HEIGHT)
+    filename = f'ucsc_{IMG_WIDTH}_{IMG_HEIGHT}_14'.format(IMG_WIDTH, IMG_HEIGHT)
 
     use_bias = True
     use_regularizers = True
     use_constraints = False
-    logits = True
+    logits = False
     if use_regularizers:
         ker_reg = tf.keras.regularizers.L1L2(l1=1e-6, l2=1e-4)  # 1e-6, 1e-3
         act_reg = tf.keras.regularizers.L1L2(l1=1e-11, l2=1e-8)  # 1e-11, 1e-8
@@ -393,7 +446,7 @@ if __name__ == '__main__':
     # # Open a strategy scope.
     # with strategy.scope():
     generator = generator(use_bias, ker_reg, ker_con, bias_reg, bias_con, act_reg, ker=3)
-    generator.compile(optimizer=tf.keras.optimizers.Adam(learning_rate=5e-5,
+    generator.compile(optimizer=tf.keras.optimizers.Adam(learning_rate=5e-6,
                             beta_1=0.9, beta_2=0.99, clipnorm=1.0),
                     # loss=lossFunc,
                     # loss_weights = lossWeights,
@@ -407,9 +460,9 @@ if __name__ == '__main__':
 
     print(len(preglob), 'training samples: ', len(preglob_tr), 'training, ', len(preglob_te), 'testing')
 
-    callbacks = [tf.keras.callbacks.ReduceLROnPlateau(monitor='val_loss', factor=0.5, patience=3, min_lr=0),
-                 tf.keras.callbacks.EarlyStopping(monitor='val_loss', patience=9),
-                 tf.keras.callbacks.ModelCheckpoint(filepath=filename+'.weights.h5', save_weights_only=True, save_best_only=True, monitor='val_loss', verbose=2)]
+    callbacks = [tf.keras.callbacks.ReduceLROnPlateau(monitor='val_binary_crossentropy', factor=0.5, patience=3, min_lr=0),
+                 tf.keras.callbacks.EarlyStopping(monitor='val_binary_crossentropy', patience=9),
+                 tf.keras.callbacks.ModelCheckpoint(filepath=filename+'.weights.h5', save_weights_only=True, save_best_only=True, monitor='val_binary_crossentropy', verbose=2)]
     # if os.path.isfile(filename+'.weights.h5'):
     #     generator.load_weights(filename+'.weights.h5')
     # else:

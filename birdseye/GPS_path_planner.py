@@ -275,7 +275,7 @@ def build_dji_plan(
             # markerfacecolor=tuple(col),
             markerfacecolor="w",
             markeredgecolor="k",
-            markersize=5,
+            markersize=10,
             )
         ax.spines['top'].set_visible(False)
         ax.spines['right'].set_visible(False)

@@ -7,6 +7,7 @@ import os
 import pickle
 from cf_triad import *
 import rclpy
+import tflite_runtime.interpreter as tflite
 from rclpy.node import Node
 from sensor_msgs.msg import Imu, Image, NavSatFix
 from std_msgs.msg import String
@@ -16,6 +17,7 @@ from dbConnector import dbConnector
 from utilities import *
 from AMI_ContourClassFamily import Contour
 from pupil_apriltags import Detector
+import time
 
 
 memory = 25
@@ -79,10 +81,17 @@ class birdsEye():
         plt.ion()
         self.img_dir = kwargs.pop('img_dir', None)
         self.save_name = os.path.join(self.img_dir, 'labels')
+        self.det_name = os.path.join(self.img_dir, 'detections')
         self.db_name = kwargs.pop('db_name', None)
         self.sensor = kwargs.pop('sensor', 'cam0')
         self.dbc = dbConnector(os.path.join(self.img_dir, self.db_name))
         self.dbc.boot(self.db_name, self.sensor)
+
+        self.model_path = kwargs.pop('model_path', os.path.join(os.path.expanduser('~'),'ucsc_512_384_13.tflite'))
+        self.model = tflite.Interpreter(model_path=self.model_path, num_threads=4)
+        self.model.allocate_tensors()
+        self.input_details = self.model.get_input_details()
+        self.output_details = self.model.get_output_details()
 
         self.radalt = None
         self.data = None
@@ -237,14 +246,33 @@ class birdsEye():
         print(f'    Mask saved: frame index {self.frame_index}, {self.save_name}.txt')
 
 
+    def detect(self, img, img_file):
+        start = time.time()
+        img.resize((384, 512, img.shape[-1]), refcheck=False)
+        # print(type(img), img.shape)
+        img = img.astype(np.float32)
+        self.model.set_tensor(self.input_details[0]['index'], np.expand_dims(img, axis=0))
+        self.model.invoke()
+        self.pred = self.model.get_tensor(self.output_details[0]['index'])[0]
+        f = open(f"{self.det_name}.txt", "a")
+        if self.pred[0] < 0.5:
+            print(f'    False: {self.pred[0]}')
+            line = f'{self.frame_index} {img_file} 0.0 {self.pred[0]} \n'
+        else:
+            print(f'    True: {self.pred[0]}')
+            line = f'{self.frame_index} {img_file} 1.0 {self.pred[0]} \n'
+        f.write(line)
+        f.close()
+        print(f'        Detection complete: took {time.time()-start}s.')
+
+
     def parseFlightDatabase(self):
         clks = self.dbc.getFrom('x, y', f"clicks_{self.db_name}")
         clks = np.array(clks)
         print("clicks: \n", clks, "\n clicks.shape:", clks.shape)
 
         self.data = self.dbc.getFrom('x, y, z, q, u, a, t, rtk_fix, radalt, save_loc, time', f'{self.sensor}_images_{self.db_name}')
-        save_name = os.path.join(self.img_dir, self.img_dir.split(os.sep)[-2])
-        sA = offlineSLICAnnotator(images=[i[-2] for i in self.data], save_name=save_name) #, mask_res=self.res[::-1])
+        # print(self.data)
 
         # Create rectification and projection maps
         map1, map2 = cv2.initUndistortRectifyMap(self.K, self.D, None, self.K, (self.res[0], self.res[1]), cv2.CV_32FC1)
@@ -258,7 +286,6 @@ class birdsEye():
         for i, frame in enumerate(self.data):
             print(f'frame: {i+1} of {len(self.data)}')
             self.frame_index = i
-            sA.frame_index = i
 
             clicks = np.hstack((clks, np.ones_like(clks[:,0]).reshape(-1,1)*(frame[2]-frame[-3])))
             # print("clicks: \n", clicks, "\n clicks.shape:", clicks.shape)
@@ -270,7 +297,7 @@ class birdsEye():
             self.ax.scatter(clicks[:,0], \
                             clicks[:,1], \
                             clicks[:,2], \
-                            marker='s', alpha=0.5, c='m', s=64, label='Click')
+                            marker='s', alpha=0.5, c='m', s=32, label='Click')
             self._3DFrameVertices = self._2Dto3D(self._2DFrameVertices)
             self.ax.scatter(np.array(self._3DFrameVertices)[:,0], \
                             np.array(self._3DFrameVertices)[:,1], \
@@ -319,7 +346,6 @@ class birdsEye():
                 img = cv2.imread(frame[-2])
                 # img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
                 rect = cv2.remap(img, map1, map2, interpolation=cv2.INTER_LINEAR)
-                gray = cv2.cvtColor(rect, cv2.COLOR_BGR2GRAY)
                 cv2.putText(rect, f'{frame[-1]}', (50,100), \
                     cv2.FONT_HERSHEY_SIMPLEX, 4, (0, 255, 0), 4)
 
@@ -356,6 +382,9 @@ class birdsEye():
 
                 cv2.imshow("Window", rect)
                 cv2.waitKey(30)
+                p = os.path.expanduser('~')
+                p = os.path.join(p, 'catch', 'tmp', f'2d_{str(self.frame_index).rjust(3,str(0))}.png')
+                cv2.imwrite(p, rect)
 
             if len(self.bproj) > 1:
                 # print(f'    new clicks: \n    {bp}')
@@ -384,9 +413,15 @@ class birdsEye():
             self.ax.set_box_aspect([1,1,1])
             self.ax.set_proj_type('ortho')
             self.fig.canvas.draw_idle()
-            plt.pause(0.35)
+            plt.pause(0.05)
+            p = os.path.expanduser('~')
+            p = os.path.join(p, 'catch', 'tmp', f'3d_{str(self.frame_index).rjust(3,str(0))}.png')
+            self.fig.savefig(p)
             self.ax.cla()
             self.tgts = None
+
+
+        self.grab_plots()
 
         print(rtk_tracker)
         print(f'RTK Service Stats:')
@@ -404,6 +439,211 @@ class birdsEye():
             pickle.dump(out_dict, f)
 
 
+    def detectionProcess(self):
+        clks = self.dbc.getFrom('x, y', f"clicks_{self.db_name}")
+        clks = np.array(clks)
+        print("clicks: \n", clks, "\n clicks.shape:", clks.shape)
+
+        self.data = self.dbc.getFrom('x, y, z, q, u, a, t, rtk_fix, radalt, save_loc, time', f'{self.sensor}_images_{self.db_name}')
+        # print(self.data)
+
+        # Create rectification and projection maps
+        map1, map2 = cv2.initUndistortRectifyMap(self.K, self.D, None, self.K, (self.res[0], self.res[1]), cv2.CV_32FC1)
+        self._2DFrameVertices = cv2.undistortPointsIter(np.array(self._2DFrameVertices,dtype = np.float64), self.K, self.D, None, self.K, (cv2.TERM_CRITERIA_COUNT | cv2.TERM_CRITERIA_EPS, 100, 0.003))
+        self._2DFrameVertices = np.squeeze(self._2DFrameVertices).tolist()
+
+        cv2.namedWindow("Window", cv2.WINDOW_NORMAL)
+        cv2.resizeWindow("Window", 1920, 1200)
+        for i, frame in enumerate(self.data):
+            print(f'frame: {i+1} of {len(self.data)}')
+            self.frame_index = i
+
+            clicks = np.hstack((clks, np.ones_like(clks[:,0]).reshape(-1,1)*(frame[2]-frame[-3])))
+            # print("clicks: \n", clicks, "\n clicks.shape:", clicks.shape)
+
+            self.T_WC = poseRowToTransform(frame[:7])  # our base link maps from the world origin to the base link
+            self.radalt = frame[-3]
+            plotTransform(self.ax, self.T_WC)
+            clicks_2D = self._3Dto2D(clicks)
+            self.ax.scatter(clicks[:,0], \
+                            clicks[:,1], \
+                            clicks[:,2], \
+                            marker='s', alpha=0.5, c='m', s=32, label='Click')
+            self._3DFrameVertices = self._2Dto3D(self._2DFrameVertices)
+            self.ax.scatter(np.array(self._3DFrameVertices)[:,0], \
+                            np.array(self._3DFrameVertices)[:,1], \
+                            np.array(self._3DFrameVertices)[:,2], \
+                            marker='s', color='k', label='Frame')
+            clicks_2D, bproj = self._2DFrameCheck(clicks_2D, stats=True)
+
+            if self.radalt > 3.0 and frame[-4] == 131:
+                # print('  cv2.imread')
+                img = cv2.imread(frame[-2])
+                # img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+                rect = cv2.remap(img, map1, map2, interpolation=cv2.INTER_LINEAR)
+                cv2.putText(rect, f'{frame[-1]}', (50,100), \
+                    cv2.FONT_HERSHEY_SIMPLEX, 4, (0, 255, 0), 4)
+                self.detect(img, frame[-2])
+
+                if self.pred[0] >= 0.5:
+                    if frame[-4] == 131:
+                        color = (0,255,0)
+                    elif frame[-4] == 67:
+                        color = (0,255,255)
+                    elif frame[-4] == 3:
+                        color = (0,0,255)
+                    else:
+                        color == (0,0,0)
+                    cv2.putText(rect, 'True', (1600,100), \
+                        cv2.FONT_HERSHEY_SIMPLEX, 4, (0, 255, 0), 4)
+
+                    for click in clicks_2D:
+                        cv2.circle(rect, [int(click[0]), int(click[1])], 15, color, -1)
+                    if bproj is not None:
+                        self.bproj += bproj
+                        bp = np.array(self.bproj)
+                        bp = np.squeeze(bp)
+                else:
+                    cv2.putText(rect, 'False', (1600,100), \
+                        cv2.FONT_HERSHEY_SIMPLEX, 4, (0, 0, 255), 4)
+
+                cv2.imshow("Window", rect)
+                cv2.waitKey(30)
+
+                if len(self.bproj) > 1:
+                    # print(f'    new clicks: \n    {bp}')
+                    self.ax.scatter(bp[:,0], \
+                                    bp[:,1], \
+                                    bp[:,2], \
+                                    c='b', alpha=0.3, s=64, label='BackProj')
+                elif len(self.bproj) == 1:
+                    # print(f'    first click: \n    {bp}')
+                    self.ax.scatter(bp[0], \
+                                    bp[1], \
+                                    bp[2], \
+                                    c='b', alpha=0.3, s=64)
+                else:
+                    pass  # nothing yet
+
+                if i >= memory :
+                    for tmp in self.data[(i-memory):i]:
+                        if self.pred[0] >= 0.5:
+                            color = 'g'
+                        else:
+                            color = 'k'
+                        self.ax.scatter(tmp[0], tmp[1], tmp[2], c=color, alpha=0.1, s=32)
+                else:
+                    for tmp in self.data[:i]:
+                        if self.pred[0] >= 0.5:
+                            color = 'g'
+                        else:
+                            color = 'k'
+                        self.ax.scatter(tmp[0], tmp[1], tmp[2], c=color, alpha=0.1, s=32)
+
+            self.ax.set_xlim(frame[0]-15, frame[0]+15)
+            self.ax.set_xlabel('X')
+            self.ax.set_ylim(frame[1]-15, frame[1]+15)
+            self.ax.set_ylabel('Y')
+            self.ax.set_zlim(frame[2]-20, frame[2]+1)
+            self.ax.set_zlabel('Z')
+            self.ax.legend()
+
+            self.ax.set_title(f'Time: {frame[-1]}')
+            self.ax.set_box_aspect([1,1,1])
+            self.ax.set_proj_type('ortho')
+            self.fig.canvas.draw_idle()
+            plt.pause(0.05)
+            p = os.path.expanduser('~')
+            p = os.path.join(p, 'catch', 'tmp', f'3d_{str(self.frame_index).rjust(3,str(0))}.png')
+            self.fig.savefig(p)
+            self.ax.cla()
+            self.tgts = None
+
+            # self.ax.set_xlim(frame[0]-15, frame[0]+15)
+            # self.ax.set_xlabel('X')
+            # self.ax.set_ylim(frame[1]-15, frame[1]+15)
+            # self.ax.set_ylabel('Y')
+            # self.ax.set_zlim(frame[2]-20, frame[2]+1)
+            # self.ax.set_zlabel('Z')
+            # self.ax.legend()
+            #
+            # self.ax.set_title(f'Time: {frame[-1]}')
+            # self.ax.set_box_aspect([1,1,1])
+            # self.ax.set_proj_type('ortho')
+            # self.fig.canvas.draw_idle()
+            # plt.pause(0.05)
+            # self.ax.cla()
+            # self.tgts = None
+        self.grab_plots()
+
+
+    def grab_plots(self):
+        fig, ax = plt.subplots(1, 1, figsize=(15, 15))
+        rtk_data = self.dbc.getFrom('lat, lon, altitude, rtk_fix, time', f'rtk_data_{self.db_name}')
+        rtk_tmp = [[*utm.from_latlon(rtk_data[i][0], rtk_data[i][1])[:2], rtk_data[i][2], rtk_data[i][-1]] for i in range(len(rtk_data))]
+        xs = [rtk_tmp[i][0] for i in range(len(rtk_tmp))]
+        ys = [rtk_tmp[i][1] for i in range(len(rtk_tmp))]
+        zs = [rtk_tmp[i][2] for i in range(len(rtk_tmp))]
+        # ts = [rtk_tmp[i][-1] for i in range(len(rtk_tmp))]
+        # ax[0].scatter(xs, ys, c='k', s=1, label='RTK')
+        # ax[1].plot(zs, 'k', label='RTK')
+        o_xs = [self.data[i][0]for i in range(len(self.data))]
+        o_ys = [self.data[i][1]for i in range(len(self.data))]
+        o_zs = [self.data[i][2]for i in range(len(self.data))]
+        # o_ts = [self.data[i][-1]for i in range(len(self.data))]
+        o_t = [i*len(rtk_tmp)/len(self.data) for i in range(len(self.data))]
+        # ax[0].scatter(o_xs, o_ys, c='r', s=20, label='EKF')
+        # ax[1].scatter(o_t, o_zs, c='r', s=10, label='EKF')
+        # ax[0].legend(fontsize=16)
+
+        ax.scatter(xs, ys, c='k', s=1, label='RTK')
+        ax.scatter(o_xs, o_ys, c='r', s=20, label='EKF')
+        ax.legend(fontsize=16)
+
+        # ax.plot(zs, 'k', label='RTK')
+        # ax.scatter(o_t, o_zs, c='r', s=10, label='EKF')
+
+        # ax.spines['top'].set_visible(False)
+        # ax.spines['right'].set_visible(False)
+        # ax.spines['bottom'].set_visible(False)
+        # ax.spines['left'].set_visible(False)
+        #
+        # ax.get_xaxis().set_ticks([])
+        # ax.get_yaxis().set_ticks([])
+        # ax.set_box_aspect(1)
+        plt.savefig('rtk_odom_sanity.png', transparent=True)
+        # plt.savefig('rtk_alt_sanity.png', transparent=True)
+
+        fig, ax = plt.subplots(1, 3, figsize=(15,6))
+        ahrs_data = self.dbc.getFrom('q, u, a, t, v_a, v_b, v_g, a_x, a_y, a_z, time', f'ahrs_data_{self.db_name}')
+        ahrs_tmp = [quat2euler(ahrs_data[i][0],ahrs_data[i][1],ahrs_data[i][2],ahrs_data[i][3]) for i in range(len(ahrs_data))]
+        als = [ahrs_tmp[i][0] for i in range(len(ahrs_tmp))]
+        bes = [ahrs_tmp[i][1] for i in range(len(ahrs_tmp))]
+        gas = [ahrs_tmp[i][2] for i in range(len(ahrs_tmp))]
+        ax[0].scatter([i for i in range(len(als))], als, c='k', s=1, label='AHRS')
+        ax[1].scatter([i for i in range(len(bes))], bes, c='k', s=1, label='AHRS')
+        ax[2].scatter([i for i in range(len(gas))], gas, c='k', s=1, label='AHRS')
+        o_tmp = [quat2euler(self.data[i][3], self.data[i][4], self.data[i][5], self.data[i][6]) for i in range(len(self.data))]
+        o_as = [o_tmp[i][0]for i in range(len(o_tmp))]
+        o_bs = [o_tmp[i][1]for i in range(len(o_tmp))]
+        o_gs = [o_tmp[i][2]for i in range(len(o_tmp))]
+        o_t = [i*len(ahrs_tmp)/len(self.data) for i in range(len(self.data))]
+        ax[0].scatter(o_t, o_as, c='r', s=1, label='EKF')
+        ax[1].scatter(o_t, o_bs, c='r', s=1, label='EKF')
+        ax[2].scatter(o_t, o_gs, c='r', s=1, label='EKF')
+        plt.savefig('ahrs_ekf_sanity.png')
+
+        # tmp = [[self.data[i][-2], self.data[i][0], self.data[i][1], self.data[i][2], o_gs[i], o_bs[i], o_as[i]] for i in range(len(self.data))]
+        # if os.path.isfile('imageData.txt'):
+        #     os.remove('imageData.txt')
+        # for line in tmp:
+        #     with open('imageData.txt', 'a') as f:
+        #         vals = ','.join([str(x) for x in line])
+        #         # print(vals)
+        #         f.write(vals+"\n")
+        print('ping')
+
+
 if __name__ == '__main__':
     dir_path = os.path.join(os.path.expanduser('~'), 'parsed_flight')
     db_name = 'flight_data'
@@ -411,3 +651,4 @@ if __name__ == '__main__':
     tst = birdsEye(dbc, db_name=db_name, img_dir=dir_path)
 
     tst.parseFlightDatabase()
+    # tst.detectionProcess()
