@@ -3,7 +3,7 @@
 **3D simulator for system analysis and visualization**
 
 <p align='center'>
-    <img src="images/pipeline.png" alt="drawing" width="800"/>
+    <img src="images/pipeline.png" alt="drawing" width="1000"/>
 </p>
 
 ## Installation
