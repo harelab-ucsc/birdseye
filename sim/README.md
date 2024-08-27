@@ -17,7 +17,7 @@ sudo apt-get install cmake libeigen3-dev libpangolin-dev libsophus-dev libyaml-c
 To build this simulator, run
 ```bash
 git clone https://github.com/harelab-ucsc/birdseye.git
-cd sim
+cd birdseye/sim
 mkdir build
 cd build
 cmake ..
