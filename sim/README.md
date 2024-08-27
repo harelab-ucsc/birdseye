@@ -32,7 +32,7 @@ The simulation and system parameters are specified in a yaml file. An example is
 ./build/sim3D config/sim.yaml
 ```
 
-The simulation provides Euclidean backprojection error terms in a file called l2_errors.txt. To anaylze this output, we provide a script with fits a gamma function to the error distribution.
+The simulation provides Euclidean backprojection error terms in a file called l2_errors.txt. To anaylze this output, we provide a script that fits a gamma function to the error distribution.
 
 ```bash
 python3 scripts/analyze.py --bins 250 l2_errors.txt
