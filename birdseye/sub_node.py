@@ -75,7 +75,7 @@ class subscriberNode(rclpy.node.Node):
         # tf2 piping
         self.tf_buffer = Buffer()
         self.tf_listener = TransformListener(self.tf_buffer, self)
-        self.declare_parameter('source_frame', 'cam0')
+        self.declare_parameter('source_frame', self.sensor)
         self.source_frame = self.get_parameter('source_frame').value
         self.declare_parameter('target_frame', 'utm')
         self.target_frame = self.get_parameter('target_frame').value

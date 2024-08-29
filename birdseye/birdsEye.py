@@ -318,7 +318,7 @@ class birdsEye():
                 color = 'k'
                 rtk_tracker[3] += 1
 
-            if i >= memory :
+            if i >= memory:
                 for tmp in self.data[(i-memory):i]:
                     if tmp[-4] == 131:
                         color = 'g'

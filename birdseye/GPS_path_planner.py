@@ -32,8 +32,8 @@ EPS = 2
 MIN_SAMPLES = 3
 
 DJI_MAX_POINTS = 95
-DJI_MIN_DISTANCE = 500  # millimeters -> 0.5m, this is a number from blogs...
-# there is a more formal post which claims that the min is 5.0m, but
+DJI_MIN_DISTANCE = 3500  # millimeters -> 3.5m...
+# there is a more formal post (from DroneDeploy) which claims that the min is 5.0m, but
 # we have done flights which contradict that figure (4pts @ 1m whifferdill )
 
 SAVE = True
@@ -112,6 +112,8 @@ def preprocessWaypoints(waypoints, min_gap=DJI_MIN_DISTANCE):
         dists = dists.astype(np.int32)
     # plt.imshow(dists)
     # plt.show()
+    print(dists[np.nonzero(dists)].min())
+    # print(np.where(dists == 0))
     return dists, wpts
 
 
@@ -285,13 +287,7 @@ def build_dji_plan(
         ax.get_xaxis().set_ticks([])
         ax.get_yaxis().set_ticks([])
         plt.savefig('clicks.png', transparent=True)
-    """
-    kml=simplekml.Kml()
-    for i in out:
-        print(plan[i])
-        kml.newpoint(name=str(places[i]), coords=[(plan[i][1], plan[i][0])])
-    kml.save(plan_kml)
-    """
+
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
