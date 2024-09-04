@@ -46,15 +46,16 @@ def _write_csv_file(path: str, rows: list[str]):
         writer = csv.writer(csvp, delimiter=",")
         writer.writerows(rows)
 
-def generate_csv_from_plan(plan, fpath):
+def generate_csv_from_plan(plan, d_hover, fpath):
     """Write the details of a flight plan to a CSV file.
     """
     lines = []
-    lines.append(["lat","lon","point_name"])
+    lines.append(["lat","lon","point_name", "actions_sequence"])
     [lines.append([
         str(pos[0]),
         str(pos[1]),
-        str(index)
+        str(index),
+        f"H{d_hover}"
     ]) for index, pos in enumerate(plan)]
     _write_csv_file(fpath, lines)
 
@@ -118,6 +119,7 @@ def preprocessWaypoints(waypoints, min_gap=DJI_MIN_DISTANCE):
 
 
 def build_dji_plan(
+        d_hover: float,
         do_tsp: bool,
         do_whifferdill: bool,
         fp_in: str,
@@ -127,6 +129,7 @@ def build_dji_plan(
     ):
     """
     Args:
+        d_hover         (float) :
         do_tsp          (bool)  :
         do_whifferdill  (bool)  :
         fp_in           (str)   :
@@ -257,7 +260,11 @@ def build_dji_plan(
     print(len(plan)//DJI_MAX_POINTS, len(plan)%DJI_MAX_POINTS)
 
     print(f"Generating flight plan at {fp_out}...")
-    generate_csv_from_plan(plan, fp_out)
+    generate_csv_from_plan(
+        plan,
+        int(d_hover * 1000),
+        fp_out
+    )
     print("DONE.")
 
     plt.tick_params(axis='x', which='both', bottom=False,
@@ -288,9 +295,15 @@ def build_dji_plan(
         ax.get_yaxis().set_ticks([])
         plt.savefig('clicks.png', transparent=True)
 
-
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
+    parser.add_argument(
+        "-d",
+        "--duration_hover",
+        default=3.0,
+        help="Specify duration of hover at each point.",
+        type=float
+    )
     parser.add_argument(
         "-i",
         "--input",
@@ -336,6 +349,7 @@ if __name__ == "__main__":
     args = parser.parse_args()
 
     build_dji_plan(
+        d_hover=args.duration_hover,
         do_tsp=args.tsp,
         do_whifferdill=args.whifferdill,
         fp_in=args.input,
