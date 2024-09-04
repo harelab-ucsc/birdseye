@@ -30,7 +30,6 @@ import fast_tsp
 
 EPS = 1.0
 MIN_SAMPLES = 2
-HOVER_DURATION = 3
 
 
 def _write_csv_file(path: str, rows: list[str]):
@@ -40,7 +39,7 @@ def _write_csv_file(path: str, rows: list[str]):
         writer = csv.writer(csvp, delimiter=",")
         writer.writerows(rows)
 
-def generate_csv_from_plan(plan, fpath):
+def generate_csv_from_plan(plan, d_hover, fpath):
     """Write the details of a flight plan to a CSV file.
     """
     lines = []
@@ -49,7 +48,7 @@ def generate_csv_from_plan(plan, fpath):
         str(pos[0]),
         str(pos[1]),
         str(index),
-        f"H{HOVER_DURATION}000"
+        f"H{d_hover}"
     ]) for index, pos in enumerate(plan)]
     _write_csv_file(fpath, lines)
 
@@ -78,6 +77,7 @@ def build_polygon(
     ]
 
 def build_dji_plan(
+        d_hover: float,
         do_tsp: bool,
         do_whifferdill: bool,
         fp_in: str,
@@ -87,6 +87,7 @@ def build_dji_plan(
     ):
     """
     Args:
+        d_hover         (float) :
         do_tsp          (bool)  :
         do_whifferdill  (bool)  :
         fp_in           (str)   :
@@ -219,7 +220,11 @@ def build_dji_plan(
     plan = np.array(plan)
 
     print(f"Generating flight plan at {fp_out}...")
-    generate_csv_from_plan(plan, fp_out)
+    generate_csv_from_plan(
+        plan,
+        int(d_hover * 1000),
+        fp_out
+    )
     print("DONE.")
 
     plt.show()
@@ -227,6 +232,13 @@ def build_dji_plan(
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
+    parser.add_argument(
+        "-d",
+        "--duration_hover",
+        default=3.0,
+        help="Specify duration of hover at each point.",
+        type=float
+    )
     parser.add_argument(
         "-i",
         "--input",
@@ -272,6 +284,7 @@ if __name__ == "__main__":
     args = parser.parse_args()
 
     build_dji_plan(
+        d_hover=args.duration_hover,
         do_tsp=args.tsp,
         do_whifferdill=args.whifferdill,
         fp_in=args.input,
