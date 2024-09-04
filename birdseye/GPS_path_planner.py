@@ -28,8 +28,15 @@ import simplekml
 import fast_tsp
 
 
-EPS = 1.0
-MIN_SAMPLES = 2
+EPS = 2
+MIN_SAMPLES = 3
+
+DJI_MAX_POINTS = 95
+DJI_MIN_DISTANCE = 3500  # millimeters -> 3.5m...
+# there is a more formal post (from DroneDeploy) which claims that the min is 5.0m, but
+# we have done flights which contradict that figure (4pts @ 1m whifferdill )
+
+SAVE = True
 
 
 def _write_csv_file(path: str, rows: list[str]):
@@ -70,11 +77,46 @@ def build_polygon(
         n (int): Number of sides/vertices for polygon.
     """
     # Generate polygons around each point provided.
-    thetas = lambda n: [((i * 2 * np.pi) / n) for i in range(n)]
-    return [
-        [pt[0] + r * np.cos(th),
-         pt[1] + r * np.sin(th)] for th in thetas(n)
-    ]
+    if r == 0.0:
+        return [list(pt)]
+    else:
+        thetas = lambda n: [((i * 2 * np.pi) / n) for i in range(n)]
+        return [
+            [pt[0] + r * np.cos(th),
+             pt[1] + r * np.sin(th)] for th in thetas(n)
+        ]
+
+
+def preprocessWaypoints(waypoints, min_gap=DJI_MIN_DISTANCE):
+    wpts = np.array(waypoints)
+    dists = metrics.pairwise_distances(wpts)
+    dists *= 1000  # convert to mm from m
+    dists = dists.astype(np.int32)
+    # plt.imshow(dists)
+    # plt.show()
+
+    while dists[np.nonzero(dists)].min() < min_gap:
+        d_tmp = np.nonzero(dists)
+        indx = np.where(dists == dists[d_tmp].min())
+        u, v = indx[0][0], indx[1][0]
+        if u > v:
+            a = waypoints.pop(u)
+            b = waypoints.pop(v)
+        else:
+            a = waypoints.pop(v)
+            b = waypoints.pop(u)
+        new = [(a[0]+b[0])/2, (a[1]+b[1])/2]
+        waypoints.append(new)
+        wpts = np.array(waypoints)
+        dists = metrics.pairwise_distances(wpts)
+        dists *= 1000  # convert to mm from m
+        dists = dists.astype(np.int32)
+    # plt.imshow(dists)
+    # plt.show()
+    print(dists[np.nonzero(dists)].min())
+    # print(np.where(dists == 0))
+    return dists, wpts
+
 
 def build_dji_plan(
         d_hover: float,
@@ -132,7 +174,7 @@ def build_dji_plan(
 
     dbscan = DBSCAN(eps=EPS, min_samples=MIN_SAMPLES).fit(UTMrep)  # cluster in the UTM/cartesian representation
     labels = dbscan.labels_
-    print('labels: ', labels)
+    # print('labels: ', labels)
     # Number of clusters in labels, ignoring noise if present.
     n_clusters_ = len(set(labels)) - (1 if -1 in labels else 0)
     n_noise_ = list(labels).count(-1)
@@ -148,12 +190,15 @@ def build_dji_plan(
 
     colors = [plt.cm.Spectral(each) for each in np.linspace(0, 1, len(unique_labels))]
     waypoints = []
+    plt.rcParams['figure.figsize'] = [15,15]
     for k, col in zip(unique_labels, colors):
         tmp = []
         if k == -1:
             # Black used for noise.
             col = [0, 0, 0, 1]
             skip_convhull = True
+        # elif w_rad == 0.0:
+        #     skip_convhull = True
         else:
             skip_convhull = False
 
@@ -164,9 +209,10 @@ def build_dji_plan(
             xy[:, 0],
             xy[:, 1],
             "o",
-            markerfacecolor=tuple(col),
+            # markerfacecolor=tuple(col),
+            markerfacecolor="w",
             markeredgecolor="k",
-            markersize=14,
+            markersize=5,
         )
         for pt in xy:
             if skip_convhull:
@@ -179,45 +225,39 @@ def build_dji_plan(
             xy[:, 0],
             xy[:, 1],
             "o",
-            markerfacecolor=tuple(col),
+            # markerfacecolor=tuple(col),
+            markerfacecolor="w",
             markeredgecolor="k",
-            markersize=6,
+            markersize=5,
         )
         for pt in xy:
             if skip_convhull:
                 waypoints += build_polygon(pt, w_rad, w_sides)
             else:
                 tmp += build_polygon(pt, w_rad, w_sides)
-
         tmp = np.array(tmp)
 
         if len(tmp) != 0:
             hull = ConvexHull(tmp)
             pts = tmp[hull.vertices]
-            plt.plot(pts[:,0], pts[:,1], 'o', markerfacecolor='g', markeredgecolor="k", markersize=10)
+            # plt.plot(pts[:,0], pts[:,1], 'o', markerfacecolor='g', markeredgecolor="k", markersize=10)
             waypoints += list(pts)
 
-    waypoints = np.array(waypoints)
-    plt.title(f"Estimated number of clusters: {n_clusters_}")
-    # plt.show()
-    dists = metrics.pairwise_distances(waypoints)
-    dists *= 1000  # convert to mm from m
-    dists = dists.astype(np.int32)
+    dists, waypoints = preprocessWaypoints(waypoints)
 
     out = fast_tsp.find_tour(dists)
-    print(out)
     spt = out[0]
-    plt.plot(waypoints[spt,0], waypoints[spt,1], 'o', markerfacecolor='r', markeredgecolor='k', markersize=10)
     for pt in out[1:]:
         plt.plot([waypoints[spt,0], waypoints[pt,0]], [waypoints[spt,1], waypoints[pt,1]], 'k')
-        plt.plot(waypoints[pt,0], waypoints[pt,1], 'o', markerfacecolor='b', markeredgecolor='b', markersize=4)
+        plt.plot(waypoints[pt,0], waypoints[pt,1], 'o', markerfacecolor='xkcd:neon green', markeredgecolor='k', markersize=5)
         spt = pt
     plt.plot([waypoints[spt,0], waypoints[out[0],0]], [waypoints[spt,1], waypoints[out[0],1]], 'k')
 
     plan = []
     for pt in waypoints[out]:
         plan.append(list(utm.to_latlon(pt[0], pt[1], u[-2], u[-1])))
-    plan = np.array(plan)
+    # plan = np.array(plan)
+    print(len(plan)//DJI_MAX_POINTS, len(plan)%DJI_MAX_POINTS)
 
     print(f"Generating flight plan at {fp_out}...")
     generate_csv_from_plan(
@@ -227,8 +267,33 @@ def build_dji_plan(
     )
     print("DONE.")
 
+    plt.tick_params(axis='x', which='both', bottom=False,
+                top=False, labelbottom=False)
+    plt.tick_params(axis='y', which='both', right=False,
+                left=False, labelleft=False)
+    for pos in ['right', 'top', 'bottom', 'left']:
+        plt.gca().spines[pos].set_visible(False)
+    if SAVE:
+        plt.savefig('demo.png', transparent=True)
     plt.show()
 
+    if SAVE:
+        fig, ax = plt.subplots(figsize=(15,15))
+        ax.plot(UTMrep[:,0], UTMrep[:,1],
+            "o",
+            # markerfacecolor=tuple(col),
+            markerfacecolor="w",
+            markeredgecolor="k",
+            markersize=10,
+            )
+        ax.spines['top'].set_visible(False)
+        ax.spines['right'].set_visible(False)
+        ax.spines['bottom'].set_visible(False)
+        ax.spines['left'].set_visible(False)
+
+        ax.get_xaxis().set_ticks([])
+        ax.get_yaxis().set_ticks([])
+        plt.savefig('clicks.png', transparent=True)
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()

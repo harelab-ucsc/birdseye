@@ -28,6 +28,8 @@ class dbConnector:
         self.setupTable(f"{sensor}_images_{db_name}", "x REAL, y REAL, z REAL, q REAL, u REAL, a REAL, t REAL, rtk_fix INTEGER, radalt REAL, save_loc TEXT UNIQUE, time REAL")
         self.setupTable(f"clicks_{db_name}", "x REAL, y REAL, z REAL, z_msl REAL, tag INTEGER")
         self.setupTable(f"parameters_{db_name}", f"sensorID TEXT UNIQUE, resolution array, intrinsics1 array, intrinsics2 array, extrinsics array")
+        self.setupTable(f"rtk_data_{db_name}", f"lat REAL, lon REAL, altitude REAL, rtk_fix INTEGER, time REAL UNIQUE")
+        self.setupTable(f"ahrs_data_{db_name}", f"q REAL, u REAL, a REAL, t REAL, v_a REAL, v_b REAL, v_g REAL, a_x REAL, a_y REAL, a_z REAL, time REAL UNIQUE")
 
 
     def sqlite_power(self, x, n):
