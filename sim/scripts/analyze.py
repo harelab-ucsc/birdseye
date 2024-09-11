@@ -28,6 +28,13 @@ def main():
     # Read errors from the file
     errors = read_errors_from_file(args.filename)
     
+    # Filter out non-positive values
+    errors = errors[errors > 0]
+    
+    if len(errors) == 0:
+        print("No valid (positive) error values found.")
+        exit(1)
+    
     # Compute histogram
     hist, bin_edges = np.histogram(errors, bins=args.bins, density=True)
     
@@ -35,7 +42,11 @@ def main():
     bin_centers = (bin_edges[:-1] + bin_edges[1:]) / 2
     
     # Fit Gamma distribution
-    shape, loc, scale = gamma.fit(errors, floc=0)  # Fix location parameter to 0 for Gamma distribution
+    try:
+        shape, loc, scale = gamma.fit(errors, floc=0)  # Fix location parameter to 0 for Gamma distribution
+    except Exception as e:
+        print(f"Error fitting Gamma distribution: {e}")
+        exit(1)
     
     # Generate points for the Gamma fit
     x = np.linspace(min(errors), max(errors), 100)
@@ -62,7 +73,7 @@ def main():
     # Display Gamma parameters in the plot
     plt.legend()
     plt.grid(True)
-    plt.annotate(f'α : {shape:.2f}\nβ: {1/scale:.2f}\nμ: {mean:.2f} m\nσ: {std_dev:.2f} m',
+    plt.annotate(f'α: {shape:.2f}\nβ: {1/scale:.2f}\nμ: {mean:.2f} m\nσ: {std_dev:.2f} m',
                  xy=(0.7, 0.8), xycoords='axes fraction',
                  bbox=dict(boxstyle='round', facecolor='white', alpha=0.8),
                  fontsize=12)

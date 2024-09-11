@@ -1,0 +1,2 @@
+/usr/bin/ar qc libceres_pose_optimizer.a CMakeFiles/ceres_pose_optimizer.dir/src/ceres_pose_optimizer.cpp.o
+/usr/bin/ranlib libceres_pose_optimizer.a

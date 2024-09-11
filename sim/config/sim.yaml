@@ -23,5 +23,9 @@ sigma_roll: 0.004363323  # std of x attitude estimation in radians
 sigma_pitch: 0.004363323 # std of y attitude estimation in radians
 sigma_yaw: 0.0139626     # std of z attitude estimation in radians
 
+#sigma_roll: 0.0  # std of x attitude estimation in radians
+#sigma_pitch: 0.0 # std of y attitude estimation in radians
+#sigma_yaw: 0.0     # std of z attitude estimation in radians
+
 sigma_RPE_x: 0.413286 # std of horizontal pixel reprojection error
 sigma_RPE_y: 0.343144 # std of vertical pixel reprojection error

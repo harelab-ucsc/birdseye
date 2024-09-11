@@ -1,5 +1,6 @@
 #include <iostream>
 #include <vector>
+#include <unordered_map>
 #include <cmath>
 #include <ctime>
 #include <cstdlib>
@@ -11,6 +12,7 @@
 #include <sophus/se3.hpp>
 #include <Eigen/Core>
 #include <pangolin/pangolin.h>
+#include "ceres_pose_optimizer.hpp"
 
 typedef Eigen::Vector3d Point;
 typedef std::vector<Sophus::SE3d, Eigen::aligned_allocator<Sophus::SE3d>> Trajectory;
@@ -232,13 +234,15 @@ Eigen::Vector2d space3DToPixel(const Eigen::Vector3d &point_3d, const Eigen::Mat
     return pixel;
 }
 
-// produce projected pixel 
+// produce projected pixels for all images
 void backproject(const std::vector<Point> &ground_points, const Trajectory &trajectory_gt, 
-                 const Trajectory &trajectory_noisy, std::vector<Eigen::Vector3d> &backprojections, 
-                 std::vector<double> &backproject_error, const Eigen::Matrix3d &K, 
+                 const Trajectory &trajectory_noisy, std::vector<double> &backproject_error, std::unordered_map<int, std::vector<int>> &observed_points, 
+                 const Eigen::Matrix3d &K, std::unordered_map<int, std::vector<Eigen::Vector3d>> &backprojected_points, 
                  const Eigen::Vector2d &pixelRPE, int px_width, int px_height) {
     // for each camera pose
     for (int i = 0; i < trajectory_gt.size(); i++) {
+        std::vector<int> observed_indices; // indicies of observed ground points at pose trajectory_noisy[i] from the vector ground_points
+        std::vector<Eigen::Vector3d> backprojections; // // List of backprojected points for this pose
         // for each ground point w.r.t each camera pose 
         for (int j = 0; j < ground_points.size(); j ++) {
             Point P_camera = trajectory_gt[i].inverse() * ground_points[j]; // transform world observation to camera frame 3D coordinate
@@ -247,6 +251,7 @@ void backproject(const std::vector<Point> &ground_points, const Trajectory &traj
             // if pixel is within view of the camera frame 
              if (pixel_noisy[0] >= 0 && pixel_noisy[0] < px_width &&
                  pixel_noisy[1] >= 0 && pixel_noisy[0] < px_height) {
+                    observed_indices.push_back(j); // save index of the observed ground truth point
                     Point loc = trajectory_gt[i].translation();
                     double depth = loc.z(); // !!!image-wise depth assumption from z-component of pose estimate!!!
                     Eigen::Vector3d P_camera_b = pixelTo3D(pixel, depth, K); // backproject pixel to camera frame
@@ -255,6 +260,10 @@ void backproject(const std::vector<Point> &ground_points, const Trajectory &traj
                     double backprojection_e = (ground_points[j] - P_world_b).norm(); // calculate L2 distance between g.t. observtaion and backprojected world coordinate
                     backproject_error.push_back(backprojection_e);
             }
+        }
+        if (!observed_indices.empty()) { // if image at camera pose contained observations, save observations and projections
+            observed_points[i] = observed_indices;
+            backprojected_points[i] = backprojections;
         }
     }
 }
@@ -278,7 +287,7 @@ void writeVectorToFile(const std::vector<double> &vec, const std::string &filena
 
 // Function to visualize the points, SE3 elements, and boundary using Pangolin
 void visualize(const std::vector<Point> &points, 
-               const std::vector<Point> &b_proj, 
+               const std::unordered_map<int, std::vector<Eigen::Vector3d>> &b_proj, 
                const Trajectory &trajectory,
                double boundary_radius) {
     pangolin::CreateWindowAndBind("Trajectory Visualization", 640, 480);
@@ -334,8 +343,9 @@ void visualize(const std::vector<Point> &points,
         glColor3f(0.0f, 0.0f, 1.0f);  // Blue
         glPointSize(5.0f);
         glBegin(GL_POINTS);
-        for (const auto& p : b_proj) {
-            glVertex3f(p.x(), p.y(), p.z());
+        for (const auto& [pose_index, points] : b_proj) {
+            for (const auto& p : points)
+                glVertex3f(p.x(), p.y(), p.z());
         }
         glEnd();
 
@@ -466,16 +476,36 @@ int main(int argc, char** argv) {
 
     // backprojection results
     std::cout << "[]Backprojecting points from pixel space to world space..." << std::endl;
-    std::vector<Eigen::Vector3d> backprojections; // backprojected world obsevations (world->camera->world)
+    std::unordered_map<int, std::vector<int>> observed_points; // mapping of [image pose -> observed ground points]
+    std::unordered_map<int, std::vector<Eigen::Vector3d>> backprojected_points; // backprojected world obsevations (world->camera->world)
     std::vector<double> backproject_error; // backprojection L2 errors
-    backproject(points, trajectory_gt, trajectory_noisy, backprojections, backproject_error, K, pixelRPE, px_width, px_height); // perform backprojection
-    std::cout << "[]Simulated " << backprojections.size() << " backprojections." << std::endl;
+    backproject(points, trajectory_noisy, trajectory_noisy, backproject_error, observed_points, K, backprojected_points, pixelRPE, px_width, px_height); // perform backprojections
+    std::cout << "[]Simulated " << backproject_error.size() << " backprojections." << std::endl;
+    // Write the raw error terms to the file
+    writeVectorToFile(backproject_error, "l2_errors_raw.txt");
 
-    // Write the error terms to the file
-    writeVectorToFile(backproject_error, "l2_errors.txt");
+    // Create the optimizer and run optimization
+    //std::cout << "[]Running pose optimization... " << std::endl;
+    //CeresPoseOptimizer optimizer(points, observed_points, backprojected_points, trajectory_noisy);
+    //optimizer.optimize();
+
+    // Print optimized camera poses
+    //for (size_t i = 0; i < trajectory_noisy.size(); ++i) {
+    //    std::cout << "Optimized pose " << i << ": " << trajectory_noisy[i].matrix() << std::endl;
+    //}
+
+    // backproject with optimized poses
+    //std::cout << "[]Running optimized backprojection... " << std::endl;
+    //std::unordered_map<int, std::vector<int>> observed_points_opt; // mapping of [image pose -> observed ground points]
+    //std::unordered_map<int, std::vector<Eigen::Vector3d>> backprojected_points_opt; // backprojected world obsevations (world->camera->world)
+    //std::vector<double> backproject_error_opt; // backprojection L2 errors
+    //backproject(points, trajectory_gt, trajectory_noisy, backproject_error_opt, observed_points_opt, K, backprojected_points_opt, pixelRPE, px_width, px_height); // perform backprojections
+
+    // Write the optimized error terms to the file
+    //writeVectorToFile(backproject_error_opt, "l2_errors_opt.txt");
 
     // Visualize the points, trajectory, and boundary
-    visualize(points, backprojections, trajectory_gt, boundary_radius);
+    visualize(points, backprojected_points, trajectory_noisy, boundary_radius);
 
     return 0;
 }

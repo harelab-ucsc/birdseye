@@ -1,0 +1,4 @@
+/home/akorycki/birdseye/sim/build/CMakeFiles/ceres_pose_optimizer.dir
+/home/akorycki/birdseye/sim/build/CMakeFiles/sim3D.dir
+/home/akorycki/birdseye/sim/build/CMakeFiles/edit_cache.dir
+/home/akorycki/birdseye/sim/build/CMakeFiles/rebuild_cache.dir
