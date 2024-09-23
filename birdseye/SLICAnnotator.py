@@ -54,7 +54,7 @@ class SLICAnnotator:
 
     def check_segments(self):
         for coord in self.refPt:
-            # print('coord: ', coord)
+            print('coord: ', coord)
             for segval in self.segvals:
                 tmp = np.zeros(self.mask_res, dtype='uint8')
                 tmp[self.segments == segval] = 255
@@ -97,11 +97,11 @@ class SLICAnnotator:
         if frame_index is None:
             frame_index = self.frame_index
         # print('frame_index: ', frame_index)
-        print('prep')
+        # print('prep')
 
         self.image = None
         self.image = cv2.imread(self.images[frame_index])
-        print('ping')
+        # print('ping')
         # self.image = cv2.undistort(self.image, self.K, self.dist)
         self.image = cv2.resize(self.image, self.mask_res[::-1])
         # save_name = self.images[frame_index][:-4]
@@ -254,8 +254,18 @@ class offlineSLICAnnotator(SLICAnnotator):
 
 
 if __name__ == '__main__':
-    dir_path = "C:\\Users\\mwmasters\\Documents\\APL-subVision-Shapiro\\preUCSC\\waterline_20210609_release\\data\\data\\GOPRO_FremontCut_1\\"
-    images = glob2.glob(dir_path + "*.jpg")
-    save_name = os.path.join(dir_path, dir_path.split(os.sep)[-2])
+    parser = argparse.ArgumentParser()
+    parser.add_argument('-d', '--dirname', type=str, required=True,
+        help='required directory name, path to parent directory of images to annotate')
+    parser.add_argument('-f', '--format', nargs='?', const=1, type=str, default='png',
+        help='image file format; allowed args are "png" and "jpg". Default: png.')
+    args = vars(parser.parse_args())
+    print()
+    images = glob2.glob(args["dirname"] + "*." + args["format"])
+    images.sort()
+    print(f'{len(images)} {args["format"]} images found in {args["dirname"]}')
+
+    save_name = os.path.join(args["dirname"], args["dirname"].split(os.sep)[-2])
+    print(f'annotations will be saved to: {save_name} \n')
     obj = SLICAnnotator(images=images, save_name=save_name)
     obj.frameProcess()
