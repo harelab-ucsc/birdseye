@@ -23,65 +23,13 @@ import time
 memory = 25
 
 
-def apriltag_detect(img, gray):
-    # print('apriltag_detect')
-    ret = []
-    state = 0
-
-    # options = apriltag.DetectorOptions(families="tag36h11")
-    # detector = apriltag.Detector(options)
-    # results = detector.detect(gray)  # returns empty list if no targets
-
-    # Changed april tag dector to pupil-labs. Increasing nthreads seem to help not have the segmentation fault issue.
-    at_detector = Detector(
-        families="tag36h11",
-        nthreads=2,
-        quad_decimate=1.0,
-        quad_sigma=0.0,
-        refine_edges=1,
-        decode_sharpening=0.25,
-        debug=0
-        )
-
-    results = at_detector.detect(gray)
-
-    cv2.namedWindow("Window", cv2.WINDOW_NORMAL)
-    cv2.resizeWindow("Window", 512, 384)
-
-    if results:
-        state = 1
-        for r in results:
-            # extract the bounding box (x, y)-coordinates for the AprilTag
-            # and convert each of the (x, y)-coordinate pairs to integers
-            (ptA, ptB, ptC, ptD) = r.corners
-            ptB = (int(ptB[0]), int(ptB[1]))
-            ptC = (int(ptC[0]), int(ptC[1]))
-            ptD = (int(ptD[0]), int(ptD[1]))
-            ptA = (int(ptA[0]), int(ptA[1]))
-            # draw the bounding box of the AprilTag detection
-            cv2.line(img, ptA, ptB, (0, 255, 0), 2)
-            cv2.line(img, ptB, ptC, (0, 255, 0), 2)
-            cv2.line(img, ptC, ptD, (0, 255, 0), 2)
-            cv2.line(img, ptD, ptA, (0, 255, 0), 2)
-            # draw the center (x, y)-coordinates of the AprilTag
-            (cX, cY) = (int(r.center[0]), int(r.center[1]))
-            cv2.circle(img, (cX, cY), 5, (0, 0, 255), -1)
-            # draw the tag family on the image
-            tagFamily = r.tag_family.decode("utf-8")
-            cv2.putText(img, tagFamily, (ptA[0], ptA[1] - 15),
-                cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 2)
-            # print("[INFO] tag family: {}".format(tagFamily))
-            ret.append([[cX,cY], [ptA,ptB,ptC,ptD]])
-        # show the output image after AprilTag detection
-    return state, ret, img
-
-
 class birdsEye():
-    def __init__(self, dbc, **kwargs):
+    def __init__(self, **kwargs):
         plt.ion()
         self.img_dir = kwargs.pop('img_dir', None)
         self.save_name = os.path.join(self.img_dir, 'labels')
         self.det_name = os.path.join(self.img_dir, 'detections')
+        self.apriltags = kwargs.pop('apriltgs', False)
         self.db_name = kwargs.pop('db_name', None)
         self.sensor = kwargs.pop('sensor', 'cam0')
         self.dbc = dbConnector(os.path.join(self.img_dir, self.db_name))
@@ -113,6 +61,8 @@ class birdsEye():
         self.fig = plt.figure()
         self.ax = self.fig.add_subplot(111, projection='3d')
         plt.show(block=False)
+
+        self.rtk_tracker = [0]*4
 
         # self.tgts = None
         # self.april_2D = []
@@ -266,13 +216,121 @@ class birdsEye():
         print(f'        Detection complete: took {time.time()-start}s.')
 
 
+    def apriltag_detect(self, img):
+        # print('apriltag_detect')
+        ret = None
+        state = 0
+
+        at_detector = Detector(
+            families="tag36h11",
+            nthreads=2,
+            quad_decimate=1.0,
+            quad_sigma=0.0,
+            refine_edges=1,
+            decode_sharpening=0.25,
+            debug=0
+            )
+
+        results = at_detector.detect(cv2.cvtColor(img, cv2.COLOR_BGR2GRAY))
+
+        # cv2.namedWindow("Detect", cv2.WINDOW_NORMAL)
+        # cv2.resizeWindow("Detect", 512, 384)
+
+        if results:
+            ret = []
+            state = 1
+            for r in results:
+                # extract the bounding box (x, y)-coordinates for the AprilTag
+                # and convert each of the (x, y)-coordinate pairs to integers
+                (ptA, ptB, ptC, ptD) = r.corners
+                ptB = (int(ptB[0]), int(ptB[1]))
+                ptC = (int(ptC[0]), int(ptC[1]))
+                ptD = (int(ptD[0]), int(ptD[1]))
+                ptA = (int(ptA[0]), int(ptA[1]))
+                # draw the bounding box of the AprilTag detection
+                cv2.line(img, ptA, ptB, (0, 255, 0), 2)
+                cv2.line(img, ptB, ptC, (0, 255, 0), 2)
+                cv2.line(img, ptC, ptD, (0, 255, 0), 2)
+                cv2.line(img, ptD, ptA, (0, 255, 0), 2)
+                # draw the center (x, y)-coordinates of the AprilTag
+                (cX, cY) = (int(r.center[0]), int(r.center[1]))
+                cv2.circle(img, (cX, cY), 5, (0, 0, 255), -1)
+                # draw the tag family on the image
+                tagFamily = r.tag_family.decode("utf-8")
+                cv2.putText(img, tagFamily, (ptA[0], ptA[1] - 15),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 2)
+                # print("[INFO] tag family: {}".format(tagFamily))
+                ret.append([cX,cY])
+                # ret.append([[cX,cY], [ptA,ptB,ptC,ptD]])
+        return state, ret, img
+
+
+    def frameProcessSetup(self, frame, clks):
+        # make homogeneous coordinates for clicks wrt drone pose and radalt
+        #    plot in 3D UTM coords
+        clicks = np.hstack((clks, np.ones_like(clks[:,0]).reshape(-1,1)*(frame[2]-frame[-4])))
+        self.ax.scatter(clicks[:,0], \
+                        clicks[:,1], \
+                        clicks[:,2], \
+                        marker='s', alpha=0.5, c='m', s=32, label='Click')
+
+        # convert pose to 4x4 homogeneous transform
+        #    plot in 3D UTM coords
+        self.T_WC = poseRowToTransform(frame[:7])  # our base link maps from the world origin to the base link
+        self.radalt = frame[-4]
+        plotTransform(self.ax, self.T_WC)
+
+        self._3DFrameVertices = self._2Dto3D(self._2DFrameVertices)
+        self.ax.scatter(np.array(self._3DFrameVertices)[:,0], \
+                        np.array(self._3DFrameVertices)[:,1], \
+                        np.array(self._3DFrameVertices)[:,2], \
+                        marker='s', color='k', label='Frame')
+
+        if frame[-5] == 131:
+            color = 'g'
+            self.rtk_tracker[0] += 1
+        elif frame[-5] == 67:
+            color = 'y'
+            self.rtk_tracker[1] += 1
+        elif frame[-5] == 3:
+            color = 'r'
+            self.rtk_tracker[2] += 1
+        else:
+            color = 'k'
+            self.rtk_tracker[3] += 1
+
+        if self.frame_index >= memory:  # `memory` is defined at the top of the file
+            for tmp in self.data[(self.frame_index-memory):self.frame_index]:
+                if tmp[-5] == 131:
+                    color = 'g'
+                elif tmp[-5] == 67:
+                    color = 'y'
+                elif tmp[-5] == 3:
+                    color = 'r'
+                else:
+                    color = 'k'
+                self.ax.scatter(tmp[0], tmp[1], tmp[2], c=color, alpha=0.1, s=32)
+        else:
+            for tmp in self.data[:self.frame_index]:
+                if tmp[-5] == 131:
+                    color = 'g'
+                elif tmp[-5] == 67:
+                    color = 'y'
+                elif tmp[-5] == 3:
+                    color = 'r'
+                else:
+                    color = 'k'
+                self.ax.scatter(tmp[0], tmp[1], tmp[2], c=color, alpha=0.1, s=32)
+        return clicks
+
+
     def parseFlightDatabase(self):
         clks = self.dbc.getFrom('x, y', f"clicks_{self.db_name}")
         clks = np.array(clks)
         print("clicks: \n", clks, "\n clicks.shape:", clks.shape)
 
-        self.data = self.dbc.getFrom('x, y, z, q, u, a, t, rtk_fix, radalt, save_loc, time', f'{self.sensor}_images_{self.db_name}')
-        # print(self.data)
+        # load every pose entry saved by `sub_node.py`; each row is a pose
+        self.data = self.dbc.getFrom('x, y, z, q, u, a, t, rtk_fix, radalt, save_loc, time1, time2', f'{self.sensor}_images_{self.db_name}')
 
         # Create rectification and projection maps
         map1, map2 = cv2.initUndistortRectifyMap(self.K, self.D, None, self.K, (self.res[0], self.res[1]), cv2.CV_32FC1)
@@ -282,92 +340,50 @@ class birdsEye():
         cv2.namedWindow("Window", cv2.WINDOW_NORMAL)
         cv2.resizeWindow("Window", 1920, 1200)
 
-        rtk_tracker = [0]*4
+
         for i, frame in enumerate(self.data):
             print(f'frame: {i+1} of {len(self.data)}')
             self.frame_index = i
+            clicks = self.frameProcessSetup(frame, clks)
+            bproj = None
+            reproj = None
 
-            clicks = np.hstack((clks, np.ones_like(clks[:,0]).reshape(-1,1)*(frame[2]-frame[-3])))
-            # print("clicks: \n", clicks, "\n clicks.shape:", clicks.shape)
-
-            self.T_WC = poseRowToTransform(frame[:7])  # our base link maps from the world origin to the base link
-            self.radalt = frame[-3]
-            plotTransform(self.ax, self.T_WC)
-            clicks_2D = self._3Dto2D(clicks)
-            self.ax.scatter(clicks[:,0], \
-                            clicks[:,1], \
-                            clicks[:,2], \
-                            marker='s', alpha=0.5, c='m', s=32, label='Click')
-            self._3DFrameVertices = self._2Dto3D(self._2DFrameVertices)
-            self.ax.scatter(np.array(self._3DFrameVertices)[:,0], \
-                            np.array(self._3DFrameVertices)[:,1], \
-                            np.array(self._3DFrameVertices)[:,2], \
-                            marker='s', color='k', label='Frame')
-            clicks_2D, bproj = self._2DFrameCheck(clicks_2D, stats=True)
-
-            if frame[-4] == 131:
-                color = 'g'
-                rtk_tracker[0] += 1
-            elif frame[-4] == 67:
-                color = 'y'
-                rtk_tracker[1] += 1
-            elif frame[-4] == 3:
-                color = 'r'
-                rtk_tracker[2] += 1
-            else:
-                color = 'k'
-                rtk_tracker[3] += 1
-
-            if i >= memory:
-                for tmp in self.data[(i-memory):i]:
-                    if tmp[-4] == 131:
-                        color = 'g'
-                    elif tmp[-4] == 67:
-                        color = 'y'
-                    elif tmp[-4] == 3:
-                        color = 'r'
-                    else:
-                        color = 'k'
-                    self.ax.scatter(tmp[0], tmp[1], tmp[2], c=color, alpha=0.1, s=32)
-            else:
-                for tmp in self.data[:i]:
-                    if tmp[-4] == 131:
-                        color = 'g'
-                    elif tmp[-4] == 67:
-                        color = 'y'
-                    elif tmp[-4] == 3:
-                        color = 'r'
-                    else:
-                        color = 'k'
-                    self.ax.scatter(tmp[0], tmp[1], tmp[2], c=color, alpha=0.1, s=32)
-
-            if self.radalt > 3.0 and frame[-4] == 131:
-                # print('  cv2.imread')
-                img = cv2.imread(frame[-2])
+            if self.radalt > 3.0: # and frame[-5] == 131:
+                # detect apriltags (`reproj`) as GT for `clicks_2D`
+                # back-project clicks (`bproj`), compare to `clicks` as GT
+                img = cv2.imread(frame[-3])
                 # img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
                 rect = cv2.remap(img, map1, map2, interpolation=cv2.INTER_LINEAR)
+                state, reproj, rect = self.apriltag_detect(rect)
+
+                clicks_2D = self._3Dto2D(clicks)
+                clicks_2D, bproj = self._2DFrameCheck(clicks_2D, stats=True)
+
                 cv2.putText(rect, f'{frame[-1]}', (50,100), \
                     cv2.FONT_HERSHEY_SIMPLEX, 4, (0, 255, 0), 4)
 
                 if len(clicks_2D) > 0:
-                    if frame[-4] == 131:
+                    if frame[-5] == 131:
                         color = (0,255,0)
-                    elif frame[-4] == 67:
+                        self.annotate(frame[-3], 1.0)
+                    elif frame[-5] == 67:
                         color = (0,255,255)
-                    elif frame[-4] == 3:
+                    elif frame[-5] == 3:
                         color = (0,0,255)
                     else:
-                        color == (0,0,0)
+                        color = (0,0,0)
+
+                    if color != (0,255,0):
+                        print(f'    skipping annotation: bad RTK_STATUS, {frame[-5]}')
+
                     cv2.putText(rect, 'True', (1600,100), \
                         cv2.FONT_HERSHEY_SIMPLEX, 4, (0, 255, 0), 4)
 
-                    if frame[-4] == 131:
-                        self.annotate(frame[-2], 1.0)
-                    else:
-                        print(f'    skipping annotation: bad RTK_STATUS, {frame[-4]}')
-
                     for click in clicks_2D:
                         cv2.circle(rect, [int(click[0]), int(click[1])], 15, color, -1)
+                    # if reproj is not None:
+                    #     for tgt in reproj:
+                    #         cv2.circle(rect, [int(tgt[0]), int(tgt[1])], 30, color, 5)
                     if bproj is not None:
                         self.bproj += bproj
                         bp = np.array(self.bproj)
@@ -375,10 +391,10 @@ class birdsEye():
                 else:
                     cv2.putText(rect, 'False', (1600,100), \
                         cv2.FONT_HERSHEY_SIMPLEX, 4, (0, 0, 255), 4)
-                    if frame[-4] == 131:
-                        self.annotate(frame[-2], 0.0)
+                    if frame[-5] == 131:
+                        self.annotate(frame[-3], 0.0)
                     else:
-                        print(f'    skipping annotation: bad RTK_STATUS, {frame[-4]}')
+                        print(f'    skipping annotation: bad RTK_STATUS, {frame[-5]}')
 
                 cv2.imshow("Window", rect)
                 cv2.waitKey(30)
@@ -387,13 +403,12 @@ class birdsEye():
                 cv2.imwrite(p, rect)
 
             if len(self.bproj) > 1:
-                # print(f'    new clicks: \n    {bp}')
                 self.ax.scatter(bp[:,0], \
                                 bp[:,1], \
                                 bp[:,2], \
                                 c='b', alpha=0.3, s=64, label='BackProj')
             elif len(self.bproj) == 1:
-                # print(f'    first click: \n    {bp}')
+                # first click
                 self.ax.scatter(bp[0], \
                                 bp[1], \
                                 bp[2], \
@@ -418,17 +433,15 @@ class birdsEye():
             p = os.path.join(p, 'catch', 'tmp', f'3d_{str(self.frame_index).rjust(3,str(0))}.png')
             self.fig.savefig(p)
             self.ax.cla()
-            self.tgts = None
-
 
         self.grab_plots()
 
-        print(rtk_tracker)
+        print(self.rtk_tracker)
         print(f'RTK Service Stats:')
-        print(f'    Status 131: {rtk_tracker[0]} of {sum(rtk_tracker)} ({rtk_tracker[0]/sum(rtk_tracker)})')
-        print(f'    Status 67: {rtk_tracker[1]} of {sum(rtk_tracker)} ({rtk_tracker[1]/sum(rtk_tracker)})')
-        print(f'    Status 3: {rtk_tracker[2]} of {sum(rtk_tracker)} ({rtk_tracker[2]/sum(rtk_tracker)})')
-        print(f'    Rare Statuses: {rtk_tracker[3]} of {sum(rtk_tracker)} ({rtk_tracker[3]/sum(rtk_tracker)})')
+        print(f'    Status 131: {self.rtk_tracker[0]} of {sum(self.rtk_tracker)} ({self.rtk_tracker[0]/sum(self.rtk_tracker)})')
+        print(f'    Status 67: {self.rtk_tracker[1]} of {sum(self.rtk_tracker)} ({self.rtk_tracker[1]/sum(self.rtk_tracker)})')
+        print(f'    Status 3: {self.rtk_tracker[2]} of {sum(self.rtk_tracker)} ({self.rtk_tracker[2]/sum(self.rtk_tracker)})')
+        print(f'    Rare Statuses: {self.rtk_tracker[3]} of {sum(self.rtk_tracker)} ({self.rtk_tracker[3]/sum(self.rtk_tracker)})')
 
         out_dict = {}
         tmp = np.squeeze(np.array(self.bproj))
@@ -454,6 +467,7 @@ class birdsEye():
 
         cv2.namedWindow("Window", cv2.WINDOW_NORMAL)
         cv2.resizeWindow("Window", 1920, 1200)
+
         for i, frame in enumerate(self.data):
             print(f'frame: {i+1} of {len(self.data)}')
             self.frame_index = i
@@ -462,7 +476,7 @@ class birdsEye():
             # print("clicks: \n", clicks, "\n clicks.shape:", clicks.shape)
 
             self.T_WC = poseRowToTransform(frame[:7])  # our base link maps from the world origin to the base link
-            self.radalt = frame[-3]
+            self.radalt = frame[-4]
             plotTransform(self.ax, self.T_WC)
             clicks_2D = self._3Dto2D(clicks)
             self.ax.scatter(clicks[:,0], \
@@ -476,21 +490,22 @@ class birdsEye():
                             marker='s', color='k', label='Frame')
             clicks_2D, bproj = self._2DFrameCheck(clicks_2D, stats=True)
 
-            if self.radalt > 3.0 and frame[-4] == 131:
+
+            if self.radalt > 3.0 and frame[-5] == 131:
                 # print('  cv2.imread')
-                img = cv2.imread(frame[-2])
+                img = cv2.imread(frame[-3])
                 # img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
                 rect = cv2.remap(img, map1, map2, interpolation=cv2.INTER_LINEAR)
                 cv2.putText(rect, f'{frame[-1]}', (50,100), \
                     cv2.FONT_HERSHEY_SIMPLEX, 4, (0, 255, 0), 4)
-                self.detect(img, frame[-2])
+                self.detect(img, frame[-3])
 
                 if self.pred[0] >= 0.5:
-                    if frame[-4] == 131:
+                    if frame[-5] == 131:
                         color = (0,255,0)
-                    elif frame[-4] == 67:
+                    elif frame[-5] == 67:
                         color = (0,255,255)
-                    elif frame[-4] == 3:
+                    elif frame[-5] == 3:
                         color = (0,0,255)
                     else:
                         color == (0,0,0)
@@ -557,23 +572,8 @@ class birdsEye():
             p = os.path.join(p, 'catch', 'tmp', f'3d_{str(self.frame_index).rjust(3,str(0))}.png')
             self.fig.savefig(p)
             self.ax.cla()
-            self.tgts = None
-
-            # self.ax.set_xlim(frame[0]-15, frame[0]+15)
-            # self.ax.set_xlabel('X')
-            # self.ax.set_ylim(frame[1]-15, frame[1]+15)
-            # self.ax.set_ylabel('Y')
-            # self.ax.set_zlim(frame[2]-20, frame[2]+1)
-            # self.ax.set_zlabel('Z')
-            # self.ax.legend()
-            #
-            # self.ax.set_title(f'Time: {frame[-1]}')
-            # self.ax.set_box_aspect([1,1,1])
-            # self.ax.set_proj_type('ortho')
-            # self.fig.canvas.draw_idle()
-            # plt.pause(0.05)
-            # self.ax.cla()
             # self.tgts = None
+
         self.grab_plots()
 
 
@@ -603,14 +603,14 @@ class birdsEye():
         # ax.plot(zs, 'k', label='RTK')
         # ax.scatter(o_t, o_zs, c='r', s=10, label='EKF')
 
-        # ax.spines['top'].set_visible(False)
-        # ax.spines['right'].set_visible(False)
-        # ax.spines['bottom'].set_visible(False)
-        # ax.spines['left'].set_visible(False)
+        ax.spines['top'].set_visible(False)
+        ax.spines['right'].set_visible(False)
+        ax.spines['bottom'].set_visible(False)
+        ax.spines['left'].set_visible(False)
         #
-        # ax.get_xaxis().set_ticks([])
-        # ax.get_yaxis().set_ticks([])
-        # ax.set_box_aspect(1)
+        ax.get_xaxis().set_ticks([])
+        ax.get_yaxis().set_ticks([])
+        ax.set_box_aspect(1)
         plt.savefig('rtk_odom_sanity.png', transparent=True)
         # plt.savefig('rtk_alt_sanity.png', transparent=True)
 
@@ -647,8 +647,8 @@ class birdsEye():
 if __name__ == '__main__':
     dir_path = os.path.join(os.path.expanduser('~'), 'parsed_flight')
     db_name = 'flight_data'
-    dbc = dbConnector(os.path.join(dir_path,db_name))
-    tst = birdsEye(dbc, db_name=db_name, img_dir=dir_path)
+    # dbc = dbConnector(os.path.join(dir_path,db_name))
+    tst = birdsEye(db_name=db_name, img_dir=dir_path, apriltags=True)
 
     tst.parseFlightDatabase()
     # tst.detectionProcess()

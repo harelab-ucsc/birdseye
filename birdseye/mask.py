@@ -35,36 +35,36 @@ class Mask:
                 self.index += 1
                 self.monitor_index()
                 self.cl = self.classes[self.index]
-                print(f'mask: next (index {self.index}, class {self.classes[self.index]})')
+                print(f'    mask: next (index {self.index}, class {self.classes[self.index]})')
 
             elif cmd[0] == 'prev':
                 self.index -= 1
                 self.monitor_index()
                 self.cl = self.classes[self.index]
-                print(f'mask: prev (index {self.index}, class {self.classes[self.index]})')
+                print(f'    mask: prev (index {self.index}, class {self.classes[self.index]})')
 
             elif cmd[0] == 'write':
-                print('mask: write')
+                print('    mask: write')
                 self.channels[:,:,self.index] = cmd[1]
                 self.classes[self.index] = self.cl
 
             elif cmd[0] == 'save':
-                print('mask: save')
+                print('    mask: save')
                 self.save(cmd[1], cmd[2])
 
             elif cmd[0] == 'load':
-                print('mask: load')
+                print('    mask: load')
                 self.load(cmd[1])
 
             elif cmd[0] == 'class_up':
                 self.cl += 1
                 self.monitor_class()
-                print(f'mask: class up ({self.cl})')
+                print(f'    mask: class up ({self.cl})')
 
             elif cmd[0] == 'class_dn':
                 self.cl -= 1
                 self.monitor_class()
-                print(f'mask: class down ({self.cl})')
+                print(f'    mask: class down ({self.cl})')
 
 
     def save(self, frame_index, save_name):
@@ -78,7 +78,7 @@ class Mask:
                     save_dict[f'{i}'] = (self.channels[:,:,i], self.classes[:,i])
             with open(self.save_name+'.pkl', 'ab') as f:
                 pkl.dump(save_dict, f)
-                print(f'    Mask saved: {self.save_name}.pkl')
+                print(f'        mask saved: {self.save_name}.pkl')
         else:
             # MOT defines a segmentation annotation entry as
             #  "time_frame id class_id img_height img_width rle"
@@ -92,7 +92,7 @@ class Mask:
                     line = f'{frame_index} <object_id> {self.classes[i]} {tmp1} {tmp2} {tmp3}\n'
                     f.write(line)
             f.close()
-            print(f'    Mask saved: frame index {frame_index} {save_name}.txt')
+            print(f'        mask saved: frame index {frame_index} {save_name}.txt')
 
 
     def export_masks(self):
@@ -111,7 +111,7 @@ class Mask:
         if not self.rle:
             with open(self.load_name+'.pkl', 'rb') as f:
                 ret = pkl.load(f)
-                print(f'    Mask loaded: {self.load_name}.pkl')
+                print(f'        mask loaded: {self.load_name}.pkl')
                 for i, key in enumerate(ret.keys()):
                     self.channels[:,:,i] = ret[key][0]
                     # self.classes[self.index] = np.zeros_like(self.classes[:,self.index], dtype='uint8')
@@ -120,7 +120,7 @@ class Mask:
         else:
             try:
                 f = open(f"{self.load_name}.txt", "r")
-                print(f'    Mask loaded: frame index {frame_index}, {self.load_name}.txt')
+                print(f'        mask loaded: frame index {frame_index}, {self.load_name}.txt')
                 i = 0
                 while True:
                     # print(i)

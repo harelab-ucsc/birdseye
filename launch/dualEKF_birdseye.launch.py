@@ -23,7 +23,7 @@ def generate_launch_description():
         DeclareLaunchArgument('sensorID', default_value='cam0'),
         DeclareLaunchArgument('cam_topic', default_value='/cam0/rgb_cam/image_raw'),
         DeclareLaunchArgument('sensors_yaml', default_value=os.path.join(os.path.expanduser('~'), 'ros2_ws/src/birdseye/config/birdsEyeSensorParams.yaml')),
-        DeclareLaunchArgument('clicks_csv', default_value=os.path.join(os.path.expanduser('~'),'farmFlight20240808_1/data_farmFlight20240808.csv')),
+        DeclareLaunchArgument('clicks_csv', default_value=os.path.join(os.path.expanduser('~'),'catch/data_farmAlt_20240722.csv')),
 
         ExecuteProcess(
             cmd=['ros2', 'bag', 'play', launch.substitutions.LaunchConfiguration('bagpath'), '--read-ahead-queue-size', '10000'],
@@ -37,7 +37,7 @@ def generate_launch_description():
         launch_ros.actions.Node(
             package='tf2_ros',
             executable='static_transform_publisher',
-            arguments = ['-0.05', '0', '0.33', '0', '0', '0', '1', 'base_link', 'gps']
+            arguments = ['-0.05', '0', '0.33', '0', '-0.0241591', '-0.0193132', 'base_link', 'gps']
             ),
         launch_ros.actions.Node(
             package='tf2_ros',

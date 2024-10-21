@@ -32,7 +32,7 @@ class SLICAnnotator:
         self.dist = kwargs.pop('distortion_coefs', np.zeros(4))
         self.K = kwargs.pop('K_matrix', np.eye(3))
         self.rle = kwargs.pop('rle', True)
-        self.src_res = kwargs.pop('src_res', (1080,1920))
+        self.src_res = kwargs.pop('src_res', (1200,1920))
         self.mask_res = kwargs.pop('mask_res', (384, 512))
         self.mask = np.zeros(self.mask_res, dtype='uint8')
         self.draw = False
@@ -54,7 +54,7 @@ class SLICAnnotator:
 
     def check_segments(self):
         for coord in self.refPt:
-            print('coord: ', coord)
+            # print('coord: ', coord)
             for segval in self.segvals:
                 tmp = np.zeros(self.mask_res, dtype='uint8')
                 tmp[self.segments == segval] = 255
@@ -63,7 +63,7 @@ class SLICAnnotator:
                     if tmp[coord] == 255:
                         self.mask = cv2.bitwise_or(tmp, self.mask)
                 except IndexError:
-                    print('bonk')
+                    print('    off-frame')
                     pass
 
     def rm_cells(self):
@@ -170,27 +170,27 @@ class SLICAnnotator:
 
             elif key == ord('d'):
                 cmds.append(['next',])
-                print('next channel')
+                # print('next channel')
 
             elif key == ord('a'):
                 cmds.append(['prev',])
-                print('previous channel')
+                # print('previous channel')
 
             elif key == ord('='):  # '=' because neighbor to '-'
                 cmds.append(['class_up',])
-                print('up a class')
+                # print('up a class')
 
             elif key == ord('-'):
                 cmds.append(['class_dn',])
-                print('down a class')
+                # print('down a class')
 
             elif key == ord('s'):
                 cmds.append(['save', self.frame_index, None])
-                print('save mask')
+                # print('save mask')
 
             elif key == ord('l'):
                 cmds.append(['load', self.frame_index])
-                print('load mask')
+                # print('load mask')
 
             # Quit command
             elif key == ord("q"):
@@ -253,6 +253,68 @@ class offlineSLICAnnotator(SLICAnnotator):
         self._mask.update([['save', frame_index, save_name]]) # this save will duplicate frame_ids, rather than overwriting old entries
 
 
+class SLICTranslator(SLICAnnotator):
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+
+
+    def load_frame(self, frame_index=None):
+        if frame_index is None:
+            frame_index = self.frame_index
+        # print('frame_index: ', frame_index)
+        # print('prep')
+        # print(self.images[frame_index])
+
+        tmp = None
+        tmp = cv2.imread(self.images[frame_index])
+
+        w = tmp.shape[1]
+        w = w // 2
+
+        msk = tmp[:, w:, :]
+        msk = cv2.resize(msk, self.mask_res[::-1])
+        self.image = tmp[:, :w, :]
+        p = os.path.join('/', *self.save_name.split('/')[:-1])
+        p = os.path.join(p, 'frame_'+str(frame_index).rjust(3,str(0))+'.png')
+        cv2.imwrite(p, self.image)
+        self.image = cv2.resize(self.image, self.mask_res[::-1])
+
+        tmp = None
+        self._mask.channels[:,:,0] = msk[:,:,0]
+        self._mask.channels[:,:,1] = msk[:,:,1]
+        tmp = cv2.bitwise_or(msk[:,:,0], msk[:,:,1])
+        self._mask.channels[:,:,2] = msk[:,:,2]
+        tmp = cv2.bitwise_or(tmp, msk[:,:,2])
+        self._mask.channels[:,:,3] = cv2.bitwise_not(tmp)
+
+        self._mask.classes[0] = 1
+        self._mask.classes[1] = 2
+        self._mask.classes[2] = 0
+        self._mask.classes[3] = 3
+
+        self.mask = self._mask.channels[:,:,0]
+        self.segments = slic(img_as_float(self.image), n_segments=800, \
+                            sigma=5, slic_zero=True, start_label=0)
+        self.segvals = np.unique(self.segments)
+
+
+    def frameProcess(self, frame_index=None, save_name=None):
+        if frame_index is None:
+            frame_index = self.frame_index
+        if save_name is None:
+            save_name = self.save_name
+        # print('offline frame_index: ', frame_index)
+        # print('offline save_name: ', save_name)
+        self.load_frame()
+        self._mask.update([['save', frame_index, save_name]])
+        self.frame_index += 1
+        self.monitor_frame_index()
+
+
+    def translate_dataset(self):
+        for i in range(len(self.images)):
+            self.frameProcess()
+
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument('-d', '--dirname', type=str, required=True,
@@ -267,5 +329,8 @@ if __name__ == '__main__':
 
     save_name = os.path.join(args["dirname"], args["dirname"].split(os.sep)[-2])
     print(f'annotations will be saved to: {save_name} \n')
-    obj = SLICAnnotator(images=images, save_name=save_name)
-    obj.frameProcess()
+    # obj = SLICAnnotator(images=images, save_name=save_name)
+    # obj.frameProcess()
+
+    obj = SLICTranslator(images=images, save_name=save_name)
+    obj.translate_dataset()
