@@ -1,0 +1,3 @@
+/home/akorycki/birdseye_main/birdseye/benchmark/build/CMakeFiles/Benchmark.dir
+/home/akorycki/birdseye_main/birdseye/benchmark/build/CMakeFiles/edit_cache.dir
+/home/akorycki/birdseye_main/birdseye/benchmark/build/CMakeFiles/rebuild_cache.dir

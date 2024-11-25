@@ -1,0 +1,7 @@
+# Camera intrinsics
+width: 1920 # Horizontal image resolution in pixels
+height: 1200 # Vertical image resolution in pixels
+fx: 4205.423600947519 # Horizontal focal-length component in pixels
+fy: 4225.524941785368 # Vertical focal-length component in pixels
+cx: 955.1910100382079 # Horizontal coordinate of focal origin in pixels
+cy: 320.49628086862134 # Vertical coordinate of focal origin in pixels
