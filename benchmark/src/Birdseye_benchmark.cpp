@@ -100,7 +100,9 @@ Point pixelToWorld(const Eigen::Vector2d &pixel, const Eigen::Matrix3d &K, const
     Eigen::Vector3d normalizedPixel = K.inverse() * Eigen::Vector3d(pixel.x(), pixel.y(), 1.0);
 
     // Calculate depth as the difference between camera z and tag z
-    double depth = t.z() - tagZ;
+    //double depth = t.z() - tagZ;
+    double depth = 10;
+    //std::cout << "depth = " << depth << std::endl;
 
     // Scale normalized coordinates by depth to get the 3D point in the camera frame
     Eigen::Vector3d pointInCameraFrame = normalizedPixel * depth;
@@ -126,18 +128,23 @@ void computeAndSaveErrors(const std::vector<double> &errors, const std::string &
     std::cout << "Errors successfully saved to " << outputFile << std::endl;
 }
 
-// Function to visualize the GT and backprojected points using Pangolin
-void visualizePoints(const std::vector<Point> &groundPoints, const std::vector<Point> &backprojectedPoints) {
-    pangolin::CreateWindowAndBind("Point Visualization", 640, 480);
+void visualizePointsAndPoses(const std::vector<Point> &groundPoints,
+                             const std::vector<Point> &backprojectedPoints,
+                             const std::map<std::string, Eigen::Affine3d> &poses,
+                             Eigen::Vector3d centerPoint) {
+    pangolin::CreateWindowAndBind("Visualization: Points and Poses", 1024, 768);
     glEnable(GL_DEPTH_TEST);
 
     pangolin::OpenGlRenderState s_cam(
-        pangolin::ProjectionMatrix(640, 480, 500, 500, 320, 240, 0.1, 1000),
-        pangolin::ModelViewLookAt(0, 0, 10, 0, 0, 0, pangolin::AxisY)
+        pangolin::ProjectionMatrix(1024, 768, 500, 500, 512, 384, 0.1, 1000),
+        pangolin::ModelViewLookAt(
+            centerPoint.x(), centerPoint.y(), centerPoint.z() - 20, // Camera position
+            centerPoint.x(), centerPoint.y(), centerPoint.z(),      // Look at the center point
+            pangolin::AxisY)                                        // Up direction
     );
 
     pangolin::View& d_cam = pangolin::CreateDisplay()
-        .SetBounds(0.0, 1.0, 0.0, 1.0, -640.0f / 480.0f)
+        .SetBounds(0.0, 1.0, 0.0, 1.0, -1024.0f / 768.0f)
         .SetHandler(new pangolin::Handler3D(s_cam));
 
     while (!pangolin::ShouldQuit()) {
@@ -163,8 +170,52 @@ void visualizePoints(const std::vector<Point> &groundPoints, const std::vector<P
         }
         glEnd();
 
+        // Draw camera poses as triads
+        for (const auto &[imagePath, pose] : poses) {
+            Eigen::Matrix3d R = pose.rotation();
+            Eigen::Vector3d t = pose.translation();
+
+            // Draw the triad at the pose
+            glLineWidth(2.0f);
+            glBegin(GL_LINES);
+
+            // X-axis (red)
+            glColor3f(1.0f, 0.0f, 0.0f);
+            glVertex3f(t.x(), t.y(), t.z());
+            Eigen::Vector3d xAxis = t + R.col(0);
+            glVertex3f(xAxis.x(), xAxis.y(), xAxis.z());
+
+            // Y-axis (green)
+            glColor3f(0.0f, 1.0f, 0.0f);
+            glVertex3f(t.x(), t.y(), t.z());
+            Eigen::Vector3d yAxis = t + R.col(1);
+            glVertex3f(yAxis.x(), yAxis.y(), yAxis.z());
+
+            // Z-axis (blue)
+            glColor3f(0.0f, 0.0f, 1.0f);
+            glVertex3f(t.x(), t.y(), t.z());
+            Eigen::Vector3d zAxis = t + R.col(2);
+            glVertex3f(zAxis.x(), zAxis.y(), zAxis.z());
+
+            glEnd();
+        }
+
         pangolin::FinishFrame();
     }
+}
+
+// Function to display the image with tag centers highlighted
+void displayImageWithTags(const cv::Mat &image, const std::vector<Eigen::Vector2d> &tagCenters) {
+    cv::Mat displayImage = image.clone();
+
+    // Draw the tag centers on the image
+    for (const auto &center : tagCenters) {
+        cv::circle(displayImage, cv::Point(center.x(), center.y()), 5, cv::Scalar(0, 0, 255), -1); // Red dot
+    }
+
+    // Show the image
+    cv::imshow("Tag Detection", displayImage);
+    cv::waitKey(30); // Display for 30ms
 }
 
 int main(int argc, char **argv) {
@@ -197,6 +248,9 @@ int main(int argc, char **argv) {
         }
         gpFile.close();
 
+        // Pangolin visualization center with tag
+        Eigen::Vector3d centerPoint(x, y, z);
+
         // Load camera intrinsics and resolution from YAML
         std::cout << "Loading camera intrinsics and resolution from YAML..." << std::endl;
         Eigen::Matrix3d K;
@@ -204,13 +258,12 @@ int main(int argc, char **argv) {
         loadCameraIntrinsicsAndResolution(intrinsicsYaml, K, imageWidth, imageHeight);
 
         // Prepare ArUco dictionary
-        cv::Ptr<cv::aruco::Dictionary> arucoDict = cv::makePtr<cv::aruco::Dictionary>(cv::aruco::getPredefinedDictionary(cv::aruco::DICT_4X4_50));
-
-
+        cv::Ptr<cv::aruco::Dictionary> arucoDict = cv::makePtr<cv::aruco::Dictionary>(cv::aruco::getPredefinedDictionary(cv::aruco::DICT_APRILTAG_36h11));
 
         // Process each image
         std::vector<Point> backprojectedPoints;
         std::vector<double> errors;
+        int img_count = 0;
         for (const auto &[imagePath, pose] : poses) {
             std::string fullImagePath = imageDir + "/" + imagePath;
             cv::Mat image = cv::imread(fullImagePath, cv::IMREAD_GRAYSCALE);
@@ -222,11 +275,14 @@ int main(int argc, char **argv) {
             // Detect fully visible AprilTags
             std::vector<std::vector<cv::Point2f>> tagCorners = detectFullyVisibleAprilTags(image, arucoDict);
             if (tagCorners.empty()) {
-                continue; // Skip images with no fully visible tags
+                //std::cout << "No tag identified, skipping image." << std::endl;
+                continue;
             }
 
             // Get the centers of the fully visible tags
             std::vector<Eigen::Vector2d> tagCenters = getTagCenters(tagCorners);
+
+            displayImageWithTags(image, tagCenters);
 
             // Process each ground point
             for (const auto &gtPoint : groundPoints) {
@@ -240,13 +296,15 @@ int main(int argc, char **argv) {
                     errors.push_back(error);
                 }
             }
+            img_count++;
+            std::cout << "Images processed: " << img_count << "/" << poses.size() << "\r" << std::flush;
         }
 
         // Save the errors to the output file
         computeAndSaveErrors(errors, outputFile);
 
         // Visualize the points
-        visualizePoints(groundPoints, backprojectedPoints);
+        visualizePointsAndPoses(groundPoints, backprojectedPoints, poses, centerPoint);
 
     } catch (const std::exception &e) {
         std::cerr << "Error: " << e.what() << std::endl;

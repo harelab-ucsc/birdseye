@@ -10,7 +10,7 @@ set(CMAKE_MAKEFILE_DEPENDS
   "/home/akorycki/Pangolin/build/PangolinConfig.cmake"
   "/home/akorycki/Pangolin/build/PangolinConfigVersion.cmake"
   "/home/akorycki/Pangolin/build/PangolinTargets.cmake"
-  "/home/akorycki/birdseye_main/birdseye/benchmark/CMakeLists.txt"
+  "/home/akorycki/oasis/birdseye/benchmark/CMakeLists.txt"
   "CMakeFiles/3.25.1/CMakeCCompiler.cmake"
   "CMakeFiles/3.25.1/CMakeCXXCompiler.cmake"
   "CMakeFiles/3.25.1/CMakeSystem.cmake"

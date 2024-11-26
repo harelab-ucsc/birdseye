@@ -8,7 +8,7 @@ set(CMAKE_DEPENDS_LANGUAGES
 
 # The set of dependency files which are needed:
 set(CMAKE_DEPENDS_DEPENDENCY_FILES
-  "/home/akorycki/birdseye_main/birdseye/benchmark/src/Birdseye_benchmark.cpp" "CMakeFiles/Benchmark.dir/src/Birdseye_benchmark.cpp.o" "gcc" "CMakeFiles/Benchmark.dir/src/Birdseye_benchmark.cpp.o.d"
+  "/home/akorycki/oasis/birdseye/benchmark/src/Birdseye_benchmark.cpp" "CMakeFiles/Benchmark.dir/src/Birdseye_benchmark.cpp.o" "gcc" "CMakeFiles/Benchmark.dir/src/Birdseye_benchmark.cpp.o.d"
   )
 
 # Targets to which this target links.
