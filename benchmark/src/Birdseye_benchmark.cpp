@@ -100,8 +100,8 @@ Point pixelToWorld(const Eigen::Vector2d &pixel, const Eigen::Matrix3d &K, const
     Eigen::Vector3d normalizedPixel = K.inverse() * Eigen::Vector3d(pixel.x(), pixel.y(), 1.0);
 
     // Calculate depth as the difference between camera z and tag z
-    //double depth = t.z() - tagZ;
-    double depth = 10;
+    double depth = abs(t.z() - tagZ);
+    //double depth = 10;
     //std::cout << "depth = " << depth << std::endl;
 
     // Scale normalized coordinates by depth to get the 3D point in the camera frame
@@ -282,7 +282,7 @@ int main(int argc, char **argv) {
             // Get the centers of the fully visible tags
             std::vector<Eigen::Vector2d> tagCenters = getTagCenters(tagCorners);
 
-            displayImageWithTags(image, tagCenters);
+            //displayImageWithTags(image, tagCenters);
 
             // Process each ground point
             for (const auto &gtPoint : groundPoints) {

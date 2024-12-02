@@ -11,6 +11,7 @@
 #include <sophus/se3.hpp>
 #include <Eigen/Core>
 #include <pangolin/pangolin.h>
+#include "ortho_synth.hpp"
 
 typedef Eigen::Vector3d Point;
 typedef std::vector<Sophus::SE3d, Eigen::aligned_allocator<Sophus::SE3d>> Trajectory;
@@ -233,30 +234,70 @@ Eigen::Vector2d space3DToPixel(const Eigen::Vector3d &point_3d, const Eigen::Mat
 }
 
 // produce projected pixel 
+// void backproject(const std::vector<Point> &ground_points, const Trajectory &trajectory_gt, 
+//                  const Trajectory &trajectory_noisy, std::map<int, std::vector<Eigen::Vector3d>> &backprojections, 
+//                  std::vector<double> &backproject_error, const Eigen::Matrix3d &K, 
+//                  const Eigen::Vector2d &pixelRPE, int px_width, int px_height) {
+//     // for each camera pose
+//     for (int i = 0; i < trajectory_gt.size(); i++) {
+//         // for each ground point w.r.t each camera pose 
+//         for (int j = 0; j < ground_points.size(); j ++) {
+//             Point P_camera = trajectory_gt[i].inverse() * ground_points[j]; // transform world observation to camera frame 3D coordinate
+//             Eigen::Vector2d pixel = space3DToPixel(P_camera, K); // transform camera frame observation to pixel space 
+//             Eigen::Vector2d pixel_noisy = addGaussianPixelError(pixel, pixelRPE.x(), pixelRPE.y());
+//             // if pixel is within view of the camera frame 
+//              if (pixel_noisy[0] >= 0 && pixel_noisy[0] < px_width &&
+//                  pixel_noisy[1] >= 0 && pixel_noisy[0] < px_height) {
+//                     Point loc = trajectory_gt[i].translation();
+//                     double depth = loc.z(); // !!!image-wise depth assumption from z-component of pose estimate!!!
+//                     Eigen::Vector3d P_camera_b = pixelTo3D(pixel, depth, K); // backproject pixel to camera frame
+//                     Eigen::Vector3d P_world_b = trajectory_noisy[i].rotationMatrix() * P_camera_b + trajectory_noisy[i].translation(); // backproject to world frame
+//                     backprojections.push_back(P_world_b); // save world pixel backprojection
+//                     double backprojection_e = (ground_points[j] - P_world_b).norm(); // calculate L2 distance between g.t. observtaion and backprojected world coordinate
+//                     backproject_error.push_back(backprojection_e);
+//             }
+//         }
+//     }
+// }
+
 void backproject(const std::vector<Point> &ground_points, const Trajectory &trajectory_gt, 
-                 const Trajectory &trajectory_noisy, std::vector<Eigen::Vector3d> &backprojections, 
-                 std::vector<double> &backproject_error, const Eigen::Matrix3d &K, 
-                 const Eigen::Vector2d &pixelRPE, int px_width, int px_height) {
-    // for each camera pose
-    for (int i = 0; i < trajectory_gt.size(); i++) {
-        // for each ground point w.r.t each camera pose 
-        for (int j = 0; j < ground_points.size(); j ++) {
-            Point P_camera = trajectory_gt[i].inverse() * ground_points[j]; // transform world observation to camera frame 3D coordinate
+                 const Trajectory &trajectory_noisy, std::map<int, std::vector<Eigen::Vector3d>> &backprojections,
+                 const Eigen::Matrix3d &K, const Eigen::Vector2d &pixelRPE, int px_width, int px_height) {
+    // for ground observation
+    for (int i = 0; i < ground_points.size(); i++) {
+        std::vector<Eigen::Vector3d> b_projs;
+        // for each image pose
+        for (int j = 0; j < trajectory_gt.size(); j++) {
+            Point P_camera = trajectory_gt[j].inverse() * ground_points[i]; // transform world observation to camera frame 3D coordinate
             Eigen::Vector2d pixel = space3DToPixel(P_camera, K); // transform camera frame observation to pixel space 
             Eigen::Vector2d pixel_noisy = addGaussianPixelError(pixel, pixelRPE.x(), pixelRPE.y());
             // if pixel is within view of the camera frame 
              if (pixel_noisy[0] >= 0 && pixel_noisy[0] < px_width &&
                  pixel_noisy[1] >= 0 && pixel_noisy[0] < px_height) {
-                    Point loc = trajectory_gt[i].translation();
+                    Point loc = trajectory_gt[j].translation();
                     double depth = loc.z(); // !!!image-wise depth assumption from z-component of pose estimate!!!
                     Eigen::Vector3d P_camera_b = pixelTo3D(pixel, depth, K); // backproject pixel to camera frame
-                    Eigen::Vector3d P_world_b = trajectory_noisy[i].rotationMatrix() * P_camera_b + trajectory_noisy[i].translation(); // backproject to world frame
-                    backprojections.push_back(P_world_b); // save world pixel backprojection
-                    double backprojection_e = (ground_points[j] - P_world_b).norm(); // calculate L2 distance between g.t. observtaion and backprojected world coordinate
-                    backproject_error.push_back(backprojection_e);
+                    Eigen::Vector3d P_world_b = trajectory_noisy[j].rotationMatrix() * P_camera_b + trajectory_noisy[j].translation(); // backproject to world frame
+                    //backprojections.push_back(P_world_b); // save world pixel backprojection
+                    b_projs.push_back(P_world_b);
+                    //double backprojection_e = (ground_points[i] - P_world_b).norm(); // calculate L2 distance between g.t. observtaion and backprojected world coordinate
+                    //backproject_error.push_back(backprojection_e);
             }
         }
+        backprojections[i] = b_projs;
     }
+}
+
+// calculate l2 error between g.t. and backprojections
+std::vector<double> get_l2_errors(const std::map<int, std::vector<Eigen::Vector3d>> &backprojections, const std::vector<Point> &ground_points) {
+    std::vector<double> l2_errors;
+    for (const auto& [index, estimations] : backprojections) {
+        for (const auto& est : estimations) {
+            double error = (ground_points[index] - est).norm(); // calculate L2 distance between g.t. observtaion and backprojected world coordinate
+            l2_errors.push_back(error);
+        }
+    }
+    return l2_errors;
 }
 
 // write errors to text file
@@ -278,7 +319,7 @@ void writeVectorToFile(const std::vector<double> &vec, const std::string &filena
 
 // Function to visualize the points, SE3 elements, and boundary using Pangolin
 void visualize(const std::vector<Point> &points, 
-               const std::vector<Point> &b_proj, 
+               std::map<int, std::vector<Eigen::Vector3d>> &backprojections, 
                const Trajectory &trajectory,
                double boundary_radius) {
     pangolin::CreateWindowAndBind("Trajectory Visualization", 640, 480);
@@ -334,8 +375,10 @@ void visualize(const std::vector<Point> &points,
         glColor3f(0.0f, 0.0f, 1.0f);  // Blue
         glPointSize(5.0f);
         glBegin(GL_POINTS);
-        for (const auto& p : b_proj) {
-            glVertex3f(p.x(), p.y(), p.z());
+        for (const auto& [index, estimations] : backprojections) {
+            for (const auto& est : estimations) {
+                glVertex3f(est.x(), est.y(), est.z());
+            }
         }
         glEnd();
 
@@ -425,6 +468,10 @@ int main(int argc, char** argv) {
     double sigma_RPE_x = param["sigma_RPE_x"].as<double>();
     double sigma_RPE_y = param["sigma_RPE_y"].as<double>();
 
+    // load ortho-synthetic filtering params
+    double eps = param["eps"].as<double>();
+    int min_points = param["min_points"].as<int>();
+
     Eigen::Vector3d translation_stddev(sigma_x, sigma_y, sigma_z);
     Eigen::Vector3d rotation_stddev(sigma_roll, sigma_pitch, sigma_yaw);
     Eigen::Vector2d pixelRPE(sigma_RPE_x, sigma_RPE_y);
@@ -466,16 +513,25 @@ int main(int argc, char** argv) {
 
     // backprojection results
     std::cout << "[]Backprojecting points from pixel space to world space..." << std::endl;
-    std::vector<Eigen::Vector3d> backprojections; // backprojected world obsevations (world->camera->world)
-    std::vector<double> backproject_error; // backprojection L2 errors
-    backproject(points, trajectory_gt, trajectory_noisy, backprojections, backproject_error, K, pixelRPE, px_width, px_height); // perform backprojection
-    std::cout << "[]Simulated " << backprojections.size() << " backprojections." << std::endl;
+    std::map<int, std::vector<Eigen::Vector3d>> backprojections; // dictionary (ground point index -> set of corresponding backprojections)
+    backproject(points, trajectory_gt, trajectory_noisy, backprojections, K, pixelRPE, px_width, px_height); // perform backprojection
+    std::vector<double> backproject_error_raw = get_l2_errors(backprojections, points);
+    std::cout << "[]Simulated " << backproject_error_raw.size() << " backprojections." << std::endl;
 
     // Write the error terms to the file
-    writeVectorToFile(backproject_error, "l2_errors.txt");
+    writeVectorToFile(backproject_error_raw, "l2_errors_raw.txt");
+
+    // ortho-synthetic filtering
+    std::cout << "[]Performing ortho-synthetic filtering..." << std::endl;
+    ortho_synth::Filter filtering(eps, min_points);
+    // Perform DBSCAN and get filtered results
+    std::map<int, std::vector<Eigen::Vector3d>> filtered_backprojections = filtering.removeOutliers(backprojections);
+    std::vector<double> backproject_error_filtered = get_l2_errors(filtered_backprojections, points);
+    // Write the error terms to the file
+    writeVectorToFile(backproject_error_filtered, "l2_errors_filtered.txt");
 
     // Visualize the points, trajectory, and boundary
-    visualize(points, backprojections, trajectory_gt, boundary_radius);
+    visualize(points, filtered_backprojections, trajectory_noisy, boundary_radius);
 
     return 0;
 }

@@ -1,0 +1,2 @@
+/usr/bin/ar qc libortho_synth.a CMakeFiles/ortho_synth.dir/src/ortho_synth.cpp.o
+/usr/bin/ranlib libortho_synth.a

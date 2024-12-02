@@ -1,0 +1,4 @@
+/home/akorycki/birdseye_main/birdseye/sim/build/CMakeFiles/ortho_synth.dir
+/home/akorycki/birdseye_main/birdseye/sim/build/CMakeFiles/sim3D.dir
+/home/akorycki/birdseye_main/birdseye/sim/build/CMakeFiles/edit_cache.dir
+/home/akorycki/birdseye_main/birdseye/sim/build/CMakeFiles/rebuild_cache.dir

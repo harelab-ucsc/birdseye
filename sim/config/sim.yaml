@@ -19,9 +19,22 @@ sigma_x: 0.014 # std of x translation estimation in meters
 sigma_y: 0.014 # std of y translation estimation in meters
 sigma_z: 0.0   # std of z translation estimation in meters
 
-sigma_roll: 0.004363323  # std of x attitude estimation in radians
-sigma_pitch: 0.004363323 # std of y attitude estimation in radians
-sigma_yaw: 0.0139626     # std of z attitude estimation in radians
+# Inertialsense IMX5-INS (GNSS-RTK, 1 m baseline)
+sigma_roll: 0.0006981317  # std of roll attitude estimation in radians
+sigma_pitch: 0.0006981317 # std of pitch attitude estimation in radians
+sigma_yaw: 0.002268928     # std of yaw attitude estimation in radians
+
+# sigma_roll: 0.004363323  # std of x attitude estimation in radians
+# sigma_pitch: 0.004363323 # std of y attitude estimation in radians
+# sigma_yaw: 0.0139626     # std of z attitude estimation in radians
+
+#sigma_roll: 0.0  # std of x attitude estimation in radians
+#sigma_pitch: 0.0 # std of y attitude estimation in radians
+#sigma_yaw: 0.0     # std of z attitude estimation in radians
 
 sigma_RPE_x: 0.413286 # std of horizontal pixel reprojection error
 sigma_RPE_y: 0.343144 # std of vertical pixel reprojection error
+
+# ortho-synthetic filtering parameters
+eps: 0.02     # epsilon DBSCAN parameter (size of neighborhood in meters)
+min_points: 5 # minimun neighborhood denisty threshold
