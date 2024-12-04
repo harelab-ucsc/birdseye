@@ -113,6 +113,29 @@ Point pixelToWorld(const Eigen::Vector2d &pixel, const Eigen::Matrix3d &K, const
     return pointInWorldFrame;
 }
 
+// Function to project a 3D world point into 2D pixel space
+Eigen::Vector2d worldToPixel(const Point &worldPoint, const Eigen::Matrix3d &K, const Eigen::Affine3d &pose) {
+    Eigen::Matrix3d R = pose.rotation();      // Camera rotation matrix
+    Eigen::Vector3d t = pose.translation();  // Camera translation vector
+
+    // Transform the world point into the camera frame
+    Eigen::Vector3d pointInCameraFrame = R.inverse() * (worldPoint - t);
+
+    // Check if the point is in front of the camera
+    if (pointInCameraFrame.z() <= 0) {
+        throw std::runtime_error("Point is behind the camera and cannot be projected.");
+    }
+
+    // Project the point onto the normalized image plane
+    Eigen::Vector3d normalizedPixel = pointInCameraFrame / pointInCameraFrame.z();
+
+    // Convert normalized image coordinates to pixel space
+    Eigen::Vector3d pixel = K * normalizedPixel;
+
+    return Eigen::Vector2d(pixel.x(), pixel.y());
+}
+
+
 // Function to compute and save errors
 void computeAndSaveErrors(const std::vector<double> &errors, const std::string &outputFile) {
     std::ofstream file(outputFile);
@@ -218,6 +241,7 @@ void displayImageWithTags(const cv::Mat &image, const std::vector<Eigen::Vector2
     cv::waitKey(30); // Display for 30ms
 }
 
+// Main function
 int main(int argc, char **argv) {
     if (argc != 6) {
         std::cerr << "Usage: " << argv[0] << " <image_dir> <json_poses> <ground_points_file> <intrinsics_yaml> <output_file>" << std::endl;
@@ -249,7 +273,7 @@ int main(int argc, char **argv) {
         gpFile.close();
 
         // Pangolin visualization center with tag
-        Eigen::Vector3d centerPoint(x, y, z);
+        Eigen::Vector3d centerPoint(0, 0, 0); // Adjusted to initialize properly
 
         // Load camera intrinsics and resolution from YAML
         std::cout << "Loading camera intrinsics and resolution from YAML..." << std::endl;
@@ -262,7 +286,9 @@ int main(int argc, char **argv) {
 
         // Process each image
         std::vector<Point> backprojectedPoints;
-        std::vector<double> errors;
+        std::vector<double> backprojectionErrors;
+        std::vector<double> reprojectionErrors; // To store reprojection errors
+
         int img_count = 0;
         for (const auto &[imagePath, pose] : poses) {
             std::string fullImagePath = imageDir + "/" + imagePath;
@@ -275,14 +301,11 @@ int main(int argc, char **argv) {
             // Detect fully visible AprilTags
             std::vector<std::vector<cv::Point2f>> tagCorners = detectFullyVisibleAprilTags(image, arucoDict);
             if (tagCorners.empty()) {
-                //std::cout << "No tag identified, skipping image." << std::endl;
                 continue;
             }
 
             // Get the centers of the fully visible tags
             std::vector<Eigen::Vector2d> tagCenters = getTagCenters(tagCorners);
-
-            //displayImageWithTags(image, tagCenters);
 
             // Process each ground point
             for (const auto &gtPoint : groundPoints) {
@@ -291,17 +314,28 @@ int main(int argc, char **argv) {
                     Point projectedPoint = pixelToWorld(tagCenter, K, pose, gtPoint.z());
                     backprojectedPoints.push_back(projectedPoint);
 
-                    // Compute the error between the GT point and the projected point
-                    double error = (gtPoint - projectedPoint).norm();
-                    errors.push_back(error);
+                    // Compute the backprojection error
+                    double backprojectionError = (gtPoint - projectedPoint).norm();
+                    backprojectionErrors.push_back(backprojectionError);
+
+                    // Compute the reprojection error
+                    try {
+                        Eigen::Vector2d reprojectedPixel = worldToPixel(projectedPoint, K, pose);
+                        double reprojectionError = (tagCenter - reprojectedPixel).norm();
+                        reprojectionErrors.push_back(reprojectionError);
+                    } catch (const std::exception &e) {
+                        std::cerr << "Reprojection failed: " << e.what() << std::endl;
+                    }
                 }
             }
+
             img_count++;
             std::cout << "Images processed: " << img_count << "/" << poses.size() << "\r" << std::flush;
         }
 
-        // Save the errors to the output file
-        computeAndSaveErrors(errors, outputFile);
+        // Save the backprojection and reprojection errors
+        computeAndSaveErrors(backprojectionErrors, "backprojection_" + outputFile);
+        computeAndSaveErrors(reprojectionErrors, "reprojection_" + outputFile);
 
         // Visualize the points
         visualizePointsAndPoses(groundPoints, backprojectedPoints, poses, centerPoint);
