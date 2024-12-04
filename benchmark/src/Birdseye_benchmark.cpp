@@ -273,7 +273,7 @@ int main(int argc, char **argv) {
         gpFile.close();
 
         // Pangolin visualization center with tag
-        Eigen::Vector3d centerPoint(0, 0, 0); // Adjusted to initialize properly
+        Eigen::Vector3d centerPoint(x, y, z); // Adjusted to initialize properly
 
         // Load camera intrinsics and resolution from YAML
         std::cout << "Loading camera intrinsics and resolution from YAML..." << std::endl;
@@ -320,7 +320,7 @@ int main(int argc, char **argv) {
 
                     // Compute the reprojection error
                     try {
-                        Eigen::Vector2d reprojectedPixel = worldToPixel(projectedPoint, K, pose);
+                        Eigen::Vector2d reprojectedPixel = worldToPixel(gtPoint, K, pose);
                         double reprojectionError = (tagCenter - reprojectedPixel).norm();
                         reprojectionErrors.push_back(reprojectionError);
                     } catch (const std::exception &e) {
@@ -344,6 +344,4 @@ int main(int argc, char **argv) {
         std::cerr << "Error: " << e.what() << std::endl;
         return 1;
     }
-
-    return 0;
 }

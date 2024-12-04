@@ -3,7 +3,7 @@ num_points: 500 # Number of ground observations
 boundary_radius: 50 # Radius in meters of circular test area
 ground_height_max: 0.0 # max height of random ground points (0.0 is global flat-Earth assumption)
 cluster_radius: 2.0 # Radius in meters for clustering ground points into flight waypoints
-num_poses: 3000 # Number of camera poses, or "images"
+num_poses: 1500 # Number of camera poses, or "images"
 flight_AGL: 10.0 # Flight altitude (AGL) in meters
 
 # Camera intrinsics
@@ -17,7 +17,7 @@ cy: 578.38700405 # Vertical coordinate of focal origin in pixels
 # Noise parameters
 sigma_x: 0.014 # std of x translation estimation in meters
 sigma_y: 0.014 # std of y translation estimation in meters
-sigma_z: 0.0   # std of z translation estimation in meters
+sigma_z: 0.014   # std of z translation estimation in meters
 
 # Inertialsense IMX5-INS (GNSS-RTK, 1 m baseline)
 sigma_roll: 0.0006981317  # std of roll attitude estimation in radians
