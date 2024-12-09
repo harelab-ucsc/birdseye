@@ -135,20 +135,53 @@ Eigen::Vector2d worldToPixel(const Point &worldPoint, const Eigen::Matrix3d &K, 
     return Eigen::Vector2d(pixel.x(), pixel.y());
 }
 
-
-// Function to compute and save errors
-void computeAndSaveErrors(const std::vector<double> &errors, const std::string &outputFile) {
-    std::ofstream file(outputFile);
-    if (!file.is_open()) {
-        throw std::runtime_error("Error: Unable to open output file: " + outputFile);
+// writes the report file with backprojection(3D) and reprojection error(2D) components
+void writeReport(const std::vector<double>& BPE_x,
+                 const std::vector<double>& BPE_y,
+                 const std::vector<double>& BPE_z,
+                 const std::vector<double>& RPE_x,
+                 const std::vector<double>& RPE_y,
+                 const std::string& filename) {
+    std::ofstream outFile(filename);
+    if (!outFile) {
+        std::cerr << "Error opening report file." << std::endl;
+        return;
     }
 
-    for (const auto &error : errors) {
-        file << std::fixed << std::setprecision(6) << error << std::endl;
+    // Find maximum width for proper alignment
+    int maxWidth = 0;
+    std::vector<std::string> headers = {"BPE_x", "BPE_y", "BPE_z", "RPE_x", "RPE_y"};
+    for (const auto& header : headers) {
+        maxWidth = std::max(maxWidth, static_cast<int>(header.length()));
+    }
+    for (size_t i = 0; i < BPE_x.size(); ++i) {
+        maxWidth = std::max(maxWidth, static_cast<int>(std::to_string(BPE_x[i]).length()));
+        maxWidth = std::max(maxWidth, static_cast<int>(std::to_string(BPE_y[i]).length()));
+        maxWidth = std::max(maxWidth, static_cast<int>(std::to_string(BPE_z[i]).length()));
+        maxWidth = std::max(maxWidth, static_cast<int>(std::to_string(RPE_x[i]).length()));
+        maxWidth = std::max(maxWidth, static_cast<int>(std::to_string(RPE_y[i]).length()));
     }
 
-    file.close();
-    std::cout << "Errors successfully saved to " << outputFile << std::endl;
+    // Set the width slightly larger than the max width for spacing
+    maxWidth += 2;
+
+    // Write the header with the correct spacing
+    for (const auto& header : headers) {
+        outFile << std::left << std::setw(maxWidth) << header;
+    }
+    outFile << '\n';
+
+    // Write the vector data to the file with proper alignment
+    for (size_t i = 0; i < BPE_x.size(); i++) {
+        outFile << std::left << std::setw(maxWidth) << BPE_x[i]
+                << std::setw(maxWidth) << BPE_y[i]
+                << std::setw(maxWidth) << BPE_z[i]
+                << std::setw(maxWidth) << RPE_x[i]
+                << std::setw(maxWidth) << RPE_y[i] << '\n';
+    }
+
+    outFile.close();
+    std::cout << "Error report successfully written to " << filename << std::endl;
 }
 
 void visualizePointsAndPoses(const std::vector<Point> &groundPoints,
@@ -284,11 +317,17 @@ int main(int argc, char **argv) {
         // Prepare ArUco dictionary
         cv::Ptr<cv::aruco::Dictionary> arucoDict = cv::makePtr<cv::aruco::Dictionary>(cv::aruco::getPredefinedDictionary(cv::aruco::DICT_APRILTAG_36h11));
 
-        // Process each image
+        // store backprojected points for visualization and L1 errors (meters)
         std::vector<Point> backprojectedPoints;
-        std::vector<double> backprojectionErrors;
-        std::vector<double> reprojectionErrors; // To store reprojection errors
+        std::vector<double> BPE_x;
+        std::vector<double> BPE_y;
+        std::vector<double> BPE_z;
 
+        // store L1 reprojection errors (pixels)
+        std::vector<double> RPE_x;
+        std::vector<double> RPE_y;
+
+        // process each image:pose pair
         int img_count = 0;
         for (const auto &[imagePath, pose] : poses) {
             std::string fullImagePath = imageDir + "/" + imagePath;
@@ -304,7 +343,7 @@ int main(int argc, char **argv) {
                 continue;
             }
 
-            // Get the centers of the fully visible tags
+            // Get the centers of the april tags
             std::vector<Eigen::Vector2d> tagCenters = getTagCenters(tagCorners);
 
             // Process each ground point
@@ -314,18 +353,20 @@ int main(int argc, char **argv) {
                     Point projectedPoint = pixelToWorld(tagCenter, K, pose, gtPoint.z());
                     backprojectedPoints.push_back(projectedPoint);
 
-                    // Compute the backprojection error
-                    double backprojectionError = (gtPoint - projectedPoint).norm();
-                    backprojectionErrors.push_back(backprojectionError);
+                    // Compute and save the backprojection error components
+                    double bpe_x = gtPoint.x() - projectedPoint.x();
+                    double bpe_y = gtPoint.y() - projectedPoint.y();
+                    double bpe_z = gtPoint.z() - projectedPoint.z();
+                    BPE_x.push_back(bpe_x);
+                    BPE_y.push_back(bpe_y);
+                    BPE_z.push_back(bpe_z);
 
-                    // Compute the reprojection error
-                    try {
-                        Eigen::Vector2d reprojectedPixel = worldToPixel(gtPoint, K, pose);
-                        double reprojectionError = (tagCenter - reprojectedPixel).norm();
-                        reprojectionErrors.push_back(reprojectionError);
-                    } catch (const std::exception &e) {
-                        std::cerr << "Reprojection failed: " << e.what() << std::endl;
-                    }
+                    // Compute the reprojection error and save the components
+                    Eigen::Vector2d reprojectedPixel = worldToPixel(gtPoint, K, pose);
+                    double rpe_x = tagCenter.x() - reprojectedPixel.x();
+                    double rpe_y = tagCenter.y() - reprojectedPixel.y();
+                    RPE_x.push_back(rpe_x);
+                    RPE_y.push_back(rpe_y);
                 }
             }
 
@@ -334,8 +375,8 @@ int main(int argc, char **argv) {
         }
 
         // Save the backprojection and reprojection errors
-        computeAndSaveErrors(backprojectionErrors, "backprojection_" + outputFile);
-        computeAndSaveErrors(reprojectionErrors, "reprojection_" + outputFile);
+        std::string report_name = outputFile + "_report.txt";
+        writeReport(BPE_x, BPE_y, BPE_z, RPE_x, RPE_y, report_name);
 
         // Visualize the points
         visualizePointsAndPoses(groundPoints, backprojectedPoints, poses, centerPoint);

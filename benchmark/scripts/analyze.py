@@ -1,74 +1,80 @@
+import sys
 import numpy as np
+import pandas as pd
 import matplotlib.pyplot as plt
-from scipy.stats import gamma
-import argparse
+from scipy.stats import norm, gamma
 
-# Function to read data from a text file
-def read_errors_from_file(filename):
-    try:
-        with open(filename, 'r') as file:
-            errors = np.array([float(line.strip()) for line in file])
-        return errors
-    except Exception as e:
-        print(f"Error reading file: {e}")
-        exit(1)
+def read_data(filepath):
+    # Read the data assuming whitespace delimiter and no header
+    data = pd.read_csv(filepath, delim_whitespace=True, header=None,
+                       names=['BPE_x', 'BPE_y', 'BPE_z', 'RPE_x', 'RPE_y'])
+    # Convert all columns to numeric, coercing errors which will convert non-numeric to NaN
+    data = data.apply(pd.to_numeric, errors='coerce')
+    return data
 
-# Parse command-line arguments
-def parse_arguments():
-    parser = argparse.ArgumentParser(description='Backprojection L2 error terms with Gamma fit.')
-    parser.add_argument('filename', type=str, help='Path to the text file containing L2 error terms.')
-    parser.add_argument('--bins', type=int, default=20, help='Number of bins for the histogram (default: 20).')
-    return parser.parse_args()
-
-# Main function
-def main():
-    # Parse arguments
-    args = parse_arguments()
-    
-    # Read errors from the file
-    errors = read_errors_from_file(args.filename)
-    
-    # Compute histogram
-    hist, bin_edges = np.histogram(errors, bins=args.bins, density=True)
-    
-    # Compute bin centers
-    bin_centers = (bin_edges[:-1] + bin_edges[1:]) / 2
-    
-    # Fit Gamma distribution
-    shape, loc, scale = gamma.fit(errors, floc=0)  # Fix location parameter to 0 for Gamma distribution
-    
-    # Generate points for the Gamma fit
-    x = np.linspace(min(errors), max(errors), 100)
-    pdf = gamma.pdf(x, shape, loc, scale)
-    
-    # Compute mean and standard deviation
-    mean = np.mean(errors)
-    std_dev = np.std(errors)
-    
-    # Plot histogram and Gamma fit
-    plt.figure(figsize=(10, 6))
-    
-    # Plot histogram
-    plt.hist(errors, bins=args.bins, density=True, alpha=0.6, color='g', label='Histogram')
-    
-    # Plot Gamma fit
-    plt.plot(x, pdf, 'k', linewidth=2, label='Gamma fit')
-    
-    # Add labels and title
-    plt.xlabel('Error [meters]')
-    plt.ylabel('Density')
-    plt.title('Backprojection L2 error terms with Gamma fit')
-    
-    # Display Gamma parameters in the plot
-    plt.legend()
-    plt.grid(True)
-    plt.annotate(f'α : {shape:.2f}\nβ: {1/scale:.2f}\nμ: {mean:.2f} m\nσ: {std_dev:.2f} m',
-                 xy=(0.7, 0.8), xycoords='axes fraction',
-                 bbox=dict(boxstyle='round', facecolor='white', alpha=0.8),
-                 fontsize=12)
-    
-    # Show plot
+def fit_and_plot_histograms(data, columns, dists, fig_title, x_label):
+    fig, axs = plt.subplots(1, len(columns), figsize=(5 * len(columns), 5))
+    for i, column in enumerate(columns):
+        ax = axs[i]
+        values = data[column].dropna()  # Drop NaN values which might arise from conversion
+        if dists[i] == 'norm':
+            mu, std = norm.fit(values)
+            # Plot the histogram
+            ax.hist(values, bins=100, density=True, alpha=0.6, color='r')
+            # Plot the PDF.
+            xmin, xmax = ax.get_xlim()
+            x = np.linspace(xmin, xmax, 100)
+            p = norm.pdf(x, mu, std)
+            ax.plot(x, p, 'k', linewidth=2)
+            title = f'{column}: μ={mu:.2f}, σ={std:.2f}'
+        elif dists[i] == 'gamma':
+            shape, loc, scale = gamma.fit(values)
+            mean = gamma.mean(shape, loc, scale)
+            variance = gamma.var(shape, loc, scale)
+            std = np.sqrt(variance)
+            # Plot the histogram
+            ax.hist(values, bins=100, density=True, alpha=0.6, color='r')
+            # Plot the PDF
+            xmin, xmax = ax.get_xlim()
+            x = np.linspace(xmin, xmax, 100)
+            p = gamma.pdf(x, shape, loc, scale)
+            ax.plot(x, p, 'k', linewidth=2)
+            title = (f'{column}: α={shape:.2f}, β={scale:.2f}, '
+                     f'μ={mean:.2f}, σ={std:.2f}')
+        ax.set_title(title)
+        ax.set_xlabel(x_label)
+        ax.set_ylabel('Density')
+    plt.tight_layout()
+    plt.suptitle(fig_title)
+    plt.subplots_adjust(top=0.85)
     plt.show()
 
-if __name__ == "__main__":
+def main():
+    if len(sys.argv) != 2:
+        print("Usage: python script.py <filename>")
+        sys.exit(1)
+    filepath = sys.argv[1]
+    
+    data = read_data(filepath)
+    
+    # Calculate L2 error for BPE and RPE terms
+    data['L2_error_BPE'] = np.sqrt(data['BPE_x']**2 + data['BPE_y']**2 + data['BPE_z']**2)
+    data['L2_error_RPE'] = np.sqrt(data['RPE_x']**2 + data['RPE_y']**2)
+    
+    # Fit and plot histograms including the L2 error
+    fit_and_plot_histograms(
+        data, 
+        ['BPE_x', 'BPE_y', 'BPE_z', 'L2_error_BPE'], 
+        ['norm', 'norm', 'norm', 'gamma'], 
+        fig_title='Backprojection Error', x_label='meters'
+    )
+
+    fit_and_plot_histograms(
+        data,
+        ['RPE_x', 'RPE_y', 'L2_error_RPE'],
+        ['norm', 'norm', 'gamma'],
+        fig_title='Reprojection Error', x_label='pixels'
+    )
+
+if __name__ == '__main__':
     main()
