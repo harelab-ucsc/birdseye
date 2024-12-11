@@ -129,6 +129,19 @@ Benchmark/fast:
 	$(MAKE) $(MAKESILENT) -f CMakeFiles/Benchmark.dir/build.make CMakeFiles/Benchmark.dir/build
 .PHONY : Benchmark/fast
 
+#=============================================================================
+# Target rules for targets named Calibrate
+
+# Build rule for target.
+Calibrate: cmake_check_build_system
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/Makefile2 Calibrate
+.PHONY : Calibrate
+
+# fast build rule for target.
+Calibrate/fast:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/Calibrate.dir/build.make CMakeFiles/Calibrate.dir/build
+.PHONY : Calibrate/fast
+
 src/Birdseye_benchmark.o: src/Birdseye_benchmark.cpp.o
 .PHONY : src/Birdseye_benchmark.o
 
@@ -153,6 +166,30 @@ src/Birdseye_benchmark.cpp.s:
 	$(MAKE) $(MAKESILENT) -f CMakeFiles/Benchmark.dir/build.make CMakeFiles/Benchmark.dir/src/Birdseye_benchmark.cpp.s
 .PHONY : src/Birdseye_benchmark.cpp.s
 
+src/Birdseye_calibrate.o: src/Birdseye_calibrate.cpp.o
+.PHONY : src/Birdseye_calibrate.o
+
+# target to build an object file
+src/Birdseye_calibrate.cpp.o:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/Calibrate.dir/build.make CMakeFiles/Calibrate.dir/src/Birdseye_calibrate.cpp.o
+.PHONY : src/Birdseye_calibrate.cpp.o
+
+src/Birdseye_calibrate.i: src/Birdseye_calibrate.cpp.i
+.PHONY : src/Birdseye_calibrate.i
+
+# target to preprocess a source file
+src/Birdseye_calibrate.cpp.i:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/Calibrate.dir/build.make CMakeFiles/Calibrate.dir/src/Birdseye_calibrate.cpp.i
+.PHONY : src/Birdseye_calibrate.cpp.i
+
+src/Birdseye_calibrate.s: src/Birdseye_calibrate.cpp.s
+.PHONY : src/Birdseye_calibrate.s
+
+# target to generate assembly for a file
+src/Birdseye_calibrate.cpp.s:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/Calibrate.dir/build.make CMakeFiles/Calibrate.dir/src/Birdseye_calibrate.cpp.s
+.PHONY : src/Birdseye_calibrate.cpp.s
+
 # Help Target
 help:
 	@echo "The following are some of the valid targets for this Makefile:"
@@ -162,9 +199,13 @@ help:
 	@echo "... edit_cache"
 	@echo "... rebuild_cache"
 	@echo "... Benchmark"
+	@echo "... Calibrate"
 	@echo "... src/Birdseye_benchmark.o"
 	@echo "... src/Birdseye_benchmark.i"
 	@echo "... src/Birdseye_benchmark.s"
+	@echo "... src/Birdseye_calibrate.o"
+	@echo "... src/Birdseye_calibrate.i"
+	@echo "... src/Birdseye_calibrate.s"
 .PHONY : help
 
 

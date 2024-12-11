@@ -64,6 +64,7 @@ CMAKE_BINARY_DIR = /home/akorycki/oasis/birdseye/benchmark/build
 
 # The main recursive "all" target.
 all: CMakeFiles/Benchmark.dir/all
+all: CMakeFiles/Calibrate.dir/all
 .PHONY : all
 
 # The main recursive "preinstall" target.
@@ -72,6 +73,7 @@ preinstall:
 
 # The main recursive "clean" target.
 clean: CMakeFiles/Benchmark.dir/clean
+clean: CMakeFiles/Calibrate.dir/clean
 .PHONY : clean
 
 #=============================================================================
@@ -99,6 +101,32 @@ Benchmark: CMakeFiles/Benchmark.dir/rule
 CMakeFiles/Benchmark.dir/clean:
 	$(MAKE) $(MAKESILENT) -f CMakeFiles/Benchmark.dir/build.make CMakeFiles/Benchmark.dir/clean
 .PHONY : CMakeFiles/Benchmark.dir/clean
+
+#=============================================================================
+# Target rules for target CMakeFiles/Calibrate.dir
+
+# All Build rule for target.
+CMakeFiles/Calibrate.dir/all:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/Calibrate.dir/build.make CMakeFiles/Calibrate.dir/depend
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/Calibrate.dir/build.make CMakeFiles/Calibrate.dir/build
+	@$(CMAKE_COMMAND) -E cmake_echo_color --switch=$(COLOR) --progress-dir=/home/akorycki/oasis/birdseye/benchmark/build/CMakeFiles --progress-num=3,4 "Built target Calibrate"
+.PHONY : CMakeFiles/Calibrate.dir/all
+
+# Build rule for subdir invocation for target.
+CMakeFiles/Calibrate.dir/rule: cmake_check_build_system
+	$(CMAKE_COMMAND) -E cmake_progress_start /home/akorycki/oasis/birdseye/benchmark/build/CMakeFiles 2
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/Makefile2 CMakeFiles/Calibrate.dir/all
+	$(CMAKE_COMMAND) -E cmake_progress_start /home/akorycki/oasis/birdseye/benchmark/build/CMakeFiles 0
+.PHONY : CMakeFiles/Calibrate.dir/rule
+
+# Convenience name for target.
+Calibrate: CMakeFiles/Calibrate.dir/rule
+.PHONY : Calibrate
+
+# clean rule for target.
+CMakeFiles/Calibrate.dir/clean:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/Calibrate.dir/build.make CMakeFiles/Calibrate.dir/clean
+.PHONY : CMakeFiles/Calibrate.dir/clean
 
 #=============================================================================
 # Special targets to cleanup operation of make.

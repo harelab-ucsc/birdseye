@@ -18,9 +18,11 @@ include_directories(
     ${Pangolin_INCLUDE_DIRS}
     ${YAML_CPP_INCLUDE_DIR}
 )
+include_directories("/usr/local/include/apriltag")
 
 # Add executable
 add_executable(Benchmark src/Birdseye_benchmark.cpp)
+add_executable(Calibrate src/Birdseye_calibrate.cpp)
 
 # Link libraries
 target_link_libraries(Benchmark
@@ -28,4 +30,10 @@ target_link_libraries(Benchmark
     ${Pangolin_LIBRARIES}
     ${YAML_CPP_LIBRARIES}
     nlohmann_json::nlohmann_json
+)
+
+target_link_libraries(Calibrate 
+    ${OpenCV_LIBS}
+    ${YAML_CPP_LIBRARIES}
+    apriltag
 )

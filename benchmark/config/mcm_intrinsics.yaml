@@ -1,0 +1,7 @@
+# MCMC-derived Camera intrinsics
+width: 1920 # Horizontal image resolution in pixels
+height: 1200 # Vertical image resolution i.n pixels
+fx: 4021.51779346 # Horizontal focal-length component in pixels
+fy: 3991.25251953 # Vertical focal-length component in pixels
+cx: 963.96005809 # Horizontal coordinate of focal origin in pixels
+cy: 614.05025251 # Vertical coordinate of focal origin in pixels

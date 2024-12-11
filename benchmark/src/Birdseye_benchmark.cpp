@@ -274,6 +274,40 @@ void displayImageWithTags(const cv::Mat &image, const std::vector<Eigen::Vector2
     cv::waitKey(30); // Display for 30ms
 }
 
+// returns true if image is blurry using laplacian variance
+bool isImageBlurry(const cv::Mat& image) {
+    // Check if the image is empty
+    if (image.empty()) {
+        std::cerr << "Invalid or unsupported image format!" << std::endl;
+        return false;
+    }
+
+    cv::Mat gray, laplacian;
+    // Check if the image is already grayscale
+    if (image.channels() == 1) {
+        gray = image;
+    } else if (image.channels() == 3) {
+        // Convert to grayscale
+        cv::cvtColor(image, gray, cv::COLOR_BGR2GRAY);
+    } else {
+        std::cerr << "Unsupported number of channels in image!" << std::endl;
+        return false;
+    }
+
+    // Apply Laplacian function
+    cv::Laplacian(gray, laplacian, CV_64F);
+
+    // Calculate variance
+    cv::Scalar mean, stddev;
+    cv::meanStdDev(laplacian, mean, stddev);
+    double variance = stddev.val[0] * stddev.val[0];
+
+    // Threshold for determining blurriness
+    double threshold = 1000.0; // This threshold can be adjusted based on requirements
+
+    return variance < threshold;
+}
+
 // Main function
 int main(int argc, char **argv) {
     if (argc != 6) {
@@ -334,6 +368,11 @@ int main(int argc, char **argv) {
             cv::Mat image = cv::imread(fullImagePath, cv::IMREAD_GRAYSCALE);
             if (image.empty()) {
                 std::cerr << "Warning: Unable to load image: " << fullImagePath << std::endl;
+                continue;
+            }
+            
+            if (isImageBlurry(image)) {
+                std::cerr << "Skipping blurry image: " << fullImagePath << std::endl;
                 continue;
             }
 
