@@ -163,7 +163,7 @@ void writeReport(const std::vector<double>& BPE_x,
     }
 
     // Set the width slightly larger than the max width for spacing
-    maxWidth += 2;
+    maxWidth += 5;
 
     // Write the header with the correct spacing
     for (const auto& header : headers) {
