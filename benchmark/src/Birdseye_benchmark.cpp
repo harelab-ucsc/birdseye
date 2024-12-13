@@ -303,7 +303,8 @@ bool isImageBlurry(const cv::Mat& image) {
     double variance = stddev.val[0] * stddev.val[0];
 
     // Threshold for determining blurriness
-    double threshold = 1000.0; // This threshold can be adjusted based on requirements
+    double threshold = 500.0; // This threshold can be adjusted based on requirements
+    //std::cout << variance << std::endl;
 
     return variance < threshold;
 }

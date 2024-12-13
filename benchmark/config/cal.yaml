@@ -1,0 +1,10 @@
+width: 1920 # Horizontal image resolution in pixels
+height: 1200 # Vertical image resolution in pixels
+fx: 4279.799962827053 # Horizontal focal-length component in pixels
+fy: 3718.178701411081 # Vertical focal-length component in pixels
+cx: 795.5825195152659 # Horizontal coordinate of focal origin in pixels
+cy: 545.589603771995 # Vertical coordinate of focal origin in pixels
+k1: -0.06349867044719609
+k2: 1.2016305333973485
+p1: -0.022432751763500094
+p2: 0.0019210467871608665

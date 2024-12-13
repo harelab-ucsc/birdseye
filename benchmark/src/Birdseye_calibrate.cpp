@@ -114,7 +114,7 @@ bool isImageBlurry(const cv::Mat& image) {
     double variance = stddev.val[0] * stddev.val[0];
 
     // Threshold for determining blurriness
-    double threshold = 1200.0; // This threshold can be adjusted based on requirements
+    double threshold = 1000.0; // This threshold can be adjusted based on requirements
 
     return variance < threshold;
 }
@@ -141,7 +141,7 @@ int main(int argc, char** argv) {
     }
 
     // Define object points based on the real-world dimensions of the AprilTags
-    float tagSize = 0.4874; // Tag size in meters
+    float tagSize = 0.50; // Tag size in meters
     std::vector<cv::Point3f> objp = {
         {0, 0, 0},
         {tagSize, 0, 0},
