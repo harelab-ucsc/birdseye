@@ -47,9 +47,9 @@ ekf_filter_node_map:
     frequency: 30.0
     sensor_timeout: 0.2
     two_d_mode: false
-    transform_time_offset: 0.0
+    # transform_time_offset: 0.0
     transform_time_offset: 0.061112865886248625
-    # transform_timeout: 0.0
+    transform_timeout: 0.0
     publish_tf: true
     permit_corrected_publication: true
     smooth_lagged_data: true
