@@ -294,7 +294,6 @@ def build_dji_plan(
 
     plt.show()
 
-
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument(
@@ -356,4 +355,4 @@ if __name__ == "__main__":
         fp_out=args.output,
         w_rad=args.radius,
         w_sides=args.sides
-    )
+    #)
