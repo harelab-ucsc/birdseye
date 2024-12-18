@@ -340,7 +340,6 @@ class birdsEye():
         cv2.namedWindow("Window", cv2.WINDOW_NORMAL)
         cv2.resizeWindow("Window", 1920, 1200)
 
-
         for i, frame in enumerate(self.data):
             print(f'frame: {i+1} of {len(self.data)}')
             self.frame_index = i

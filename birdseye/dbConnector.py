@@ -24,12 +24,10 @@ class dbConnector:
 
     def boot(self, db_name, sensor):
         # print(db_name, sensor)
-        # self.setupTable(f"{sensor}_poses_{db_name}", "x REAL, y REAL, z REAL, q REAL, u REAL, a REAL, t REAL, rtk_fix INTEGER, rtk_time REAL, alt_time REAL, imu_time REAL")
-        self.setupTable(f"{sensor}_images_{db_name}", "x REAL, y REAL, z REAL, q REAL, u REAL, a REAL, t REAL, rtk_fix INTEGER, radalt REAL, save_loc TEXT UNIQUE, time1 REAL, time2 REAL")
+        self.setupTable(f"{sensor}_images_{db_name}", "x REAL, y REAL, z REAL, q REAL, u REAL, a REAL, t REAL, rtk_fix INTEGER, radalt REAL, save_loc TEXT UNIQUE, cam_time1 REAL, cam_time2 REAL, ins_time1 REAL, ins_time2 REAL")
         self.setupTable(f"clicks_{db_name}", "x REAL, y REAL, z REAL, z_msl REAL, tag INTEGER")
         self.setupTable(f"parameters_{db_name}", f"sensorID TEXT UNIQUE, resolution array, intrinsics1 array, intrinsics2 array, extrinsics array")
-        self.setupTable(f"rtk_data_{db_name}", f"lat REAL, lon REAL, altitude REAL, rtk_fix INTEGER, time1 REAL UNIQUE, time2 REAL")
-        self.setupTable(f"ahrs_data_{db_name}", f"q REAL, u REAL, a REAL, t REAL, v_a REAL, v_b REAL, v_g REAL, a_x REAL, a_y REAL, a_z REAL, time1 REAL UNIQUE, time2 REAL")
+        self.setupTable(f"ins_data_{db_name}", f"x REAL, y REAL, z REAL, q REAL, u REAL, a REAL, t REAL, insStatus INTEGER, hdwStatus INTEGER, time1 REAL UNIQUE, time2 REAL")
 
 
     def sqlite_power(self, x, n):

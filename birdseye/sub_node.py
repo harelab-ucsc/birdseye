@@ -18,16 +18,17 @@ import numpy as np
 # from . import fieldAI
 from . import dbConnector
 from . import utilities
+
 from cv_bridge import CvBridge
 from rclpy.node import Node
 from sensor_msgs.msg import Image, Imu, NavSatFix
 from std_msgs.msg import String
-from ublox_msgs.msg import NavPVT
+from inertial_sense_ros2.msg import DIDINS2
 from custom_msgs.msg import AltSNR
 
-from tf2_ros import TransformException
-from tf2_ros.buffer import Buffer
-from tf2_ros.transform_listener import TransformListener
+# from tf2_ros import TransformException
+# from tf2_ros.buffer import Buffer
+# from tf2_ros.transform_listener import TransformListener
 
 import rclpy.node
 from rclpy.exceptions import ParameterNotDeclaredException
@@ -70,32 +71,39 @@ class subscriberNode(rclpy.node.Node):
         self.clicks_csv = os.path.join(os.path.expanduser('~'), self.clicks_csv)
         self.csv_read()
 
-        # tf2 piping
-        self.tf_buffer = Buffer()
-        self.tf_listener = TransformListener(self.tf_buffer, self)
-        self.declare_parameter('source_frame', self.sensor)
-        self.source_frame = self.get_parameter('source_frame').value
-        self.declare_parameter('target_frame', 'utm')
-        self.target_frame = self.get_parameter('target_frame').value
-
         self.br = CvBridge()
 
         # camera subscriber
         self.cam_sub = self.create_subscription(
             Image, '/image', self.cam_cb, 100)
-        # ahrs subscriber
-        self.arhs_sub = self.create_subscription(
-            Imu, '/imu/data', self.ahrs_cb, 100)
+        self.data_loc = None
+        self.image = None
+        self.cam_times = None
+
+        # ins subscriber and relevant attributes
+        self.ins_sub = self.create_subscription(
+            DIDINS2, '/ins', self.ins_cb, 100)
+        self.HDW_STATUS_STROBE_IN_EVENT = 0x00000020
+        self.INS_STATUS_GPS_NAV_FIX_MASK = 0x03000000
+        self.INS_STATUS_GPS_NAV_FIX_OFFSET = 24,
+        self.pos = None
+        self.quat = None
+        self.ins_times = None
+        self.RTK_STATUS = None
+        self.STROBE_STATUS = None
+
         # radalt subscriber
         self.rad_sub = self.create_subscription(
             AltSNR, '/rad_altitude', self.radalt_cb, 100)
-        self.radalt = None
-        # ublox subscribers
-        self.ublox = self.create_subscription(
-            NavSatFix, '/rtk/fix', self.ublox_cb, 100)
-        self.ublox_health_sub = self.create_subscription(
-            NavPVT, '/rtk/fix_status', self.navpvt_cb, 100)
-        self.RTK_STATUS = None
+        self.radalt = 1
+
+        self.check_list = [self.image, \
+                           self.pos, \
+                           self.quat, \
+                           self.RTK_STATUS, \
+                           self.data_loc, \
+                           self.ins_times, \
+                           self.cam_times]
 
 
     def dirCheck(self):
@@ -142,7 +150,7 @@ class subscriberNode(rclpy.node.Node):
 
     def calibUptake(self):
         self.get_logger().info(f'Reading sensor parameters YAML file: {self.sensors_yaml}...')
-        devices = [f'{self.sensor}', 'imu', 'ublox'] #, 'radalt']
+        devices = [f'{self.sensor}', 'ins', 'radalt']
         res = None
         intr1 = None
         intr2 = None
@@ -164,16 +172,13 @@ class subscriberNode(rclpy.node.Node):
                     # print(extr)
                     # print(type(data["T_cam_imu"]))
                     self.putParameters(device, res, intr1, intr2, extr)
-                elif device == 'imu':
+                elif device == 'ins':
                     intr1 = [data["accelerometer_noise_density"], data["accelerometer_random_walk"]]
                     intr2 = [data["gyroscope_noise_density"],  data["gyroscope_random_walk"]]
                     self.putParameters(device, res, intr1, intr2, extr)
-                elif device == 'ublox':
-                    extr = data["T_ubl_imu"]
+                elif device == 'radalt':
+                    extr = data["T_rad_imu"]
                     self.putParameters(device, res, intr1, intr2, utilities.matrix_list_converter(extr, (4,4)))
-                # elif device == 'radalt':
-                #     extr = data["T_rad_imu"]
-                #     self.putParameters(device, res, intr1, intr2, utilities.matrix_list_converter(extr, (4,4)))
                 res = None
                 intr1 = None
                 intr2 = None
@@ -212,17 +217,60 @@ class subscriberNode(rclpy.node.Node):
         return params
 
 
-
     # TODO: for a later day, add parameter set callback
     # def parameter_callback(self, params):
     #     for param in params:
     #         if param.name == 'my_str' and param.type_ == Parameter.Type.STRING:
     #             self.sensor = param.value
     #     return SetParametersResult(successful=True)
+    def update_check_list(self):
+        self.check_list = [self.image, \
+                           self.pos, \
+                           self.quat, \
+                           self.RTK_STATUS, \
+                           self.data_loc, \
+                           self.ins_times, \
+                           self.cam_times]
+
+
+    def status_check(self):
+        tst = [0 if i is None else 1 for i in self.check_list]
+        self.get_logger().info(f'      status_check: {tst}, {sum(tst)}')
+        if sum(tst) == len(self.check_list):
+            return True
+        else:
+            return False
+
+
+    def save_image_pose(self):
+        self.get_logger().info(f'    Recording image and pose... RTK_STATUS: {self.RTK_STATUS}')
+
+        try:
+            # cv2.resize(image, (0, 0), fx = 0.25, fy = 0.25)
+            cv2.imwrite(self.data_loc, self.image)
+            valsList = self.pos + self.quat + [self.RTK_STATUS, self.radalt, '\"'+self.data_loc+'\"', self.cam_times[0], self.cam_times[1], self.ins_times[0], self.ins_times[1]]
+            vals = ','.join([str(x) for x in valsList])
+            self.dbc.insertIgnoreInto(f"{self.sensor}_images_{self.db_name}", \
+                                        "x, y, z, q, u, a, t, rtk_fix, radalt, save_loc, cam_time1, cam_time2, ins_time1, ins_time2", vals)
+
+        except sqlite3.OperationalError as ex:
+            self.get_logger().info(f'    Attempted to insert bad pose: {ex}')
+            pass
+
+        self.image = None
+        self.pos = None
+        self.quat = None
+        self.RTK_STATUS = None
+        self.data_loc = None
+        self.ins_times = None
+        self.cam_times = None
+
+        self.update_check_list()
 
 
     def cam_cb(self, msg: Image):
         # put data into db
+        self.get_logger().info('  Image received.')
         tmp = self.get_clock().now().to_msg()
         sec1 = str(tmp.sec)
         nsec1 = str(tmp.nanosec).rjust(9,str(0))
@@ -232,52 +280,28 @@ class subscriberNode(rclpy.node.Node):
         nsec2 = str(msg.header.stamp.nanosec).rjust(9,str(0))
         time2 = f'{sec2}.{nsec2}'
 
-        data_loc = self.dir_name + "/" + self.sensor + '_' + time2 + ".png"
-        image = self.br.imgmsg_to_cv2(msg, desired_encoding='passthrough')
-        image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
+        self.cam_times = [time1, time2]
 
-        if self.RTK_STATUS is not None and self.radalt is not None:
-            try:
-                t = self.tf_buffer.lookup_transform(
-                    self.target_frame,
-                    self.source_frame,
-                    # msg.header.stamp)
-                    rclpy.time.Time())
-                t = t.transform
-                # self.get_logger().info(f'[{t.translation.x}, {t.translation.y}, {t.translation.z}]')
-                pos = [t.translation.x, t.translation.y, t.translation.z]
-                quat = [t.rotation.x, t.rotation.y, t.rotation.z, t.rotation.w]
-                # cv2.resize(image, (0, 0), fx = 0.25, fy = 0.25)
-                cv2.imwrite(data_loc, image)
-                valsList = pos + quat + [self.RTK_STATUS, self.radalt, '\"'+data_loc+'\"', time1, time2]
-                vals = ','.join([str(x) for x in valsList])
-                self.dbc.insertIgnoreInto(f"{self.sensor}_images_{self.db_name}", \
-                                            "x, y, z, q, u, a, t, rtk_fix, radalt, save_loc, time1, time2", vals)
-                if self.RTK_STATUS != 131:
-                    self.get_logger().info(f'Unstable pose recorded; RTK_STATUS {self.RTK_STATUS} should be 131')
-                else:
-                    self.get_logger().info(f'Stable pose recorded; RTK_STATUS {self.RTK_STATUS}')
-            except TransformException as ex:
-                self.get_logger().info(
-                    f'Could not transform {self.source_frame} to {self.target_frame}: {ex}')
-                pass
-            except sqlite3.OperationalError as ex:
-                self.get_logger().info(f'    attempted to insert bad pose: {ex}')
-                pass
-        elif self.RTK_STATUS is None:
-            self.get_logger().info(f'    skipping pose; RTK_STATUS is still unset')
+        self.data_loc = self.dir_name + "/" + self.sensor + '_' + time2 + ".png"
+        self.image = self.br.imgmsg_to_cv2(msg, desired_encoding='passthrough')
+        self.image = cv2.cvtColor(self.image, cv2.COLOR_BGR2RGB)
+
+        self.update_check_list()
+
+        if self.status_check() and self.radalt is not None:
+            self.save_image_pose()
         elif self.radalt is None:
-            self.get_logger().info(f'    skipping pose; radalt is still unset')
+            self.get_logger().info(f'    skipping image and pose; radalt is still unset')
 
 
     def radalt_cb(self, msg: AltSNR):
         if msg.snr > 13:
             self.radalt = msg.altitude
         else:
-            print('radalt measurement discarded; SNR too large')
+            print('radalt measurement discarded; SNR too small')
 
 
-    def ublox_cb(self, msg: NavSatFix):
+    def ins_cb(self, msg: DIDINS2):
         tmp = self.get_clock().now().to_msg()
         sec1 = str(tmp.sec)
         nsec1 = str(tmp.nanosec).rjust(9,str(0))
@@ -287,33 +311,29 @@ class subscriberNode(rclpy.node.Node):
         nsec2 = str(msg.header.stamp.nanosec).rjust(9,str(0))
         time2 = f'{sec2}.{nsec2}'
 
-        valsList = [msg.latitude, msg.longitude, msg.altitude, msg.status.status, time1, time2]
+        quat = [msg.qn2b[-1], msg.qn2b[0], msg.qn2b[1], msg.qn2b[2]]
+        u = utm.from_latlon(msg.lla[0], msg.lla[1])
+        pos = [u[0], u[1], msg.lla[2]]
+        self.update_check_list()
+
+        if msg.hdw_status & self.HDW_STATUS_STROBE_IN_EVENT == self.HDW_STATUS_STROBE_IN_EVENT:
+            self.quat = quat
+            self.pos = pos
+            self.ins_times = [time1, time2]
+            self.RTK_STATUS = msg.ins_status & self.INS_STATUS_GPS_NAV_FIX_MASK >> self.INS_STATUS_GPS_NAV_FIX_MASK
+            self.update_check_list()
+
+            self.get_logger().info(f'  Pose received... RTK_STATUS: {self.RTK_STATUS}')
+
+            if self.status_check() and self.radalt is not None:
+                self.save_image_pose()
+            elif self.radalt is None:
+                self.get_logger().info(f'    Skipping image and pose; radalt is still unset')
+
+        valsList = pos + quat + [msg.ins_status, msg.hdw_status, time1, time2]
         vals = ','.join([str(x) for x in valsList])
-        self.dbc.insertIgnoreInto(f"rtk_data_{self.db_name}", \
-            "lat, lon, altitude, rtk_fix, time1, time2", vals)
-
-
-    def navpvt_cb(self, msg: NavPVT):
-        self.RTK_STATUS = msg.flags  # in {3:GPS, 67:RTK_FLOAT, 131:RTK_FIX}
-
-
-    def ahrs_cb(self, msg: Imu):
-        tmp = self.get_clock().now().to_msg()
-        sec1 = str(tmp.sec)
-        nsec1 = str(tmp.nanosec).rjust(9,str(0))
-        time1 = f'{sec1}.{nsec1}'
-
-        sec2 = str(msg.header.stamp.sec)
-        nsec2 = str(msg.header.stamp.nanosec).rjust(9,str(0))
-        time2 = f'{sec2}.{nsec2}'
-
-        quat = [msg.orientation.x, msg.orientation.y, msg.orientation.z, msg.orientation.w]
-        avel = [msg.angular_velocity.x, msg.angular_velocity.y, msg.angular_velocity.z]
-        accl = [msg.linear_acceleration.x, msg.linear_acceleration.y, msg.linear_acceleration.z]
-        valsList = quat + avel + accl + [time1, time2]
-        vals = ','.join([str(x) for x in valsList])
-        self.dbc.insertIgnoreInto(f"ahrs_data_{self.db_name}", \
-                    "q, u, a, t, v_a, v_b, v_g, a_x, a_y, a_z, time1, time2", vals)
+        self.dbc.insertIgnoreInto(f"ins_data_{self.db_name}", \
+            "x, y, z, q, u, a, t, insStatus, hdwStatus, time1, time2", vals)
 
 
 def main(args=None):
