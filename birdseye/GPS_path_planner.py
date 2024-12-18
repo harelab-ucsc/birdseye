@@ -18,23 +18,26 @@ import numpy as np
 import matplotlib.pyplot as plt
 
 import argparse
+import copy as cp
 import csv
 import os
 import sys
 import utm
-import simplekml
+#import simplekml
 
 # from TSP import tsp
 import fast_tsp
 
+from kml import plan_2_kml
 
 EPS = 2
 MIN_SAMPLES = 3
 
 DJI_MAX_POINTS = 95
 DJI_MIN_DISTANCE = 3500  # millimeters -> 3.5m...
-# there is a more formal post (from DroneDeploy) which claims that the min is 5.0m, but
-# we have done flights which contradict that figure (4pts @ 1m whifferdill )
+# there is a more formal post (from DroneDeploy) which claims that the min is 
+# 5.0m, but we have done flights which contradict that figure (4pts @ 1m 
+# whifferdill ).
 
 SAVE = True
 
@@ -45,6 +48,12 @@ def _write_csv_file(path: str, rows: list[str]):
     with open(path, "w+") as csvp:
         writer = csv.writer(csvp, delimiter=",")
         writer.writerows(rows)
+
+def _write_file(path: str, data: str):
+    """Write a string to a file.
+    """
+    with open(path, "w+") as fp:
+        writer = fp.write(data)
 
 def generate_csv_from_plan(plan, d_hover, fpath):
     """Write the details of a flight plan to a CSV file.
@@ -59,6 +68,32 @@ def generate_csv_from_plan(plan, d_hover, fpath):
     ]) for index, pos in enumerate(plan)]
     _write_csv_file(fpath, lines)
 
+def _format_plan(
+    plan: list[list], 
+    d_hover: int = 0.0
+) -> list[dict]:
+    """_format_plan(plan, d_hover) -> plan_out
+    
+    Reformat the plan as a list of waypoints with path parameter customization.
+
+    @param  plan (list[list])   Plan as a list of lat/lon.
+    @param  d_hover (int)       Hover duration (seconds).
+    """
+    plan_out = []
+    template = {
+        "lat": "",
+        "lon": "",
+        "label": "",
+        "actions_sequence": ""
+    }
+    for index, pos in enumerate(plan):
+        row = cp.deepcopy(template)
+        row["lat"] = str(pos[0])
+        row["lon"] = str(pos[1])
+        row["label"] = str(index)
+        row["actions_sequence"] = f"H{d_hover}"
+        plan_out.append(row)
+    return plan_out
 
 def build_polygon(
         pt: tuple[float],
@@ -245,7 +280,10 @@ def build_dji_plan(
 
     dists, waypoints = preprocessWaypoints(waypoints)
 
-    out = fast_tsp.find_tour(dists)
+    if do_tsp:
+        out = fast_tsp.find_tour(dists)
+    else:
+        out = range(len(waypoints))
     spt = out[0]
     for pt in out[1:]:
         plt.plot([waypoints[spt,0], waypoints[pt,0]], [waypoints[spt,1], waypoints[pt,1]], 'k')
@@ -259,12 +297,19 @@ def build_dji_plan(
     # plan = np.array(plan)
     print(len(plan)//DJI_MAX_POINTS, len(plan)%DJI_MAX_POINTS)
 
+    print(f"Formatting flight plan...")
+    plan_formatted = _format_plan(plan, int(d_hover * 1000))
+    plan_kml = plan_2_kml(plan_formatted)
+    print("DONE.")
     print(f"Generating flight plan at {fp_out}...")
+    _write_file(fp_out, plan_kml)
+    """
     generate_csv_from_plan(
         plan,
         int(d_hover * 1000),
         fp_out
     )
+    """
     print("DONE.")
 
     plt.tick_params(axis='x', which='both', bottom=False,
@@ -313,8 +358,8 @@ if __name__ == "__main__":
     parser.add_argument(
         "-o",
         "--output",
-        default="flights/plan.csv",
-        help="Specify path to output [KML] file; defaults to STDOUT.",
+        default="flights/plan.kml",
+        help="Specify path to output [KML] file; defaults to 'plan.kml'.",
         type=str
     )
     parser.add_argument(
@@ -355,4 +400,4 @@ if __name__ == "__main__":
         fp_out=args.output,
         w_rad=args.radius,
         w_sides=args.sides
-    #)
+    )
