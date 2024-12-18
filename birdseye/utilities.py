@@ -4,7 +4,7 @@ from scipy.spatial.transform import Rotation as R
 import numpy as np
 import sys
 import cv2
-import apriltag
+# import apriltag
 
 
 # sine helper function
