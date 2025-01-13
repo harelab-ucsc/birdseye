@@ -5,7 +5,7 @@ import yaml
 import utm
 import rclpy
 import os
-# import shutil
+import time
 import pdb
 import cv2
 import glob2
@@ -58,6 +58,7 @@ class subscriberNode(rclpy.node.Node):
         self.dbc = dbConnector.dbConnector(os.path.join(self.dir_name, self.db_name))
         self.dbc.boot(self.db_name, self.sensor)
         os.chmod(os.path.join(self.dir_name, self.db_name+'.db'), stat.S_IRWXU | stat.S_IRWXG | stat.S_IRWXO)
+        self.db_bool = True
         time.sleep(1)
 
         # sensor calibration parameters
@@ -84,23 +85,28 @@ class subscriberNode(rclpy.node.Node):
         self.ins_sub = self.create_subscription(
             DIDINS2, '/ins', self.ins_cb, 100)
         self.HDW_STATUS_STROBE_IN_EVENT = 0x00000020
+        self.INS_STATUS_SOLUTION_MASK = 0x000F0000
+        self.INS_STATUS_SOLUTION_OFFSET = 16
         self.INS_STATUS_GPS_NAV_FIX_MASK = 0x03000000
-        self.INS_STATUS_GPS_NAV_FIX_OFFSET = 24,
+        self.INS_STATUS_GPS_NAV_FIX_OFFSET = 24
         self.pos = None
         self.quat = None
         self.ins_times = None
         self.RTK_STATUS = None
-        self.STROBE_STATUS = None
+        self.INS_STATUS = None
+        self.STROBE = None
 
         # radalt subscriber
         self.rad_sub = self.create_subscription(
             AltSNR, '/rad_altitude', self.radalt_cb, 100)
-        self.radalt = 1
+        self.radalt = None
 
         self.check_list = [self.image, \
                            self.pos, \
                            self.quat, \
                            self.RTK_STATUS, \
+                           self.INS_STATUS, \
+                           self.STROBE, \
                            self.data_loc, \
                            self.ins_times, \
                            self.cam_times]
@@ -126,11 +132,11 @@ class subscriberNode(rclpy.node.Node):
                 for file in files:
                     if os.path.isfile(file):
                         os.remove(file)
-                self.get_logger().info(f"All files in {self.dir_name} deleted successfully.")
+                self.get_logger().info(f"All files in {self.dir_name} deleted successfully.\n")
             else:
-                self.get_logger().info(f"No files in {self.dir_name}.")
+                self.get_logger().info(f"No files in {self.dir_name}.\n")
         except Exception as e:
-            self.get_logger().info(f"Error occurred while clearing {self.dir_name} files: {e}.")
+            self.get_logger().info(f"Error occurred while clearing {self.dir_name} files: {e}.\n")
 
 
     def csv_read(self):
@@ -145,7 +151,7 @@ class subscriberNode(rclpy.node.Node):
                 tag = int(line[-1][-1])
                 data.append([u[0], u[1], float(line[2]), float(line[3]), tag])
         self.dbc.insertClicks(f"clicks_{self.db_name}", data)
-        self.get_logger().info('...Done reading clicks CSV file.')
+        self.get_logger().info('...Done reading clicks CSV file.\n')
 
 
     def calibUptake(self):
@@ -169,8 +175,6 @@ class subscriberNode(rclpy.node.Node):
                     intr1 = self.K
                     intr2 = self.dist
                     extr = self.extr
-                    # print(extr)
-                    # print(type(data["T_cam_imu"]))
                     self.putParameters(device, res, intr1, intr2, extr)
                 elif device == 'ins':
                     intr1 = [data["accelerometer_noise_density"], data["accelerometer_random_walk"]]
@@ -183,7 +187,7 @@ class subscriberNode(rclpy.node.Node):
                 intr1 = None
                 intr2 = None
                 extr = None
-        self.get_logger().info('...Done reading sensor parameters YAML file.')
+        self.get_logger().info('...Done reading sensor parameters YAML file.\n')
 
 
     def putParameters(self, device_key, resolution, intrinsics1, intrinsics2, extrinsics):
@@ -200,19 +204,14 @@ class subscriberNode(rclpy.node.Node):
         cols = "sensorID, resolution, intrinsics1, intrinsics2, extrinsics"
         table = f"parameters_{self.db_name}"
         ret = self.dbc.getFrom(cols, table, cond=f'WHERE sensorID = "{device_key}"')
-        # print(ret)
         for elem in ret:
-            # print(len(elem))
             for i, item in enumerate(elem):
-                # print(i, item)
                 if item == device_key:
                     params.append(item)
                 elif item != 'None':
                     tmp = utilities.string_list_converter(item)
-                    # print('tmp: ', tmp)
                     if item == elem[-1]:
                         tmp = utilities.matrix_list_converter(tmp, (4,4))
-                    # print(tmp)
                     params.append(tmp)
         return params
 
@@ -223,11 +222,15 @@ class subscriberNode(rclpy.node.Node):
     #         if param.name == 'my_str' and param.type_ == Parameter.Type.STRING:
     #             self.sensor = param.value
     #     return SetParametersResult(successful=True)
+
+
     def update_check_list(self):
         self.check_list = [self.image, \
                            self.pos, \
                            self.quat, \
                            self.RTK_STATUS, \
+                           self.INS_STATUS, \
+                           self.STROBE, \
                            self.data_loc, \
                            self.ins_times, \
                            self.cam_times]
@@ -235,7 +238,7 @@ class subscriberNode(rclpy.node.Node):
 
     def status_check(self):
         tst = [0 if i is None else 1 for i in self.check_list]
-        self.get_logger().info(f'      status_check: {tst}, {sum(tst)}')
+#        self.get_logger().info(f'      status_check: {tst}, {sum(tst)}')
         if sum(tst) == len(self.check_list):
             return True
         else:
@@ -243,24 +246,28 @@ class subscriberNode(rclpy.node.Node):
 
 
     def save_image_pose(self):
-        self.get_logger().info(f'    Recording image and pose... RTK_STATUS: {self.RTK_STATUS}')
+        self.get_logger().info(f'  Recording image and pose... (RTK_STATUS, INS_STATUS): ({self.RTK_STATUS}, {self.INS_STATUS})')
+        self.get_logger().info(f'                              (cam_time1, cam_time2): ({self.cam_times[0]}, {self.cam_times[1]})')
+        self.get_logger().info(f'                              (ins_time1, ins_time2): ({self.ins_times[0]}, {self.ins_times[1]})')
 
-        try:
-            # cv2.resize(image, (0, 0), fx = 0.25, fy = 0.25)
-            cv2.imwrite(self.data_loc, self.image)
-            valsList = self.pos + self.quat + [self.RTK_STATUS, self.radalt, '\"'+self.data_loc+'\"', self.cam_times[0], self.cam_times[1], self.ins_times[0], self.ins_times[1]]
-            vals = ','.join([str(x) for x in valsList])
-            self.dbc.insertIgnoreInto(f"{self.sensor}_images_{self.db_name}", \
-                                        "x, y, z, q, u, a, t, rtk_fix, radalt, save_loc, cam_time1, cam_time2, ins_time1, ins_time2", vals)
+#        try:
+#            # cv2.resize(image, (0, 0), fx = 0.25, fy = 0.25)
+#            cv2.imwrite(self.data_loc, self.image)
+#            valsList = self.pos + self.quat + [self.RTK_STATUS, self.INS_STATUS, self.radalt, '\"'+self.data_loc+'\"', self.cam_times[0], self.cam_times[1], self.ins_times[0], self.ins_times[1]]
+#            vals = ','.join([str(x) for x in valsList])
+#            self.dbc.insertIgnoreInto(f"{self.sensor}_images_{self.db_name}", \
+#                                        "x, y, z, q, u, a, t, rtk_status, ins_status, radalt, save_loc, cam_time1, cam_time2, ins_time1, ins_time2", vals)
 
-        except sqlite3.OperationalError as ex:
-            self.get_logger().info(f'    Attempted to insert bad pose: {ex}')
-            pass
+#        except sqlite3.OperationalError as ex:
+#            self.get_logger().info(f'    Attempted to insert bad pose: {ex}')
+#            pass
 
         self.image = None
         self.pos = None
         self.quat = None
         self.RTK_STATUS = None
+        self.INS_STATUS = None
+        self.STROBE = None
         self.data_loc = None
         self.ins_times = None
         self.cam_times = None
@@ -269,29 +276,37 @@ class subscriberNode(rclpy.node.Node):
 
 
     def cam_cb(self, msg: Image):
-        # put data into db
-        self.get_logger().info('  Image received.')
-        tmp = self.get_clock().now().to_msg()
-        sec1 = str(tmp.sec)
-        nsec1 = str(tmp.nanosec).rjust(9,str(0))
-        time1 = f'{sec1}.{nsec1}'
+ #       self.get_logger().info('  Image received.')
+ #       start = time.time()
 
-        sec2 = str(msg.header.stamp.sec)
-        nsec2 = str(msg.header.stamp.nanosec).rjust(9,str(0))
-        time2 = f'{sec2}.{nsec2}'
+        if not self.STROBE:
+            self.get_logger().info(f'    skipping image; self.STROBE is still unset')
+            pass
+        else:
+            tmp = self.get_clock().now().to_msg()
+            sec1 = str(tmp.sec)
+            nsec1 = str(tmp.nanosec).rjust(9,str(0))
+            time1 = f'{sec1}.{nsec1}'
 
-        self.cam_times = [time1, time2]
+            sec2 = str(msg.header.stamp.sec)
+            nsec2 = str(msg.header.stamp.nanosec).rjust(9,str(0))
+            time2 = f'{sec2}.{nsec2}'
 
-        self.data_loc = self.dir_name + "/" + self.sensor + '_' + time2 + ".png"
-        self.image = self.br.imgmsg_to_cv2(msg, desired_encoding='passthrough')
-        self.image = cv2.cvtColor(self.image, cv2.COLOR_BGR2RGB)
+            self.cam_times = [time1, time2]
 
-        self.update_check_list()
+            self.data_loc = self.dir_name + "/" + self.sensor + '_' + time2 + ".png"
+            self.image = self.br.imgmsg_to_cv2(msg, desired_encoding='passthrough')
+            self.image = cv2.cvtColor(self.image, cv2.COLOR_BGR2RGB)
 
-        if self.status_check() and self.radalt is not None:
-            self.save_image_pose()
-        elif self.radalt is None:
-            self.get_logger().info(f'    skipping image and pose; radalt is still unset')
+            self.update_check_list()
+
+            if self.status_check() and self.radalt is not None:
+                self.save_image_pose()
+            elif self.radalt is None:
+                self.get_logger().info(f'    skipping image and pose; self.radalt is still unset')
+            else:
+                self.get_logger().info(f'    *** BONK ***')
+#        self.get_logger().info(f'      cam_cb runtime: {time.time()-start}')
 
 
     def radalt_cb(self, msg: AltSNR):
@@ -302,6 +317,9 @@ class subscriberNode(rclpy.node.Node):
 
 
     def ins_cb(self, msg: DIDINS2):
+#        self.get_logger().info('  Pose received.') 
+#        start = time.time()
+
         tmp = self.get_clock().now().to_msg()
         sec1 = str(tmp.sec)
         nsec1 = str(tmp.nanosec).rjust(9,str(0))
@@ -311,29 +329,30 @@ class subscriberNode(rclpy.node.Node):
         nsec2 = str(msg.header.stamp.nanosec).rjust(9,str(0))
         time2 = f'{sec2}.{nsec2}'
 
-        quat = [msg.qn2b[-1], msg.qn2b[0], msg.qn2b[1], msg.qn2b[2]]
         u = utm.from_latlon(msg.lla[0], msg.lla[1])
-        pos = [u[0], u[1], msg.lla[2]]
-        self.update_check_list()
+        self.pos = [u[0], u[1], msg.lla[2]]
+        self.quat = [msg.qn2b[-1], msg.qn2b[0], msg.qn2b[1], msg.qn2b[2]]
+
+        self.ins_times = [time1, time2]
+        self.RTK_STATUS = ((msg.ins_status)&self.INS_STATUS_GPS_NAV_FIX_MASK)>>self.INS_STATUS_GPS_NAV_FIX_OFFSET
+        self.INS_STATUS = ((msg.ins_status)&self.INS_STATUS_SOLUTION_MASK)>>self.INS_STATUS_SOLUTION_OFFSET
 
         if msg.hdw_status & self.HDW_STATUS_STROBE_IN_EVENT == self.HDW_STATUS_STROBE_IN_EVENT:
-            self.quat = quat
-            self.pos = pos
-            self.ins_times = [time1, time2]
-            self.RTK_STATUS = msg.ins_status & self.INS_STATUS_GPS_NAV_FIX_MASK >> self.INS_STATUS_GPS_NAV_FIX_MASK
-            self.update_check_list()
+            self.STROBE = True
+        self.update_check_list()
 
-            self.get_logger().info(f'  Pose received... RTK_STATUS: {self.RTK_STATUS}')
+        if self.status_check() and self.radalt is not None:
+            self.save_image_pose()
+        elif self.radalt is None:
+            self.get_logger().info(f'    Skipping image and pose; radalt is still unset')
+#        else:
+#            self.get_logger().info(f'    *** PING ***')
 
-            if self.status_check() and self.radalt is not None:
-                self.save_image_pose()
-            elif self.radalt is None:
-                self.get_logger().info(f'    Skipping image and pose; radalt is still unset')
-
-        valsList = pos + quat + [msg.ins_status, msg.hdw_status, time1, time2]
-        vals = ','.join([str(x) for x in valsList])
-        self.dbc.insertIgnoreInto(f"ins_data_{self.db_name}", \
-            "x, y, z, q, u, a, t, insStatus, hdwStatus, time1, time2", vals)
+#        valsList = pos + quat + [msg.ins_status, msg.hdw_status, time1, time2]
+#        vals = ','.join([str(x) for x in valsList])
+#        self.dbc.insertIgnoreInto(f"ins_data_{self.db_name}", \
+#            "x, y, z, q, u, a, t, insStatus, hdwStatus, time1, time2", vals)
+#        self.get_logger().info(f'      ins_cb runtime: {time.time()-start}')
 
 
 def main(args=None):
