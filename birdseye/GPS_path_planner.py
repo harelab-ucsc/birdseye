@@ -34,7 +34,8 @@ EPS = 2
 MIN_SAMPLES = 3
 
 DJI_MAX_POINTS = 95
-DJI_MIN_DISTANCE = 3500  # millimeters -> 3.5m...
+DJI_MIN_DISTANCE = 350      # 3.5m...
+#DJI_MIN_DISTANCE = 3500    # millimeters -> 3.5m...
 # there is a more formal post (from DroneDeploy) which claims that the min is 
 # 5.0m, but we have done flights which contradict that figure (4pts @ 1m 
 # whifferdill ).
@@ -125,7 +126,8 @@ def build_polygon(
 def preprocessWaypoints(waypoints, min_gap=DJI_MIN_DISTANCE):
     wpts = np.array(waypoints)
     dists = metrics.pairwise_distances(wpts)
-    dists *= 1000  # convert to mm from m
+    #dists *= 1000  # convert to mm from m
+    dists *= 100    # convert to cm from m
     dists = dists.astype(np.int32)
     # plt.imshow(dists)
     # plt.show()
@@ -144,10 +146,11 @@ def preprocessWaypoints(waypoints, min_gap=DJI_MIN_DISTANCE):
         waypoints.append(new)
         wpts = np.array(waypoints)
         dists = metrics.pairwise_distances(wpts)
-        dists *= 1000  # convert to mm from m
+        #dists *= 1000  # convert to mm from m
+        dists *= 100    # convert to cm from m
         dists = dists.astype(np.int32)
-    # plt.imshow(dists)
-    # plt.show()
+    #plt.imshow(dists)
+    #plt.show()
     print(dists[np.nonzero(dists)].min())
     # print(np.where(dists == 0))
     return dists, wpts
@@ -280,6 +283,8 @@ def build_dji_plan(
 
     dists, waypoints = preprocessWaypoints(waypoints)
 
+    # NOTE: fast_tsp can only ingest distances that are a max of 96000 units
+    #       apart; thus, we are using cm rather than mm.
     if do_tsp:
         out = fast_tsp.find_tour(dists)
     else:
