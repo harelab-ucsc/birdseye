@@ -14,8 +14,6 @@ import time
 import sqlite3
 import numpy as np
 
-# from . import simRotTools
-# from . import fieldAI
 from . import dbConnector
 from . import utilities
 
@@ -26,17 +24,19 @@ from std_msgs.msg import String
 from inertial_sense_ros2.msg import DIDINS2
 from custom_msgs.msg import AltSNR
 
-# from tf2_ros import TransformException
-# from tf2_ros.buffer import Buffer
-# from tf2_ros.transform_listener import TransformListener
-
 import rclpy.node
 from rclpy.exceptions import ParameterNotDeclaredException
 from rcl_interfaces.msg import ParameterDescriptor, SetParametersResult
+from rclpy.qos import QoSProfile, ReliabilityPolicy, HistoryPolicy
 
-#TODO: Get the subscriber working with correct time stamps for flight table
-# db_name = 'flight_data'
+
 clicks_csv = None
+
+# Create a custom QoSProfile to prevent message drops
+qos_profile = QoSProfile(
+    reliability=ReliabilityPolicy.RELIABLE,  # Reliable delivery
+    history=HistoryPolicy.KEEP_ALL           # Keep all messages
+)
 
 
 class subscriberNode(rclpy.node.Node):
@@ -66,7 +66,8 @@ class subscriberNode(rclpy.node.Node):
         self.sensors_yaml = os.path.join(os.path.expanduser('~'), self.sensors_yaml)
         self.calibUptake()
 
-        self.declare_parameter("clicks_csv", "catch/data.csv")
+        self.declare_parameter("clicks_csv", "catch/data__2025_01_09.csv")
+        # self.declare_parameter("clicks_csv", "catch/data__2025_01_10.csv")
         self.clicks_csv = self.get_parameter("clicks_csv").value
         self.clicks_csv = os.path.join(os.path.expanduser('~'), self.clicks_csv)
         self.csv_read()
@@ -75,7 +76,7 @@ class subscriberNode(rclpy.node.Node):
 
         # camera subscriber
         self.cam_sub = self.create_subscription(
-            Image, '/image', self.cam_cb, 100)
+            Image, '/image', self.cam_cb, qos_profile=qos_profile)
         self.data_loc = None
         self.image = None
         self.cam_times = None
@@ -85,7 +86,7 @@ class subscriberNode(rclpy.node.Node):
             DIDINS2, '/ins', self.ins_cb, 100)
         self.HDW_STATUS_STROBE_IN_EVENT = 0x00000020
         self.INS_STATUS_GPS_NAV_FIX_MASK = 0x03000000
-        self.INS_STATUS_GPS_NAV_FIX_OFFSET = 24,
+        self.INS_STATUS_GPS_NAV_FIX_OFFSET = 24
         self.pos = None
         self.quat = None
         self.ins_times = None
@@ -95,7 +96,7 @@ class subscriberNode(rclpy.node.Node):
         # radalt subscriber
         self.rad_sub = self.create_subscription(
             AltSNR, '/rad_altitude', self.radalt_cb, 100)
-        self.radalt = 1
+        self.radalt = None
 
         self.check_list = [self.image, \
                            self.pos, \
@@ -223,6 +224,8 @@ class subscriberNode(rclpy.node.Node):
     #         if param.name == 'my_str' and param.type_ == Parameter.Type.STRING:
     #             self.sensor = param.value
     #     return SetParametersResult(successful=True)
+
+
     def update_check_list(self):
         self.check_list = [self.image, \
                            self.pos, \
@@ -320,7 +323,7 @@ class subscriberNode(rclpy.node.Node):
             self.quat = quat
             self.pos = pos
             self.ins_times = [time1, time2]
-            self.RTK_STATUS = msg.ins_status & self.INS_STATUS_GPS_NAV_FIX_MASK >> self.INS_STATUS_GPS_NAV_FIX_MASK
+            self.RTK_STATUS = ((msg.ins_status)&self.INS_STATUS_GPS_NAV_FIX_MASK)>>self.INS_STATUS_GPS_NAV_FIX_OFFSET
             self.update_check_list()
 
             self.get_logger().info(f'  Pose received... RTK_STATUS: {self.RTK_STATUS}')
