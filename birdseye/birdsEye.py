@@ -322,9 +322,6 @@ class birdsEye():
         print(f'        Detection complete: took {time.time()-start}s.')
 
 
-
-
-
     def frameProcessSetup(self, frame, clks):
         # make homogeneous coordinates for clicks wrt drone pose and radalt
         #    plot in 3D UTM coords
