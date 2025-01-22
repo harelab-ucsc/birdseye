@@ -150,7 +150,7 @@ class BagProcessor:
         """
         # Define 180-degree rotation around the Y-axis
         rot_180_y = R.from_euler('y', 180, degrees=True).as_matrix()
-    
+
         # Extract the original rotation and translation
         original_rotation = pose[:3, :3]
         original_translation = pose[:3, 3]
@@ -173,7 +173,7 @@ class BagProcessor:
         """
         # Define 90-degree rotation around the Z-axis
         rot_90_z = R.from_euler('z', -90, degrees=True).as_matrix()
-    
+
         # Extract the original rotation and translation
         original_rotation = pose[:3, :3]
         original_translation = pose[:3, 3]
@@ -256,7 +256,9 @@ class BagProcessor:
         transform_matrix = transform_matrix@tf
         #transform_matrix = self.rotate_pose_180_y(transform_matrix)
         #transform_matrix = self.rotate_pose_90_z(transform_matrix)
+        transform_matrix = np.array([[1,0,0,0],[0,-1,0,0],[0,0,-1,0],[0,0,0,1]])@transform_matrix  # imu is in ENU, ins is in NED -> tf transforms between these frames
         transform_matrix = transform_matrix.tolist()
+
 
         pose = {
             "w": image_msg.width,
