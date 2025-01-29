@@ -130,7 +130,6 @@ def preprocessWaypoints(waypoints, min_gap=DJI_MIN_DISTANCE):
     dists *= 100    # convert to cm from m
     dists = dists.astype(np.int32)
 
-<<<<<<< Updated upstream
     while dists[np.nonzero(dists)].min() < min_gap:
         d_tmp = np.nonzero(dists)
         indx = np.where(dists == dists[d_tmp].min())
