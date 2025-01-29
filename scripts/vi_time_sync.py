@@ -50,6 +50,9 @@ class BagProcessor:
         # Initialize UTM transformer
         self.transformer = Transformer.from_crs("EPSG:4326", "EPSG:32610", always_xy=True)  # Replace EPSG:32633 with appropriate UTM zone
 
+        self.image_msgs = []
+        self.ins_msgs = []
+
 
     def load_intrinsics(self, intrinsics_path):
         """Load camera intrinsics from a YAML file."""
@@ -88,9 +91,6 @@ class BagProcessor:
         for topic in topics_and_types:
             writer.create_topic(topic)
 
-        image_msgs = []
-        ins_msgs = []
-
         # Ensure output directories exist
         os.makedirs("images", exist_ok=True)
 
@@ -102,27 +102,27 @@ class BagProcessor:
             msg = deserialize_message(data, message_type)
 
             if topic == self.image_topic:
-                image_msgs.append(msg)
+                self.image_msgs.append(msg)
             elif topic == self.ins_topic:
-                ins_msgs.append(msg)
+                self.ins_msgs.append(msg)
                 writer.write(topic, data, timestamp)
             else:
                 # Copy all other topics as-is
                 writer.write(topic, data, timestamp)
-        print(f'image_msgs length: {len(image_msgs)}')
-        print(f'ins_msgs length: {len(ins_msgs)} \n')
+        print(f'image_msgs length: {len(self.image_msgs)}')
+        print(f'ins_msgs length: {len(self.ins_msgs)} \n')
         print('bag read done \n')
 
         HDW_STATUS_STROBE_IN_EVENT = 0x00000020
 
         # Process INS messages and adjust image timestamps
-        for ins_msg in ins_msgs:
+        for ins_msg in self.ins_msgs:
             if ins_msg.hdw_status & HDW_STATUS_STROBE_IN_EVENT == HDW_STATUS_STROBE_IN_EVENT:
                 self.count += 1
-                print(f'    found strobe-triggered INS2 {self.count}/{len(image_msgs)}', end='\r')
+                print(f'    found strobe-triggered INS2 {self.count}/{len(self.image_msgs)}', end='\r')
                 ins_timestamp = ins_msg.header.stamp
                 ins_timestamp_int = int(ins_timestamp.sec * 1e9 + ins_timestamp.nanosec)
-                closest_image = self.find_closest_image(ins_timestamp, image_msgs)
+                closest_image = self.find_closest_image(ins_timestamp)
 
                 if closest_image:
                     # Compute the time difference
@@ -208,11 +208,12 @@ class BagProcessor:
         return new_pose
 
 
-    def find_closest_image(self, target_timestamp, image_msgs):
+    def find_closest_image(self, target_timestamp):
         """Find the closest image message to the given timestamp."""
         closest_image = None
         min_diff = float("inf")
-        for image in image_msgs:
+        i = 0
+        for image in self.image_msgs:
             old_time = image.header.stamp.sec + image.header.stamp.nanosec * 1e-9
             new_time = target_timestamp.sec + target_timestamp.nanosec * 1e-9
             diff = abs(old_time - new_time)
@@ -220,7 +221,9 @@ class BagProcessor:
                 # print('found closer image timestamp')
                 closest_image = image
                 min_diff = diff
+                i = i + 1
 #        print(f'    found image matching timestamp: {target_timestamp}')
+        self.image_msgs.pop(i) # remove image from list (only one pose for every image)
         return closest_image
 
 
