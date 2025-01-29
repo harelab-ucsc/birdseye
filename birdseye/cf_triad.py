@@ -38,14 +38,14 @@ def arrow3d(ax, length=1, width=0.05, head=0.2, headwidth=1,
     ax.plot_surface(x,y,z, **kw)
 
 
-def plotTransform(ax, T):
+def plotTransform(ax, T, labels=['Camera x-axis','Camera y-axis','Camera z-axis'], colors=['r', 'g', 'b']):
     #Given a homogeneous transform, plot the triad:
     roll, pitch, yaw = dcm2euler(T[0:3,0:3])
     x, y, z = T[0:3,3]
-    plotTriad(ax, x, y, z, roll, pitch, yaw)
+    plotTriad(ax, x, y, z, roll, pitch, yaw, colors=colors, labels=labels)
 
 
-def plotTriad(ax, x, y, z, roll, pitch, yaw):
+def plotTriad(ax, x, y, z, roll, pitch, yaw, colors, labels):
     # default: length along z axis
     # Handle rotate about x, call that roll:
 
@@ -77,9 +77,9 @@ def plotTriad(ax, x, y, z, roll, pitch, yaw):
 		z_axis = np.dot(R_yaw, np.dot(R_pitch, np.dot(R_roll, z_axis)))
 
 		# Draw triad
-		ax.quiver(x, y, z, x_axis[0], x_axis[1], x_axis[2], color='r', label='Camera x-axis')
-		ax.quiver(x, y, z, y_axis[0], y_axis[1], y_axis[2], color='g', label='Camera y-axis')
-		ax.quiver(x, y, z, z_axis[0], z_axis[1], z_axis[2], color='b', label='Camera z-axis')
+		ax.quiver(x, y, z, x_axis[0], x_axis[1], x_axis[2], color=colors[0], label=labels[0])
+		ax.quiver(x, y, z, y_axis[0], y_axis[1], y_axis[2], color=colors[1], label=labels[1])
+		ax.quiver(x, y, z, z_axis[0], z_axis[1], z_axis[2], color=colors[2], label=labels[2])
 		# ax.legend()
 
 

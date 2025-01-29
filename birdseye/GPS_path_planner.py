@@ -35,8 +35,8 @@ MIN_SAMPLES = 3
 
 DJI_MAX_POINTS = 95
 DJI_MIN_DISTANCE = 3500  # millimeters -> 3.5m...
-# there is a more formal post (from DroneDeploy) which claims that the min is 
-# 5.0m, but we have done flights which contradict that figure (4pts @ 1m 
+# there is a more formal post (from DroneDeploy) which claims that the min is
+# 5.0m, but we have done flights which contradict that figure (4pts @ 1m
 # whifferdill ).
 
 SAVE = True
@@ -52,7 +52,7 @@ def _write_csv_file(path: str, rows: list[str]):
 def _write_file(path: str, data: str):
     """Write a string to a file.
     """
-    with open(path, "w+") as fp:
+    with open(path, "w") as fp:
         writer = fp.write(data)
 
 def generate_csv_from_plan(plan, d_hover, fpath):
@@ -69,11 +69,11 @@ def generate_csv_from_plan(plan, d_hover, fpath):
     _write_csv_file(fpath, lines)
 
 def _format_plan(
-    plan: list[list], 
+    plan: list[list],
     d_hover: int = 0.0
 ) -> list[dict]:
     """_format_plan(plan, d_hover) -> plan_out
-    
+
     Reformat the plan as a list of waypoints with path parameter customization.
 
     @param  plan (list[list])   Plan as a list of lat/lon.
@@ -196,8 +196,8 @@ def build_dji_plan(
             try:
                 u = utm.from_latlon(float(line[0]), float(line[1]))
                 ll = '(' + ','.join(line[:2]) + ')'
-                print('lat/lon click location: ', ll)
-                print('    utm conversion: ', u)
+                # print('lat/lon click location: ', ll)
+                # print('    utm conversion: ', u)
                 tag = int(line[-1][-1])
                 UTMrep.append([u[0], u[1]])
                 # for _ in range(5):

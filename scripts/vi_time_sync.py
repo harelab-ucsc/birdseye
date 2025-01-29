@@ -20,6 +20,7 @@ from pyproj import Proj, Transformer
 
 #from rectify import rectify_image
 
+
 class BagProcessor:
     def __init__(self, input_bag_path, output_bag_path, ds_dir, image_topic, ins_topic, intrinsics_path, rectify, sync):
         self.input_bag_path = input_bag_path
@@ -49,11 +50,27 @@ class BagProcessor:
         # Initialize UTM transformer
         self.transformer = Transformer.from_crs("EPSG:4326", "EPSG:32610", always_xy=True)  # Replace EPSG:32633 with appropriate UTM zone
 
+
     def load_intrinsics(self, intrinsics_path):
         """Load camera intrinsics from a YAML file."""
         with open(intrinsics_path, "r") as file:
             print('loading intrinsics')
             return yaml.safe_load(file)
+
+
+    def match_pairs(self, image_msgs, ins_msgs):
+        """Find the closest image message to the given timestamp."""
+        img = [self.get_timestamp(msg) for msg in image_msgs]
+        ins = [self.get_timestamp(msg) for msg in ins_msgs]
+
+        cost = [[abs(i-j) for i in img] for j in ins]
+        pairs = zip(*linear_sum_assignment(cost))
+        tmp = copy.deepcopy(pairs)
+        tmp = [[rad[i[1]], \
+                ins[i[0]]] for i in tmp]
+        print(f'  time mismatch across {len(rad)} radalt messages is {sum([i[0]-i[1] for i in tmp])/1e9}s')
+        return pairs
+
 
     def process_bag(self):
         # Initialize reader and writer
@@ -102,7 +119,7 @@ class BagProcessor:
         for ins_msg in ins_msgs:
             if ins_msg.hdw_status & HDW_STATUS_STROBE_IN_EVENT == HDW_STATUS_STROBE_IN_EVENT:
                 self.count += 1
-                print(f'    found strobe triggered INS2 {self.count}: {ins_msg.header.stamp}')
+                print(f'    found strobe-triggered INS2 {self.count}/{len(image_msgs)}', end='\r')
                 ins_timestamp = ins_msg.header.stamp
                 ins_timestamp_int = int(ins_timestamp.sec * 1e9 + ins_timestamp.nanosec)
                 closest_image = self.find_closest_image(ins_timestamp, image_msgs)
@@ -142,6 +159,7 @@ class BagProcessor:
         # Close the bag writer
         writer.close()
 
+
     def rotate_pose_180_y(self, pose):
         """
         Rotate a pose by 180 degrees around its Y-axis.
@@ -164,6 +182,7 @@ class BagProcessor:
         new_pose[:3, 3] = original_translation
 
         return new_pose
+
 
     def rotate_pose_90_z(self, pose):
         """
@@ -204,6 +223,7 @@ class BagProcessor:
 #        print(f'    found image matching timestamp: {target_timestamp}')
         return closest_image
 
+
     def update_image_timestamp(self, image_msg, new_timestamp):
         """Create a new Image message with an updated timestamp."""
         new_image = Image()
@@ -217,6 +237,7 @@ class BagProcessor:
         new_image.step = image_msg.step
         return new_image
 
+
     def save_image(self, image_msg, timestamp_str):
         """Save the image message as a PNG file."""
         img_data = np.frombuffer(image_msg.data, dtype=np.uint8).reshape(image_msg.height, image_msg.width, -1)
@@ -226,8 +247,9 @@ class BagProcessor:
             os.makedirs(savename, exist_ok=True)
 
         savename = os.path.join(savename, f"{timestamp_str}.png")
-        print(f"  Saving Image To: {savename}")
+#        print(f"  Saving Image To: {savename}")
         cv2.imwrite(savename, img_data)
+
 
     def append_pose_to_json(self, ins_msg, image_msg, timestamp_str):
         """Append the pose data from INS message to the JSON."""
@@ -273,12 +295,14 @@ class BagProcessor:
         }
         self.frames.append(pose)
 
+
     def save_json(self):
         """Save all frames to a JSON file."""
         savename = os.path.join(self.ds_dir, "poses.json")
         with open(savename, "w") as json_file:
             print(f'  Saving JSON To: {savename}')
             json.dump({"frames": self.frames}, json_file, indent=4)
+
 
     def rectify_image(self, raw_image):
         # Convert raw image message to OpenCV image using rgb8 encoding
@@ -292,6 +316,7 @@ class BagProcessor:
         rectified_img_msg.header = raw_image.header
 
         return rectified_img_msg
+
 
 def main():
     parser = argparse.ArgumentParser(description="Fix image timestamps in a ROS2 bag file using INS messages.")
