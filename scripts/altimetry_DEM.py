@@ -11,6 +11,7 @@ from rclpy.serialization import deserialize_message, serialize_message
 from scipy.spatial.transform import Rotation as R
 from scipy.optimize import linear_sum_assignment
 import matplotlib.pyplot as plt
+from mpl_toolkits.mplot3d import Axes3D
 from cv_bridge import CvBridge
 import cv2
 import os
@@ -34,6 +35,12 @@ class BagProcessor:
 
         self.radalt_msgs = []
         self.ins_msgs = []
+
+        self.east = 0.0
+        self.north = 0.0
+        self.ins_alt = 0.0
+
+        self.DEM = []
 
 
     def load_intrinsics(self, intrinsics_path):
@@ -75,14 +82,57 @@ class BagProcessor:
 
 
     def parse_INS(self, ins_msg):
-        east, north, _, _ = utm.from_latlon(ins_msg.lla[0], ins_msg.lla[1])
-        ins_alt = ins_msg.lla[2]
+        self.east, self.north, _, _ = utm.from_latlon(ins_msg.lla[0], ins_msg.lla[1])
+        self.ins_alt = ins_msg.lla[2]
 
 
 
-    def make_ground_point(self, ins_msg, rad_msg):
+    def add_ground_point(self, ins_msg, rad_msg):
         self.correct_altitude(ins_msg, rad_msg)
-        pass
+        self.parse_INS(ins_msg=ins_msg)
+        ground_point = [self.north, self.east, (self.ins_alt - rad_msg.altitude)]
+        self.DEM.append(ground_point)
+
+    def plot_dem_points(self, points, title='DEM', elev=30, azim=30):
+        """
+        Plots 3D DEM points provided as a list of [x, y, z] coordinates.
+        
+        Parameters:
+            points (list): A list where each element is a list or tuple of [x, y, z].
+            title (str): Title for the plot.
+            elev (float): Elevation angle (in degrees) for the 3D view.
+            azim (float): Azimuth angle (in degrees) for the 3D view.
+        """
+        # Convert the list of points to a NumPy array for easier slicing
+        points_np = np.array(points)
+        
+        # Validate that the input is of the expected shape (N x 3)
+        if points_np.ndim != 2 or points_np.shape[1] != 3:
+            raise ValueError("Input 'points' must be a list of [x, y, z] coordinates.")
+        
+        # Create a new figure and add a 3D subplot
+        fig = plt.figure(figsize=(10, 7))
+        ax = fig.add_subplot(111, projection='3d')
+        
+        # Scatter plot: color the points based on their z (elevation) value
+        scatter = ax.scatter(points_np[:, 0], points_np[:, 1], points_np[:, 2],
+                            c=points_np[:, 2], cmap='viridis', marker='o', s=20)
+        
+        # Add a colorbar to show elevation mapping
+        cbar = plt.colorbar(scatter, ax=ax, pad=0.1)
+        cbar.set_label('Elevation (Z)')
+        
+        # Set the axis labels and plot title
+        ax.set_xlabel('X')
+        ax.set_ylabel('Y')
+        ax.set_zlabel('Z')
+        ax.set_title(title)
+        
+        # Set the viewing angle
+        ax.view_init(elev=elev, azim=azim)
+        
+        # Display the plot
+        plt.show()
 
 
     def process_bag(self):
@@ -103,17 +153,24 @@ class BagProcessor:
             msg = deserialize_message(data, message_type)
 
             if topic == self.radalt_topic:
-                radalt_msgs.append(msg)
+                self.radalt_msgs.append(msg)
             elif topic == self.ins_topic:
-                ins_msgs.append(msg)
-        print(f'  radalt_msgs length: {len(radalt_msgs)}')
-        print(f'  ins_msgs length: {len(ins_msgs)}')
+                self.ins_msgs.append(msg)
+        print(f'  radalt_msgs length: {len(self.radalt_msgs)}')
+        print(f'  ins_msgs length: {len(self.ins_msgs)}')
         print('bag read done \n')
 
         print('starting timeseries alignment')
         start = time.time()
-        pairs = self.match_pairs(radalt_msgs, ins_msgs)
+        pairs = self.match_pairs(self.radalt_msgs, self.ins_msgs)
         print(f'  took {time.time() - start}s')
+
+        # Create DEM using altimeter-pose pairs
+        print("creating digital elevation model...")
+        for i in len(self.ins_msgs):
+            self.add_ground_point(self.ins_msgs[i], self.radalt_msgs[i])
+
+        self.plot_dem_points(self.DEM)
 
 
 def main():
