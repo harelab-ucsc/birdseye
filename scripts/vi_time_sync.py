@@ -16,7 +16,9 @@ import cv2
 import os
 import json
 import yaml
+import copy
 from pyproj import Proj, Transformer
+import matplotlib.pyplot as plt
 
 #from rectify import rectify_image
 
@@ -28,10 +30,16 @@ class BagProcessor:
         self.image_topic = image_topic
         self.ins_topic = ins_topic
         self.ds_dir = ds_dir
+        self.fps = 5
 
         self.deltas = []
         self.br = CvBridge()
         self.frames = []
+
+        fig, ax = plt.subplots()
+        self.fig = fig
+        self.ax = ax
+        self.ref = None
 
         self.intrinsics = self.load_intrinsics(intrinsics_path)
         self.K = np.array([[self.intrinsics["fx"], 0, self.intrinsics["cx"]],
@@ -46,12 +54,14 @@ class BagProcessor:
         self.sync = sync
 
         self.count = 0
+        self.strb = 0
 
         # Initialize UTM transformer
         self.transformer = Transformer.from_crs("EPSG:4326", "EPSG:32610", always_xy=True)  # Replace EPSG:32633 with appropriate UTM zone
 
         self.image_msgs = []
         self.ins_msgs = []
+        self.paired_flags = None
 
 
     def load_intrinsics(self, intrinsics_path):
@@ -61,30 +71,21 @@ class BagProcessor:
             return yaml.safe_load(file)
 
 
-    def match_pairs(self, image_msgs, ins_msgs):
-        """Find the closest image message to the given timestamp."""
-        img = [self.get_timestamp(msg) for msg in image_msgs]
-        ins = [self.get_timestamp(msg) for msg in ins_msgs]
-
-        cost = [[abs(i-j) for i in img] for j in ins]
-        pairs = zip(*linear_sum_assignment(cost))
-        tmp = copy.deepcopy(pairs)
-        tmp = [[rad[i[1]], \
-                ins[i[0]]] for i in tmp]
-        print(f'  time mismatch across {len(rad)} radalt messages is {sum([i[0]-i[1] for i in tmp])/1e9}s')
-        return pairs
-
-
     def process_bag(self):
         # Initialize reader and writer
         reader = SequentialReader()
-        storage_options = StorageOptions(uri=self.input_bag_path, storage_id="mcap")
-        converter_options = ConverterOptions(input_serialization_format="cdr", output_serialization_format="cdr")
-        reader.open(storage_options, converter_options)
-        topics_and_types = reader.get_all_topics_and_types()
-
         writer = SequentialWriter()
+        try:
+            storage_options = StorageOptions(uri=self.input_bag_path, storage_id="mcap")
+            converter_options = ConverterOptions(input_serialization_format="cdr", output_serialization_format="cdr")
+            reader.open(storage_options, converter_options)
+        except RuntimeError:
+            storage_options = StorageOptions(uri=self.input_bag_path, storage_id="sqlite3")
+            converter_options = ConverterOptions(input_serialization_format="cdr", output_serialization_format="cdr")
+            reader.open(storage_options, converter_options)
         writer.open(StorageOptions(uri=self.output_bag_path, storage_id="mcap"), converter_options)
+
+        topics_and_types = reader.get_all_topics_and_types()
 
         topic_type_map = {t.name:t.type for t in topics_and_types}
         # Register all topics with the writer
@@ -109,22 +110,26 @@ class BagProcessor:
             else:
                 # Copy all other topics as-is
                 writer.write(topic, data, timestamp)
+        self.paired_flags = [0]*len(self.image_msgs)
         print(f'image_msgs length: {len(self.image_msgs)}')
         print(f'ins_msgs length: {len(self.ins_msgs)} \n')
         print('bag read done \n')
 
-        HDW_STATUS_STROBE_IN_EVENT = 0x00000020
-
         # Process INS messages and adjust image timestamps
+        print('starting timeseries alignment')
+        HDW_STATUS_STROBE_IN_EVENT = 0x00000020
         for ins_msg in self.ins_msgs:
+            self.count += 1
             if ins_msg.hdw_status & HDW_STATUS_STROBE_IN_EVENT == HDW_STATUS_STROBE_IN_EVENT:
-                self.count += 1
-                print(f'    found strobe-triggered INS2 {self.count}/{len(self.image_msgs)}', end='\r')
+                self.strb += 1
+                print(f'  found strobe-triggered INS2 {self.strb} (INS msg {self.count})', end='\r')
                 ins_timestamp = ins_msg.header.stamp
                 ins_timestamp_int = int(ins_timestamp.sec * 1e9 + ins_timestamp.nanosec)
                 closest_image = self.find_closest_image(ins_timestamp)
 
                 if closest_image:
+                    if self.strb == 1:
+                        self.ref = ins_timestamp_int/1e9
                     # Compute the time difference
                     old_time = closest_image.header.stamp.sec + closest_image.header.stamp.nanosec * 1e-9
                     new_time = ins_timestamp.sec + ins_timestamp.nanosec * 1e-9
@@ -138,6 +143,9 @@ class BagProcessor:
                         updated_image = closest_image
                     if self.rectify:
                         updated_image = self.rectify_image(updated_image)
+
+                    # TODO: updated_image = self.blur_check(updated_image)
+
                     timestamp_str = f"{ins_timestamp.sec}.{ins_timestamp.nanosec:09d}"
                     self.save_image(updated_image, timestamp_str)
 
@@ -149,82 +157,107 @@ class BagProcessor:
         deltas = np.array(self.deltas)
         mean = deltas.mean()
         std = deltas.std()
-        plt.hist(deltas, bins=150)
+        fig, ax = plt.subplots()
+        ax.hist(deltas, bins=150)
+        min = plt.ylim()[0]
+        max = plt.ylim()[1]
+        ax.vlines(mean, ymin=min, ymax=max, colors='r')
+        ax.vlines(mean-std, ymin=min, ymax=max, colors='k')
+        ax.vlines(mean+std, ymin=min, ymax=max, colors='k')
         plt.savefig(os.path.join(self.ds_dir,'hist.png'))
-        print(f'time correction mean: {mean} sec, std: {std} sec')
+        plt.show()
 
-        # Save JSON file
         self.save_json()
-
-        # Close the bag writer
         writer.close()
-
-
-    def rotate_pose_180_y(self, pose):
-        """
-        Rotate a pose by 180 degrees around its Y-axis.
-        :param pose: A 4x4 transformation matrix (numpy array).
-        :return: Rotated pose (4x4 numpy array).
-        """
-        # Define 180-degree rotation around the Y-axis
-        rot_180_y = R.from_euler('y', 180, degrees=True).as_matrix()
-
-        # Extract the original rotation and translation
-        original_rotation = pose[:3, :3]
-        original_translation = pose[:3, 3]
-
-        # Apply the 180-degree rotation
-        new_rotation = rot_180_y @ original_rotation
-
-        # Construct the new pose
-        new_pose = np.eye(4)
-        new_pose[:3, :3] = new_rotation
-        new_pose[:3, 3] = original_translation
-
-        return new_pose
-
-
-    def rotate_pose_90_z(self, pose):
-        """
-        Rotate a pose by 90 degrees around its z-axis.
-        :param pose: A 4x4 transformation matrix (numpy array).
-        :return: Rotated pose (4x4 numpy array).
-        """
-        # Define 90-degree rotation around the Z-axis
-        rot_90_z = R.from_euler('z', -90, degrees=True).as_matrix()
-
-        # Extract the original rotation and translation
-        original_rotation = pose[:3, :3]
-        original_translation = pose[:3, 3]
-
-        # Apply the 180-degree rotation
-        new_rotation = rot_90_z @ original_rotation
-
-        # Construct the new pose
-        new_pose = np.eye(4)
-        new_pose[:3, :3] = new_rotation
-        new_pose[:3, 3] = original_translation
-
-        return new_pose
+        print(f'--> {sum(self.paired_flags)} images of {len(self.image_msgs)} matched')
+        print(f'--> time correction mean: {mean} sec, std: {std} sec')
 
 
     def find_closest_image(self, target_timestamp):
         """Find the closest image message to the given timestamp."""
         closest_image = None
         min_diff = float("inf")
-        i = 0
-        for image in self.image_msgs:
-            old_time = image.header.stamp.sec + image.header.stamp.nanosec * 1e-9
-            new_time = target_timestamp.sec + target_timestamp.nanosec * 1e-9
-            diff = abs(old_time - new_time)
-            if diff < min_diff:
-                # print('found closer image timestamp')
-                closest_image = image
-                min_diff = diff
-                i = i + 1
-#        print(f'    found image matching timestamp: {target_timestamp}')
-        self.image_msgs.pop(i) # remove image from list (only one pose for every image)
+        ind = None
+        tgt = target_timestamp.sec + target_timestamp.nanosec * 1e-9
+        for i, image in enumerate(self.image_msgs):
+            img = image.header.stamp.sec + image.header.stamp.nanosec * 1e-9
+            diff = abs(img - tgt)
+            if diff < 1/self.fps:
+                if diff < min_diff and self.paired_flags[i] == 0:
+                    closest_image = image
+                    min_diff = diff
+                    ind = i
+                    val = img
+        if ind is not None:
+            self.paired_flags[ind] = 1 # remove image from list (only one pose for every image)
+            if self.ref is not None:
+                # self.ax.hlines(val, xmin=self.ref, xmax=val, color='xkcd:kelly green', linestyle='dotted')
+                self.ax.scatter(tgt, val, s=2, c='xkcd:kelly green')
+        else:
+            if self.ref is not None:
+                self.ax.scatter(tgt, tgt, s=10, c='k', alpha=0.2)
         return closest_image
+
+
+    # def variance_of_laplacian(self, image):
+    # 	# compute the Laplacian of the image and then return the focus
+    # 	# measure, which is simply the variance of the Laplacian
+    # 	return cv2.Laplacian(image, cv2.CV_64F).var()
+    #
+
+    # def blur_check(self, image_msg, thresh=200):
+    #     print('    blur check')
+    #     header = image_msg.header
+    #     image = self.br.imgmsg_to_cv2(image_msg, desired_encoding='passthrough')
+    #     image = cv2.cvtColor(image, cv2.COLOR_BAYER_RG2RGB)
+    #     gray = cv2.cvtColor(image, cv2.COLOR_RGB2GRAY)
+    #     fm = self.variance_of_laplacian(gray)
+    #     if fm < thresh:
+    #         print(f'      variance of Laplacian is {fm}; deblurring')
+    #         image = self.deblur(image)
+    #     image = self.make_bayer(image)
+    #     image_msg = self.br.cv2_to_imgmsg(image, encoding='bayer_rg8')
+    #     image_msg.header = header
+    #     return image_msg
+    #
+    #
+    # def deblur(self, blurry_image):
+    #     # Define a kernel for motion blur
+    #     kernel_size = 15
+    #     kernel = np.zeros((kernel_size, kernel_size))
+    #     kernel[int((kernel_size - 1) / 2), :] = np.ones(kernel_size)
+    #     kernel /= kernel_size
+    #
+    #     # Apply the inverse filter
+    #     deblurred_image = cv2.filter2D(blurry_image, -1, kernel)
+    #
+    #     # kernel = kernel.T
+    #     # deblurred_image = cv2.filter2D(deblurred_image, -1, kernel)
+    #     return deblurred_image
+    #
+    #
+    # def make_bayer(self, rgb_image):
+    #     height, width, _ = rgb_image.shape
+    #     # Create an empty Bayer image (single channel)
+    #     bayer_image = np.zeros((height, width), dtype=np.uint8)
+    #
+    #     # Extract R, G, B channels
+    #     R = rgb_image[:, :, 0]
+    #     G = rgb_image[:, :, 1]
+    #     B = rgb_image[:, :, 2]
+    #
+    #     # Simulate Bayer RG pattern
+    #     bayer_image[0::2, 0::2] = R[0::2, 0::2]  # Red pixels
+    #     bayer_image[0::2, 1::2] = G[0::2, 1::2]  # Green pixels (next to Red)
+    #     bayer_image[1::2, 0::2] = G[1::2, 0::2]  # Green pixels (next to Blue)
+    #     bayer_image[1::2, 1::2] = B[1::2, 1::2]  # Blue pixels
+    #     return bayer_image
+
+
+    def get_timestamp(self, msg):
+        ts = msg.header.stamp
+        ts = ts.sec + ts.nanosec*1e-9
+        return ts
 
 
     def update_image_timestamp(self, image_msg, new_timestamp):
@@ -279,11 +312,8 @@ class BagProcessor:
         tf = np.array(self.intrinsics["T_cam_imu"])
         tf = np.array([[1,0,0,0],[0,-1,0,0],[0,0,-1,0],[0,0,0,1]])@tf  # imu is in ENU, ins is in NED -> tf transforms between these frames
         transform_matrix = transform_matrix@tf
-        #transform_matrix = self.rotate_pose_180_y(transform_matrix)
-        #transform_matrix = self.rotate_pose_90_z(transform_matrix)
         transform_matrix = np.array([[1,0,0,0],[0,-1,0,0],[0,0,-1,0],[0,0,0,1]])@transform_matrix  # imu is in ENU, ins is in NED -> tf transforms between these frames
         transform_matrix = transform_matrix.tolist()
-
 
         pose = {
             "w": image_msg.width,

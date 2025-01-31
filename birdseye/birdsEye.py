@@ -575,7 +575,7 @@ class birdsEye():
 
             self.ax.legend()
             self.fig.canvas.draw_idle()
-            plt.pause(0.05)
+            plt.pause(0.01)
             # p = os.path.expanduser('~')
             # p = os.path.join(p, 'catch', 'tmp', f'3d_{str(self.frame_index).rjust(3,str(0))}.png')
             # self.fig.savefig(p)
@@ -715,73 +715,6 @@ class birdsEye():
     #         self.ax.cla()
     #
     #     self.grab_plots()
-
-
-    def grab_plots(self):
-        fig, ax = plt.subplots(1, 1, figsize=(15, 15))
-        rtk_data = self.dbc.getFrom('lat, lon, altitude, rtk_fix, time', f'rtk_data_{self.db_name}')
-        rtk_tmp = [[*utm.from_latlon(rtk_data[i][0], rtk_data[i][1])[:2], rtk_data[i][2], rtk_data[i][-1]] for i in range(len(rtk_data))]
-        xs = [rtk_tmp[i][0] for i in range(len(rtk_tmp))]
-        ys = [rtk_tmp[i][1] for i in range(len(rtk_tmp))]
-        zs = [rtk_tmp[i][2] for i in range(len(rtk_tmp))]
-        # ts = [rtk_tmp[i][-1] for i in range(len(rtk_tmp))]
-        # ax[0].scatter(xs, ys, c='k', s=1, label='RTK')
-        # ax[1].plot(zs, 'k', label='RTK')
-        o_xs = [self.data[i][0]for i in range(len(self.data))]
-        o_ys = [self.data[i][1]for i in range(len(self.data))]
-        o_zs = [self.data[i][2]for i in range(len(self.data))]
-        # o_ts = [self.data[i][-1]for i in range(len(self.data))]
-        o_t = [i*len(rtk_tmp)/len(self.data) for i in range(len(self.data))]
-        # ax[0].scatter(o_xs, o_ys, c='r', s=20, label='EKF')
-        # ax[1].scatter(o_t, o_zs, c='r', s=10, label='EKF')
-        # ax[0].legend(fontsize=16)
-
-        ax.scatter(xs, ys, c='k', s=1, label='RTK')
-        ax.scatter(o_xs, o_ys, c='r', s=20, label='EKF')
-        ax.legend(fontsize=16)
-
-        # ax.plot(zs, 'k', label='RTK')
-        # ax.scatter(o_t, o_zs, c='r', s=10, label='EKF')
-
-        ax.spines['top'].set_visible(False)
-        ax.spines['right'].set_visible(False)
-        ax.spines['bottom'].set_visible(False)
-        ax.spines['left'].set_visible(False)
-        #
-        ax.get_xaxis().set_ticks([])
-        ax.get_yaxis().set_ticks([])
-        ax.set_box_aspect(1)
-        plt.savefig('rtk_odom_sanity.png', transparent=True)
-        # plt.savefig('rtk_alt_sanity.png', transparent=True)
-
-        fig, ax = plt.subplots(1, 3, figsize=(15,6))
-        ahrs_data = self.dbc.getFrom('q, u, a, t, v_a, v_b, v_g, a_x, a_y, a_z, time', f'ahrs_data_{self.db_name}')
-        ahrs_tmp = [quat2euler(ahrs_data[i][0],ahrs_data[i][1],ahrs_data[i][2],ahrs_data[i][3]) for i in range(len(ahrs_data))]
-        als = [ahrs_tmp[i][0] for i in range(len(ahrs_tmp))]
-        bes = [ahrs_tmp[i][1] for i in range(len(ahrs_tmp))]
-        gas = [ahrs_tmp[i][2] for i in range(len(ahrs_tmp))]
-        ax[0].scatter([i for i in range(len(als))], als, c='k', s=1, label='AHRS')
-        ax[1].scatter([i for i in range(len(bes))], bes, c='k', s=1, label='AHRS')
-        ax[2].scatter([i for i in range(len(gas))], gas, c='k', s=1, label='AHRS')
-        o_tmp = [quat2euler(self.data[i][3], self.data[i][4], self.data[i][5], self.data[i][6]) for i in range(len(self.data))]
-        o_as = [o_tmp[i][0]for i in range(len(o_tmp))]
-        o_bs = [o_tmp[i][1]for i in range(len(o_tmp))]
-        o_gs = [o_tmp[i][2]for i in range(len(o_tmp))]
-        o_t = [i*len(ahrs_tmp)/len(self.data) for i in range(len(self.data))]
-        ax[0].scatter(o_t, o_as, c='r', s=1, label='EKF')
-        ax[1].scatter(o_t, o_bs, c='r', s=1, label='EKF')
-        ax[2].scatter(o_t, o_gs, c='r', s=1, label='EKF')
-        plt.savefig('ahrs_ekf_sanity.png')
-
-        # tmp = [[self.data[i][-2], self.data[i][0], self.data[i][1], self.data[i][2], o_gs[i], o_bs[i], o_as[i]] for i in range(len(self.data))]
-        # if os.path.isfile('imageData.txt'):
-        #     os.remove('imageData.txt')
-        # for line in tmp:
-        #     with open('imageData.txt', 'a') as f:
-        #         vals = ','.join([str(x) for x in line])
-        #         # print(vals)
-        #         f.write(vals+"\n")
-        print('ping')
 
 
 if __name__ == '__main__':
