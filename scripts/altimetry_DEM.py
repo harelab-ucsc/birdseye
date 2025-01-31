@@ -18,6 +18,7 @@ import json
 import yaml
 import time
 import copy
+import utm
 from pyproj import Proj, Transformer
 
 
@@ -30,6 +31,9 @@ class BagProcessor:
         self.count = 0
         self.radalt = None
         self.quat = None
+
+        self.radalt_msgs = []
+        self.ins_msgs = []
 
 
     def load_intrinsics(self, intrinsics_path):
@@ -59,7 +63,7 @@ class BagProcessor:
         return pairs
 
 
-    def correct_altitude(self, rad, ins):
+    def correct_altitude(self, ins, rad):
         self.quat = [ins.qn2b[1], ins.qn2b[2], ins.qn2b[3], ins.qn2b[0]]
         eulers = quat2euler(self.quat)
         cos_theta = math.cos(eulers[0]) * math.cos(eulers[1])
@@ -68,6 +72,17 @@ class BagProcessor:
         self.radalt = rad.altitude * cos_theta
         if self.radalt < 0:
             self.radalt *= -1
+
+
+    def parse_INS(self, ins_msg):
+        east, north, _, _ = utm.from_latlon(ins_msg.lla[0], ins_msg.lla[1])
+        ins_alt = ins_msg.lla[2]
+
+
+
+    def make_ground_point(self, ins_msg, rad_msg):
+        self.correct_altitude(ins_msg, rad_msg)
+        pass
 
 
     def process_bag(self):
@@ -79,9 +94,6 @@ class BagProcessor:
         topics_and_types = reader.get_all_topics_and_types()
 
         topic_type_map = {t.name:t.type for t in topics_and_types}
-
-        radalt_msgs = []
-        ins_msgs = []
 
         print('reading bag')
         # Read and process messages
