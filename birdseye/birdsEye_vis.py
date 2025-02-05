@@ -15,7 +15,12 @@ from birdsEye import birdsEye
 # file_root = '/home/mwmaster/parsed_flights/2025_01_17/'
 file_root = '/home/mwmaster/parsed_flights/2025_01_21/'
 # file_root = '/home/mwmaster/parsed_flights/2025_01_20/'
-datasets = glob2.glob(os.path.join(file_root, 'acceptance_05*_rect/out_dict.pkl'))
+# datasets = glob2.glob(os.path.join(file_root, 'acceptance_0*_rect/out_dict.pkl'))
+datasets = glob2.glob(os.path.join(file_root, 'acceptance_01*_rect/out_dict.pkl'))
+# datasets = glob2.glob(os.path.join(file_root, 'acceptance_02*_rect/out_dict.pkl'))
+datasets += glob2.glob(os.path.join(file_root, 'acceptance_05*_rect/out_dict.pkl'))
+datasets += glob2.glob(os.path.join(file_root, 'acceptance_06*_rect/out_dict.pkl'))
+
 print(np.array(datasets))
 data_raw = {}
 data_rect = {}

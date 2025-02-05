@@ -118,12 +118,6 @@ def compare_labels(file1, file2):
     print(f'  False labels switched to "Test": {neg_test} (False-Test Conversion Rate: {neg_test/zero_count_file2 * 100:.03f}%)')
     print()
     print(f'Different lines: {diff_count}')
-    # print(f'False count in file1: {zero_count_file1}')
-    # print(f'True count in file1: {one_count_file1}')
-    # print(f'Test count in file1: {test_count_file1}')
-    # print(f'False count in file2: {zero_count_file2}')
-    # print(f'True count in file2: {one_count_file2}')
-    # print(f'Test count in file2: {test_count_file2}')
 
 # call function
 compare_labels(ref, tst)

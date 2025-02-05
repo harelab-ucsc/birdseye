@@ -12,7 +12,8 @@ import tensorflow as tf
 import scipy.ndimage as ndimage
 # from mask import Mask
 # from AMI_ContourClassFamily import Contour
-import glob
+import glob2
+import copy
 import random
 import itertools
 # import pdb
@@ -32,23 +33,24 @@ epochs = 1000
 # PATH = os.getcwd()
 # dirname = 'parsed_flight'
 # PATH = os.path.join(os.path.expanduser('~'), dirname)
-dirnames = ['farm_0_20240725', 'farm_1_20240725', 'farm_2_20240729', 'farm_3_20240729']
-paths = [os.path.join(os.path.expanduser('~'), dirname) for dirname in dirnames]
+label_file = "labels_checked.txt"
+dirnames = ['haybarn_01_rect', 'haybarn_02_rect', 'haybarn_05_rect']
+paths = [os.path.join(os.path.expanduser('~'), 'parsed_flights', '2025_01_29', dirname) for dirname in dirnames]
 IMAGE_CHANNELS = 3
 
-tf.data.experimental.enable_debug_mode()
-
-gpus = tf.config.list_physical_devices('GPU')
-if gpus:
-    try:
-        # Currently, memory growth needs to be the same across GPUs
-        for gpu in gpus:
-            tf.config.experimental.set_memory_growth(gpu, True)
-        logical_gpus = tf.config.list_logical_devices('GPU')
-        print(len(gpus), "Physical GPUs,", len(logical_gpus), "Logical GPUs")
-    except RuntimeError as e:
-        # Memory growth must be set before GPUs have been initialized
-        print(e)
+# tf.data.experimental.enable_debug_mode()
+#
+# gpus = tf.config.list_physical_devices('GPU')
+# if gpus:
+#     try:
+#         # Currently, memory growth needs to be the same across GPUs
+#         for gpu in gpus:
+#             tf.config.experimental.set_memory_growth(gpu, True)
+#         logical_gpus = tf.config.list_logical_devices('GPU')
+#         print(len(gpus), "Physical GPUs,", len(logical_gpus), "Logical GPUs")
+#     except RuntimeError as e:
+#         # Memory growth must be set before GPUs have been initialized
+#         print(e)
 
 
 class reduce_sum(tf.keras.layers.Layer):
@@ -58,21 +60,14 @@ class reduce_sum(tf.keras.layers.Layer):
 
 def read_label_file(load_name, image_file):
     try:
-        f = open(f"{load_name}", "rb")
-        # print()
-        # print(f'    Loading label : {load_name}, {image_file}')
+        f = open(load_name, "rb")
         while True:
-            # print(i)
             mask = f.readline()
             tmp = mask.split()
-            # print('tmp: ', tmp)
             if os.path.split(tmp[1])[1] == os.path.split(image_file.numpy())[1]:
-                # print('        Loaded :', tmp, end=' ')
                 cl = float(tmp[2])
-                # print(cl)
                 break
             elif len(tmp) == 0:
-                # print('end')
                 break
         f.close()
     except FileNotFoundError:
@@ -81,15 +76,11 @@ def read_label_file(load_name, image_file):
     return cl
 
 
-def load_rle(image_file):
+def load_rle(image_file, label_file=label_file):
     load_name = None
     tmp = tf.keras.backend.get_value(image_file).decode('utf-8')
-    # try:
-    #     frame_index = preglob_tr.index(image_file)
-    # except ValueError:
-    #     frame_index = preglob_te.index(image_file)
-    tmp = os.path.join(os.path.split(tmp)[0], '*.txt')
-    load_name = glob.glob(tmp)[0]
+    tmp = os.path.join(os.path.split(tmp)[0], label_file)
+    load_name = glob2.glob(tmp)[0]
     cl = read_label_file(load_name, image_file)
     load_name = None
     return cl
@@ -422,21 +413,49 @@ if __name__ == '__main__':
         bias_con = None
 
     global preglob_tr
+    global preglob_va
     global preglob_te
 
-    # preglob = glob.glob(os.path.join(PATH, '*.png'))
     preglob = []
     for path in paths:
-        preglob += glob.glob(os.path.join(path, '*.png'))
-    random.shuffle(preglob)   # you commented this out Morgan?
-    # print(type(preglob))
-    preglob_tr, preglob_te = train_test_split(preglob, shuffle=False, test_size=0.3)
+        imgs = glob2.glob(os.path.join(path, '*.png'))
+        lbl = os.path.join(path, label_file)
+        print(f'cleaning {lbl}')
+        if os.path.exists(lbl):
+            # print('  ', lbl)
+            pass
+        else:
+            print(f'  the given label file does not exist: {lbl}')
+            continue
+        # cnt = 0
+        f = open(lbl, "rb")
+        while True:
+            line = f.readline()
+            line = line.split()
+
+            if len(line) == 0:
+                # print('end')
+                break
+            else:
+                for image_file in imgs:
+                    if os.path.split(line[1])[1].decode('utf-8') == os.path.split(image_file)[1]:
+                        try:
+                            float(line[2])
+                            preglob.append(image_file)
+                        except ValueError as e:
+                            # print(f'  {e},   pruning entry')
+                            pass
+
+        f.close()
+    print(len(preglob))
+
+    preglob_tr, preglob_va = train_test_split(preglob, shuffle=False, test_size=0.3)
 
     train_ds = tf.data.Dataset.from_tensor_slices(preglob_tr)
     train_ds = train_ds.map(load_rle_train, num_parallel_calls=tf.data.experimental.AUTOTUNE)
     train_ds = train_ds.shuffle(BUFFER_SIZE).batch(BATCH_SIZE)
 
-    test_ds = tf.data.Dataset.from_tensor_slices(preglob_te)
+    test_ds = tf.data.Dataset.from_tensor_slices(preglob_va)
     test_ds = test_ds.map(load_rle_test)
     test_ds = test_ds.shuffle(BUFFER_SIZE).batch(BATCH_SIZE)
 
@@ -458,7 +477,7 @@ if __name__ == '__main__':
                                 tf.keras.metrics.TruePositives(name='TP')])
     generator.summary()
 
-    print(len(preglob), 'training samples: ', len(preglob_tr), 'training, ', len(preglob_te), 'testing')
+    print(len(preglob), 'training samples: ', len(preglob_tr), 'training, ', len(preglob_va), 'testing')
 
     callbacks = [tf.keras.callbacks.ReduceLROnPlateau(monitor='val_binary_crossentropy', factor=0.5, patience=3, min_lr=0),
                  tf.keras.callbacks.EarlyStopping(monitor='val_binary_crossentropy', patience=9),
