@@ -10,8 +10,6 @@ import cv2
 import numpy as np
 import tensorflow as tf
 import scipy.ndimage as ndimage
-# from mask import Mask
-# from AMI_ContourClassFamily import Contour
 import glob2
 import copy
 import random
@@ -19,44 +17,104 @@ import itertools
 # import pdb
 import matplotlib.pyplot as plt
 from sklearn.model_selection import train_test_split
-# ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ #
-# ~~~~ # data augmentation pipeline to add randomness/volume to dataset # ~~~~ #
-# ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ #
+from sklearn.manifold import TSNE # Function to extract penultimate layer embeddings
+from tensorflow.keras import mixed_precision
+
+
+# mixed_precision.set_global_policy('mixed_float16')
+
+train = True
+tSNE = False
 
 # define , filepaths, and model savenames
 BUFFER_SIZE = 64
-BATCH_SIZE = 16
-IMG_WIDTH = 512
-IMG_HEIGHT = 384
+BATCH_SIZE = 4
+# IMG_WIDTH = 960
+# IMG_HEIGHT = 600
+IMG_WIDTH = 720
+IMG_HEIGHT = 450
+IMAGE_CHANNELS = 3
 epochs = 1000
 
-# PATH = os.getcwd()
-# dirname = 'parsed_flight'
-# PATH = os.path.join(os.path.expanduser('~'), dirname)
-label_file = "labels_checked.txt"
-dirnames = ['haybarn_01_rect', 'haybarn_02_rect', 'haybarn_05_rect']
-paths = [os.path.join(os.path.expanduser('~'), 'parsed_flights', '2025_01_29', dirname) for dirname in dirnames]
-IMAGE_CHANNELS = 3
+models_dir = os.path.join(os.path.expanduser('~'), 'birdseye', 'models')
+filename_prefix = os.path.join(models_dir, f'birdseye_{IMG_WIDTH}_{IMG_HEIGHT}')
+val = str(len(glob2.glob(os.path.join(models_dir, filename_prefix+'*')))).rjust(3,'0')
+filename = filename_prefix + f'_{val}'
 
-# tf.data.experimental.enable_debug_mode()
-#
-# gpus = tf.config.list_physical_devices('GPU')
-# if gpus:
-#     try:
-#         # Currently, memory growth needs to be the same across GPUs
-#         for gpu in gpus:
-#             tf.config.experimental.set_memory_growth(gpu, True)
-#         logical_gpus = tf.config.list_logical_devices('GPU')
-#         print(len(gpus), "Physical GPUs,", len(logical_gpus), "Logical GPUs")
-#     except RuntimeError as e:
-#         # Memory growth must be set before GPUs have been initialized
-#         print(e)
+print(f'\n\n{filename}\n\n')
+
+paths = []
+
+label_file = 'labels_checked.txt'
+dates = ['2024_07_XX', '2025_01_29', '2025_02_05']
+dirlists = [['farm_0__2024_07_25', 'farm_1__2024_07_25', 'farm_2__2024_07_29'],['haybarn_01_rect', 'haybarn_02_rect', 'haybarn_05_rect'], ['haybarn_01_rect']]
 
 
-class reduce_sum(tf.keras.layers.Layer):
-    def call(self, x):
-        return tf.math.reduce_sum(x, axis=1, keepdims=False, name=None)
+def load_trained_model(model, model_path):
+    """Loads a trained Keras model from a given file path."""
+    model.load_weights(model_path)
+    return model
 
+
+def get_embeddings(model, dataset, embedding_layer_name="global_max_pooling2d"):
+    """
+    Extracts embeddings and labels from a trained model.
+    
+    Args:
+        model: A trained Keras model.
+        dataset: A tf.data.Dataset of (image, label) pairs.
+        embedding_layer_name: Name of the layer to extract embeddings from.
+    
+    Returns:
+        Tuple (embeddings, labels) as NumPy arrays.
+    """
+    # Create an embedding model
+    embedding_model = tf.keras.Model(
+        inputs=model.input, 
+        outputs=model.get_layer(embedding_layer_name).output
+    )
+
+    embeddings = []
+    labels = []
+    cnt = 0
+    for images, lbls in dataset:  # Extract images & labels
+        cnt += 1
+        emb = embedding_model.predict(images, verbose=0)  # Get embeddings
+        print(cnt, end='\r')
+        # # Flatten the 4D embeddings into 2D (N, height * width * channels)
+        # emb = emb.reshape(emb.shape[0], -1)  # Flatten to (N, features)
+        
+        embeddings.append(emb)
+        labels.append(lbls.numpy())
+
+    embeddings = np.vstack(embeddings)  # Stack all embeddings into (N, features)
+    labels = np.concatenate(labels)
+
+    print(f"\nExtracted embeddings shape: {embeddings.shape}")  
+    return embeddings, labels
+
+
+def visualize_embeddings(embeddings, labels):
+    """Applies t-SNE to embeddings and visualizes them."""
+    tsne = TSNE(n_components=2, perplexity=30, random_state=42)
+    reduced_embeddings = tsne.fit_transform(embeddings)
+
+    plt.figure(figsize=(8, 6))
+    plt.scatter(reduced_embeddings[:, 0], reduced_embeddings[:, 1], c=labels, cmap='viridis', alpha=0.7)
+    plt.colorbar(label="Class Labels")
+    plt.xlabel("t-SNE Dim 1")
+    plt.ylabel("t-SNE Dim 2")
+    plt.title("t-SNE Visualization of Learned Embeddings")
+    plt.show()
+
+
+def get_filepaths(paths, date, dirnames, label_file):
+    paths += [os.path.join(os.path.expanduser('~'), 'birdseye_CNN_data', date, dirname) for dirname in dirnames]
+    return paths 
+
+# ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ #
+# ~~~~ # data augmentation pipeline to add randomness/volume to dataset # ~~~~ #
+# ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ #
 
 def read_label_file(load_name, image_file):
     try:
@@ -82,6 +140,7 @@ def load_rle(image_file, label_file=label_file):
     tmp = os.path.join(os.path.split(tmp)[0], label_file)
     load_name = glob2.glob(tmp)[0]
     cl = read_label_file(load_name, image_file)
+    cl = np.array([cl])
     load_name = None
     return cl
 
@@ -93,8 +152,8 @@ def load_from_rle(image_file):
     image = tf.io.decode_png(image, channels=IMAGE_CHANNELS, name='image')
     image = tf.image.resize(image, [IMG_HEIGHT, IMG_WIDTH], \
                                   method=tf.image.ResizeMethod.BICUBIC)
-    # image = tf.image.rgb_to_grayscale(image)
-    cl = tf.py_function(load_rle, [image_file], [tf.float32])
+    cl = tf.py_function(load_rle, [image_file], tf.float32)
+    cl.set_shape([1])
     return image, cl
 
 
@@ -165,15 +224,10 @@ def random_jitter(input_image, thresh=0.5):
 @tf.function
 def load_rle_train(image_file):
     # pdb.set_trace()
-    # print('image_file: ', image_file)
-
     input_image, real_class = load_from_rle(image_file)
-    # real_class.set_shape([NUM_CLASSES, MASK_CHANNELS])
     input_image = normalize(input_image)
-
     input_image = random_jitter(input_image)
     input_image = resize(input_image, IMG_HEIGHT, IMG_WIDTH)
-
     return input_image, real_class
 
 
@@ -201,7 +255,6 @@ def load_rle_test(image_file):
 # following *_blocks are general building blocks themed off of Xception network
 # entry and main flow blocks (see paper)
 def in_block(x, filters, size, dr, use_bias, ker_reg, ker_con, bias_reg, bias_con, act_reg):
-    # print('filters ', filters, 'size ', size)
     x = tf.keras.layers.Conv2D(filters[0],
                                size,
                                strides=1,
@@ -214,7 +267,6 @@ def in_block(x, filters, size, dr, use_bias, ker_reg, ker_con, bias_reg, bias_co
                                bias_constraint=bias_con,
                                activity_regularizer=act_reg)(x)
     x = tf.keras.layers.LeakyReLU()(x)
-    # x = tf.keras.layers.ReLU()(x)
     x = tf.keras.layers.BatchNormalization()(x)
 
     x = tf.keras.layers.Conv2D(filters[1], size,
@@ -228,21 +280,30 @@ def in_block(x, filters, size, dr, use_bias, ker_reg, ker_con, bias_reg, bias_co
                                bias_constraint=bias_con,
                                activity_regularizer=act_reg)(x)
     x = tf.keras.layers.LeakyReLU()(x)
-    # x = tf.keras.layers.ReLU()(x)
     x = tf.keras.layers.BatchNormalization()(x)
     x = tf.keras.layers.MaxPool2D(pool_size=3, strides=2, padding='same')(x)
     return x
 
 
-def down_block(x, filters, size, use_bias, ker_reg, ker_con, bias_reg, bias_con, act_reg):
-    res = tf.keras.layers.Conv2D(filters, 1,
-                                 strides=2,
-                                 use_bias=use_bias,
-                                 kernel_regularizer=ker_reg,
-                                 kernel_constraint=ker_con,
-                                 bias_regularizer=bias_reg,
-                                 bias_constraint=bias_con,
-                                 activity_regularizer=act_reg)(x)
+def down_block_v2(x, filters, size, use_bias, ker_reg, ker_con, bias_reg, bias_con, act_reg, dropout, pool=True):
+    if pool:
+        res = tf.keras.layers.Conv2D(filters, 1,
+                                    strides=2,
+                                    use_bias=use_bias,
+                                    kernel_regularizer=ker_reg,
+                                    kernel_constraint=ker_con,
+                                    bias_regularizer=bias_reg,
+                                    bias_constraint=bias_con,
+                                    activity_regularizer=act_reg)(x)
+    else:
+        res = tf.keras.layers.Conv2D(filters, 1,
+                                    strides=1,
+                                    use_bias=use_bias,
+                                    kernel_regularizer=ker_reg,
+                                    kernel_constraint=ker_con,
+                                    bias_regularizer=bias_reg,
+                                    bias_constraint=bias_con,
+                                    activity_regularizer=act_reg)(x)
 
     x = tf.keras.layers.SeparableConv2D(filters, size,
                                         strides=1,
@@ -256,9 +317,8 @@ def down_block(x, filters, size, use_bias, ker_reg, ker_con, bias_reg, bias_con,
                                         bias_constraint=bias_con,
                                         activity_regularizer=act_reg)(x)
     x = tf.keras.layers.LeakyReLU()(x)
-    # x = tf.keras.layers.ReLU()(x)
     x = tf.keras.layers.BatchNormalization()(x)
-
+    x = tf.keras.layers.Dropout(dropout)(x)
     x = tf.keras.layers.SeparableConv2D(filters, size,
                                         strides=1,
                                         use_bias=use_bias,
@@ -271,13 +331,16 @@ def down_block(x, filters, size, use_bias, ker_reg, ker_con, bias_reg, bias_con,
                                         bias_constraint=bias_con,
                                         activity_regularizer=act_reg)(x)
     x = tf.keras.layers.LeakyReLU()(x)
-    # x = tf.keras.layers.ReLU()(x)
     x = tf.keras.layers.BatchNormalization()(x)
 
-    x = tf.keras.layers.MaxPool2D(pool_size=3, strides=2, padding='same')(x)
+    if pool:
+        x = tf.keras.layers.MaxPool2D(pool_size=3, strides=2, padding='same')(x)
+    else:
+        pass
 
     add = tf.keras.layers.add([res, x])
     return add
+
 
 
 def out_block(x, filters, size, use_bias, ker_reg, ker_con, bias_reg, bias_con, act_reg):
@@ -289,10 +352,8 @@ def out_block(x, filters, size, use_bias, ker_reg, ker_con, bias_reg, bias_con, 
                             bias_constraint=bias_con,
                             activity_regularizer=act_reg)(x)
     x = tf.keras.layers.LeakyReLU()(x)
-    # x = tf.keras.layers.ReLU()(x)
     x = tf.keras.layers.BatchNormalization()(x)
-    x = reduce_sum()(x)
-    x = tf.keras.layers.Dense(int(filters[1]),
+    x = tf.keras.layers.Dense(int(filters[0]),
                                 use_bias=use_bias,
                                 kernel_regularizer=ker_reg,
                                 kernel_constraint=ker_con,
@@ -300,10 +361,8 @@ def out_block(x, filters, size, use_bias, ker_reg, ker_con, bias_reg, bias_con, 
                                 bias_constraint=bias_con,
                                 activity_regularizer=act_reg)(x)
     x = tf.keras.layers.LeakyReLU()(x)
-    # x = tf.keras.layers.ReLU()(x)
     x = tf.keras.layers.BatchNormalization()(x)
-    x = reduce_sum()(x)
-    x = tf.keras.layers.Dense(int(filters[1]),
+    x = tf.keras.layers.Dense(int(filters[0]),
                                 use_bias=use_bias,
                                 kernel_regularizer=ker_reg,
                                 kernel_constraint=ker_con,
@@ -311,7 +370,6 @@ def out_block(x, filters, size, use_bias, ker_reg, ker_con, bias_reg, bias_con, 
                                 bias_constraint=bias_con,
                                 activity_regularizer=act_reg)(x)
     x = tf.keras.layers.LeakyReLU()(x)
-    # x = tf.keras.layers.ReLU()(x)
     x = tf.keras.layers.BatchNormalization()(x)
     x = tf.keras.layers.Dense(int(filters[1]),
                                 use_bias=use_bias,
@@ -321,7 +379,6 @@ def out_block(x, filters, size, use_bias, ker_reg, ker_con, bias_reg, bias_con, 
                                 bias_constraint=bias_con,
                                 activity_regularizer=act_reg)(x)
     x = tf.keras.layers.LeakyReLU()(x)
-    # x = tf.keras.layers.ReLU()(x)
     x = tf.keras.layers.BatchNormalization()(x)
     x = tf.keras.layers.Dense(1,
                                 use_bias=use_bias,
@@ -330,6 +387,7 @@ def out_block(x, filters, size, use_bias, ker_reg, ker_con, bias_reg, bias_con, 
                                 bias_regularizer=bias_reg,
                                 bias_constraint=bias_con,
                                 activity_regularizer=act_reg)(x)
+    x = tf.keras.layers.GlobalMaxPool2D()(x)
     x = tf.keras.activations.sigmoid(x)
     return x
 
@@ -346,66 +404,73 @@ def baseline_net(inputs, use_bias, ker_reg, ker_con, bias_reg, bias_con, act_reg
     return out
 
 
-def testing_net(inputs, use_bias, ker_reg, ker_con, bias_reg, bias_con, act_reg, ker=3):
+def testing_net(inputs, use_bias, ker_reg, ker_con, bias_reg, bias_con, act_reg, dropout, ker=3):
     """ this model trains reliably """
     x = in_block(inputs, [32, 64], ker, [1, 1], use_bias, ker_reg, ker_con, bias_reg, bias_con, act_reg)  # 32, 64
-    x = down_block(x, 128, ker, use_bias, ker_reg, ker_con, bias_reg, bias_con, act_reg)  # 128
-    x = down_block(x, 256, ker, use_bias, ker_reg, ker_con, bias_reg, bias_con, act_reg)  # 256
-    x = down_block(x, 512, ker, use_bias, ker_reg, ker_con, bias_reg, bias_con, act_reg)  # 512
-    x = down_block(x, 1024, ker, use_bias, ker_reg, ker_con, bias_reg, bias_con, act_reg)  # 1024
-    x = down_block(x, 1024, ker, use_bias, ker_reg, ker_con, bias_reg, bias_con, act_reg)  # 1024
-    out = out_block(x, [64, 32], ker, use_bias, ker_reg, ker_con, bias_reg, bias_con, act_reg)
+    x = down_block_v2(x, 128, ker, use_bias, ker_reg, ker_con, bias_reg, bias_con, act_reg, dropout)  # 128
+    x = down_block_v2(x, 256, ker, use_bias, ker_reg, ker_con, bias_reg, bias_con, act_reg, dropout)  # 256
+    x = down_block_v2(x, 512, ker, use_bias, ker_reg, ker_con, bias_reg, bias_con, act_reg, dropout)  # 512
+    x = down_block_v2(x, 1024, ker, use_bias, ker_reg, ker_con, bias_reg, bias_con, act_reg, dropout, pool=False)  # 1024
+    x = down_block_v2(x, 1024, ker, use_bias, ker_reg, ker_con, bias_reg, bias_con, act_reg, dropout, pool=False)  # 1024
+    x = down_block_v2(x, 1024, ker, use_bias, ker_reg, ker_con, bias_reg, bias_con, act_reg, dropout, pool=False)  # 1024
+    x = down_block_v2(x, 1024, ker, use_bias, ker_reg, ker_con, bias_reg, bias_con, act_reg, dropout, pool=False)  # 1024
+    # x = down_block_v2(x, 1024, ker, use_bias, ker_reg, ker_con, bias_reg, bias_con, act_reg, dropout, pool=False)  # 1024
+    # x = down_block_v2(x, 1024, ker, use_bias, ker_reg, ker_con, bias_reg, bias_con, act_reg, dropout, pool=False)  # 1024
+    out = out_block(x, [512, 256], ker, use_bias, ker_reg, ker_con, bias_reg, bias_con, act_reg)
     return out
 
 
-def columnar_net(inputs, use_bias, ker_reg, ker_con, bias_reg, bias_con, act_reg, ker=3):
-    x = in_block(inputs, [32, 64], ker, [1, 1], use_bias, ker_reg, ker_con, bias_reg, bias_con, act_reg)  # 32, 64
-    x1 = down_block(x, 32, ker, use_bias, ker_reg, ker_con, bias_reg, bias_con, act_reg)  # 128
-    x2 = down_block(x, 32, ker, use_bias, ker_reg, ker_con, bias_reg, bias_con, act_reg)  # 256
-    x3 = down_block(x, 32, ker, use_bias, ker_reg, ker_con, bias_reg, bias_con, act_reg)  # 128
-    x4 = down_block(x, 32, ker, use_bias, ker_reg, ker_con, bias_reg, bias_con, act_reg)  # 128
-    add = tf.keras.layers.concatenate([x1, x2, x3, x4])
-    # add = tf.keras.layers.concatenate([x1, x2])
-    x1 = down_block(x, 32, ker, use_bias, ker_reg, ker_con, bias_reg, bias_con, act_reg)  # 128
-    x2 = down_block(x, 32, ker, use_bias, ker_reg, ker_con, bias_reg, bias_con, act_reg)  # 256
-    x3 = down_block(x, 32, ker, use_bias, ker_reg, ker_con, bias_reg, bias_con, act_reg)  # 128
-    x4 = down_block(x, 32, ker, use_bias, ker_reg, ker_con, bias_reg, bias_con, act_reg)  # 128
-    add = tf.keras.layers.concatenate([x1, x2, x3, x4])
-    # add = tf.keras.layers.concatenate([x1, x2])
-    out = out_block(add, [32, 16], ker, use_bias, ker_reg, ker_con, bias_reg, bias_con, act_reg)
-    return out
-
-def generator(use_bias, ker_reg, ker_con, bias_reg, bias_con, act_reg, h=IMG_HEIGHT, w=IMG_WIDTH, c=IMAGE_CHANNELS, ker=3):
+def generator(use_bias, ker_reg, ker_con, bias_reg, bias_con, act_reg, dropout, h=IMG_HEIGHT, w=IMG_WIDTH, c=IMAGE_CHANNELS, ker=3):
     inp = tf.keras.Input(shape=(h, w, c), name='inp_layer')
-    out = testing_net(inp, use_bias, ker_reg, ker_con, bias_reg, bias_con, act_reg, ker=ker)
-    # out = columnar_net(inp, use_bias, ker_reg, ker_con, bias_reg, bias_con, act_reg, ker=ker)
+    out = testing_net(inp, use_bias, ker_reg, ker_con, bias_reg, bias_con, act_reg, dropout, ker=ker)
     return tf.keras.Model(inputs=inp, outputs=out)
 
 
 if __name__ == '__main__':
-    filename = f'ucsc_{IMG_WIDTH}_{IMG_HEIGHT}_14'.format(IMG_WIDTH, IMG_HEIGHT)
+    os.environ["CUDA_VISIBLE_DEVICES"] = "1"
 
+    for i, date in enumerate(dates):
+        paths = get_filepaths(paths, date, dirlists[i], label_file)
+
+    # tf.data.experimental.enable_debug_mode()
+
+    gpus = tf.config.list_physical_devices('GPU')
+    if gpus:
+        try:
+            # Currently, memory growth needs to be the same across GPUs
+            for gpu in gpus:
+                tf.config.experimental.set_memory_growth(gpu, True)
+            logical_gpus = tf.config.list_logical_devices('GPU')
+            print(len(gpus), "Physical GPUs,", len(logical_gpus), "Logical GPUs")
+        except RuntimeError as e:
+            # Memory growth must be set before GPUs have been initialized
+            print(e)
+
+    thresh = 0.5
+    dropout = 0.2
+
+    tflite_conv = False
     use_bias = True
     use_regularizers = True
-    use_constraints = False
+    use_constraints = True
     logits = False
     if use_regularizers:
-        ker_reg = tf.keras.regularizers.L1L2(l1=1e-6, l2=1e-4)  # 1e-6, 1e-3
-        act_reg = tf.keras.regularizers.L1L2(l1=1e-11, l2=1e-8)  # 1e-11, 1e-8
+        ker_reg = tf.keras.regularizers.L1L2(l1=1e-7, l2=1e-4)  # 1e-6, 1e-3
+        act_reg = tf.keras.regularizers.L1L2(l1=1e-12, l2=1e-9)  # 1e-11, 1e-8
     else:
         ker_reg = None
         act_reg = None
     if use_constraints:
-        ker_con = tf.keras.constraints.MinMaxNorm(max_value=1.0, rate=0.5)
+        ker_con = tf.keras.constraints.MinMaxNorm(max_value=1.0, rate=1)
     else:
         ker_con = None
     if use_bias:
         if use_regularizers:
-            bias_reg = tf.keras.regularizers.L1L2(l1=1e-6, l2=1e-4)  # 1e-6, 1e-3
+            bias_reg = tf.keras.regularizers.L1L2(l1=1e-7, l2=1e-4)  # 1e-6, 1e-3
         else:
             bias_reg = None
         if use_constraints:
-            bias_con = tf.keras.constraints.MinMaxNorm(max_value=1.0, rate=0.5)
+            bias_con = tf.keras.constraints.MinMaxNorm(max_value=1.0, rate=1)
         else:
             bias_con = None
     else:
@@ -420,12 +485,12 @@ if __name__ == '__main__':
     for path in paths:
         imgs = glob2.glob(os.path.join(path, '*.png'))
         lbl = os.path.join(path, label_file)
-        print(f'cleaning {lbl}')
+        # print(f'cleaning {lbl}')
         if os.path.exists(lbl):
             # print('  ', lbl)
             pass
         else:
-            print(f'  the given label file does not exist: {lbl}')
+            # print(f'  the given label file does not exist: {lbl}')
             continue
         # cnt = 0
         f = open(lbl, "rb")
@@ -447,51 +512,72 @@ if __name__ == '__main__':
                             pass
 
         f.close()
-    print(len(preglob))
 
-    preglob_tr, preglob_va = train_test_split(preglob, shuffle=False, test_size=0.3)
+    preglob_tr, preglob_va = train_test_split(preglob, shuffle=False, test_size=0.2)
 
     train_ds = tf.data.Dataset.from_tensor_slices(preglob_tr)
+    train_ds = train_ds.shuffle(BUFFER_SIZE)  # Shuffle early for better randomness
     train_ds = train_ds.map(load_rle_train, num_parallel_calls=tf.data.experimental.AUTOTUNE)
-    train_ds = train_ds.shuffle(BUFFER_SIZE).batch(BATCH_SIZE)
+    train_ds = train_ds.batch(BATCH_SIZE)  # Batch after transformation
+    train_ds = train_ds.prefetch(tf.data.experimental.AUTOTUNE)  # Prefetch to optimize pipeline
+
 
     test_ds = tf.data.Dataset.from_tensor_slices(preglob_va)
-    test_ds = test_ds.map(load_rle_test)
-    test_ds = test_ds.shuffle(BUFFER_SIZE).batch(BATCH_SIZE)
+    test_ds = test_ds.shuffle(BUFFER_SIZE)  # Shuffle early for better randomness
+    test_ds = test_ds.map(load_rle_test, num_parallel_calls=tf.data.experimental.AUTOTUNE)
+    test_ds = test_ds.batch(BATCH_SIZE)  # Batch after transformation
+    test_ds = test_ds.prefetch(tf.data.experimental.AUTOTUNE)  # Prefetch to optimize pipeline
+
 
     # strategy = tf.distribute.MirroredStrategy()
     # print("Number of devices: {}".format(strategy.num_replicas_in_sync))
-
-    # # Open a strategy scope.
     # with strategy.scope():
-    generator = generator(use_bias, ker_reg, ker_con, bias_reg, bias_con, act_reg, ker=3)
-    generator.compile(optimizer=tf.keras.optimizers.Adam(learning_rate=5e-6,
-                            beta_1=0.9, beta_2=0.99, clipnorm=1.0),
-                    # loss=lossFunc,
-                    # loss_weights = lossWeights,
-                    loss=tf.keras.losses.BinaryCrossentropy(from_logits=logits),
+    generator = generator(use_bias, ker_reg, ker_con, bias_reg, bias_con, act_reg, dropout, ker=3)
+    generator.compile(optimizer=tf.keras.optimizers.AdamW(learning_rate=1e-5, beta_1=0.9, beta_2=0.99),
+                    loss=tf.keras.losses.BinaryFocalCrossentropy(alpha=0.5, gamma=2.0, from_logits=logits),
                     metrics=[tf.keras.metrics.BinaryCrossentropy(from_logits=logits), \
-                                tf.keras.metrics.FalseNegatives(name='FN'), \
-                                tf.keras.metrics.FalsePositives(name='FP'), \
-                                tf.keras.metrics.TrueNegatives(name='TN'), \
-                                tf.keras.metrics.TruePositives(name='TP')])
+                            tf.keras.metrics.BinaryAccuracy(threshold=thresh), \
+                            tf.keras.metrics.F1Score(threshold=thresh), \
+                            tf.keras.metrics.AUC()])
     generator.summary()
 
-    print(len(preglob), 'training samples: ', len(preglob_tr), 'training, ', len(preglob_va), 'testing')
+    print(f'\n\n {len(preglob)} samples: {len(preglob_tr)} training, {len(preglob_va)} validation\n\n')
 
-    callbacks = [tf.keras.callbacks.ReduceLROnPlateau(monitor='val_binary_crossentropy', factor=0.5, patience=3, min_lr=0),
-                 tf.keras.callbacks.EarlyStopping(monitor='val_binary_crossentropy', patience=9),
-                 tf.keras.callbacks.ModelCheckpoint(filepath=filename+'.weights.h5', save_weights_only=True, save_best_only=True, monitor='val_binary_crossentropy', verbose=2)]
-    # if os.path.isfile(filename+'.weights.h5'):
-    #     generator.load_weights(filename+'.weights.h5')
-    # else:
-    #     pass
-    generator.fit(train_ds, validation_data=test_ds, epochs=epochs, callbacks=callbacks, verbose=1)
+    if train:
+        print(f'\n\ntraining {filename}\n\n')
+        callbacks = [tf.keras.callbacks.ReduceLROnPlateau(monitor='val_loss', factor=0.5, patience=3, min_lr=0),
+                tf.keras.callbacks.EarlyStopping(monitor='val_loss', patience=9),
+                tf.keras.callbacks.ModelCheckpoint(filepath=filename+'.weights.h5', save_weights_only=True, save_best_only=True, monitor='val_loss', verbose=2)]
+        history = generator.fit(train_ds, validation_data=test_ds, epochs=epochs, callbacks=callbacks, verbose=1)
+        print(history.history.keys())
+        fig, ax = plt.subplots(2,2)
 
-    converter = tf.lite.TFLiteConverter.from_keras_model(generator)
-    converter.optimizations = [tf.lite.Optimize.DEFAULT]
-    tflite_model = converter.convert()
-    with open(filename+'.tflite', 'wb') as f:
-        f.write(tflite_model)
+        ax[0,0].plot(history.history['loss'], c='g')
+        ax[0,0].plot(history.history['val_loss'], c='b')
+
+        ax[0,1].plot(history.history['binary_crossentropy'], c='g')
+        ax[0,1].plot(history.history['val_binary_crossentropy'], c='b')
+
+        ax[1,0].plot(history.history['auc'], c='g')
+        ax[1,0].plot(history.history['val_auc'], c='b')
+
+        ax[1,1].plot(history.history['f1_core'], c='g')
+        ax[1,1].plot(history.history['val_f1_score'], c='b')
+
+        plt.show()
+    if tSNE:
+        # filename = '/home/harey/birdseye/models/birdseye_960_600_006.weights.h5'
+        print(f'\n\ncomputing t-SNE for {filename}\n\n')
+        model = load_trained_model(generator, filename)
+        
+        embeddings, labels = get_embeddings(model, test_ds)
+        visualize_embeddings(embeddings, labels)
+    if tflite_conv:
+        print(f'\n\nconverting {filename} to tflite\n\n')
+        converter = tf.lite.TFLiteConverter.from_keras_model(generator)
+        converter.optimizations = [tf.lite.Optimize.DEFAULT]
+        tflite_model = converter.convert()
+        with open(filename+'.tflite', 'wb') as f:
+            f.write(tflite_model)
 else:
     print('train.py ran as import')
