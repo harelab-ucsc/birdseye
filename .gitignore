@@ -3,3 +3,6 @@
 # macOS
 .DS_Store
 */.DS_Store
+examples/__pycache__/*
+launch/__pycache__/*
+
