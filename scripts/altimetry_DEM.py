@@ -58,7 +58,7 @@ class BagProcessor:
         self.train_ds = []
 
         # self.kernel = C(1.0) * Matern(length_scale=0.5, length_scale_bounds=(1e-15, 1e5), nu=2.5) + WhiteKernel(noise_level=1e-2, noise_level_bounds=(1e-15, 1e5))
-        self.kernel = C(1.0) * RationalQuadratic(length_scale=1.0, alpha=2e-06, length_scale_bounds=(1e-5, 1e5), alpha_bounds=(1e-15, 1e5)) #+ WhiteKernel(noise_level=1e-2, noise_level_bounds=(1e-18, 1e5))
+        self.kernel = C(1.0) * RationalQuadratic(length_scale=0.001, alpha=2e-06, length_scale_bounds=(1e-5, 1e5), alpha_bounds=(1e-15, 1e5)) #+ WhiteKernel(noise_level=1e-2, noise_level_bounds=(1e-18, 1e5))
         # self.kernel = C(1.0) * RBF(length_scale=0.5, length_scale_bounds=(1e-15, 1e5)) #+ WhiteKernel(noise_level=1e-2, noise_level_bounds=(1e-15, 1e5))
         self.GP = GaussianProcessRegressor( \
             kernel=self.kernel, \

@@ -1,4 +1,0 @@
-/home/akorycki/oasis/birdseye/benchmark/build/CMakeFiles/Benchmark.dir
-/home/akorycki/oasis/birdseye/benchmark/build/CMakeFiles/Calibrate.dir
-/home/akorycki/oasis/birdseye/benchmark/build/CMakeFiles/edit_cache.dir
-/home/akorycki/oasis/birdseye/benchmark/build/CMakeFiles/rebuild_cache.dir

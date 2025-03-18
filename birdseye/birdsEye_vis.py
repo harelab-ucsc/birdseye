@@ -12,35 +12,48 @@ from AMI_ContourClassFamily import Contour
 from birdsEye import birdsEye
 
 
-# file_root = '/home/mwmaster/parsed_flights/2025_01_17/'
-file_root = '/home/mwmaster/parsed_flights/2025_01_21/'
-# file_root = '/home/mwmaster/parsed_flights/2025_01_20/'
+file_roots = [
+    '/home/mwmaster/parsed_flights/2025_03_03/', \
+    '/home/mwmaster/parsed_flights/2025_03_10/'
+]
 # datasets = glob2.glob(os.path.join(file_root, 'acceptance_0*_rect/out_dict.pkl'))
-datasets = glob2.glob(os.path.join(file_root, 'acceptance_01*_rect/out_dict.pkl'))
-# datasets = glob2.glob(os.path.join(file_root, 'acceptance_02*_rect/out_dict.pkl'))
-datasets += glob2.glob(os.path.join(file_root, 'acceptance_05*_rect/out_dict.pkl'))
-datasets += glob2.glob(os.path.join(file_root, 'acceptance_06*_rect/out_dict.pkl'))
-
+datasets = []
+for file_root in file_roots:
+    datasets += glob2.glob(os.path.join(file_root, 'acceptance_01*_rect/out_dict.pkl'))
+    datasets += glob2.glob(os.path.join(file_root, 'acceptance_02*_rect/out_dict.pkl'))
 print(np.array(datasets))
-data_raw = {}
-data_rect = {}
+
+data_02 = {}
+data_01 = {}
 for file in datasets:
     with open(file, 'rb') as f:
         tmp = pickle.load(f)
-        if '_rect' in file:
+        if 'acceptance_01' in file:
             for key in tmp.keys():
                 # print('rect: ', key)
                 try:
-                    data_rect[key] += tmp[key]
+                    data_01[key] += tmp[key]
                 except KeyError:
-                    data_rect[key] = tmp[key]
+                    try:
+                        data_01[key] = tmp[key].tolist()
+                    except:
+                        data_01[key] = tmp[key]
+                except ValueError:
+                    # print(data_01[key].shape)
+                    # print(tmp[key].shape)
+                    data_01[key] += tmp[key].tolist()
         else:
             for key in tmp.keys():
                 # print('raw: ', key)
                 try:
-                    data_raw[key] += tmp[key]
+                    data_02[key] += tmp[key]
                 except KeyError:
-                    data_raw[key] = tmp[key]
+                    try:
+                        data_02[key] = tmp[key].tolist()
+                    except:
+                        data_02[key] = tmp[key]
+                except ValueError:
+                    data_02[key] += tmp[key].tolist()
 
 
 fig, ax = plt.subplots(1, 2, figsize=(12,6))
@@ -49,7 +62,7 @@ ax[0].set_ylim(-2,2)
 ax[0].set_aspect('equal')
 ax[0].set_xlabel('X (meters)', fontsize = 16)
 ax[0].set_ylabel('Y (meters)', fontsize = 16)
-ax[0].scatter(0.0, 0.0, c='r', s=100, marker='s', label='Truth')#0.0,
+ax[0].scatter(0.0, 0.0, c='k', s=100, marker='s', label='Truth')#0.0,
 
 ax[1].set_xlim(-1920/2, 1920/2)
 ax[1].set_ylim(-1080/2,1080/2)
@@ -61,33 +74,45 @@ ax[1].set_ylabel('Y (pixels)', fontsize = 16)
 ax[1].scatter(0.0, 0.0, c='k', s=20, label='Origin')
 
 fig2, ax2 = plt.subplots(1, 2, figsize=(12,6))
+# fig3, ax3 = plt.subplots(1, 3, figsize=(18,6))
 
-for i, data in enumerate([data_raw, data_rect]):
-    print(data.keys())  # dict_keys(['april_3D', 'bproj', 'clicks'])
+for i, data in enumerate([data_01, data_02]):
     if len(data.keys()) == 0:
         continue
     if i == 0:
         colors = ['g', 'r', 'b']
         marker = '+'
-        tmp = 'Raw'
+        tmp = '01'
     elif i == 1:
         colors = ['m', 'c', 'y']
         marker = 'x'
-        tmp = 'Rect'
-    print(data.keys())  # dict_keys(['april_3D', 'bproj', 'clicks'])
+        tmp = '02'
+    # print(data.keys())  # dict_keys(['april_3D', 'bproj', 'clicks'])
+    print()
     bproj = np.array(data['bproj'])  # back-projection of clicks (to and from pixel space)
     reproj = np.array(data['reproj'])
     print('bproj:    ', type(bproj), len(bproj), len(bproj[0]))
     print('reproj:    ', type(reproj), len(reproj), len(reproj[0]))
     print()
+    gt_c_bproj = np.array(data['gt_c_bproj'])
+    gt_a_bproj = np.array(data['gt_a_bproj'])
+    gt_a_reproj = np.array(data['gt_a_reproj'])
 
-    print('AprilTag 3D-projection accuracy (meters): \n', bproj.mean(axis=0), '+/- ', bproj.std(axis=0))
+    print('AprilTag 3D-projection accuracy (wrt clicks_3D, meters): \n', bproj.mean(axis=0), '+/- ', bproj.std(axis=0))
+    print('AprilTag 3D-projection accuracy (wrt clicks_gt, meters): \n', gt_a_bproj.mean(axis=0), '+/- ', gt_a_bproj.std(axis=0))
     print('Click projection accuracy (pixels): \n', reproj.mean(axis=0), '+/- ', reproj.std(axis=0))
 
-    ax[0].scatter(bproj[:,0], bproj[:,1], c=colors[0], alpha=0.1, label=tmp+'BackProj')#bproj[:,2],
-    ax[0].scatter(bproj[:,0].mean(), bproj[:,1].mean(), c=colors[2], marker=marker, label=tmp+'Mean Error')# bproj[:,2].mean,
-    ax[1].scatter(reproj[:,0], reproj[:,1], c=colors[1], alpha=0.1, label=tmp+'Reproj')
+    base = 1
+
+    ax[0].scatter(bproj[:,0], bproj[:,1], c=colors[0], s=6*base, alpha=0.1, label=tmp+'BackProj')#bproj[:,2],
+    # ax[0].scatter(gt_c_bproj[:,0].mean(), gt_c_bproj[:,1].mean(), c='k', marker=marker, label=tmp+'Mean Error')# bproj[:,2].mean,
+    ax[0].scatter(gt_c_bproj[:,0], gt_c_bproj[:,1], c=colors[1], s=4*base, alpha=0.1, label=tmp+'gtClickBackProj')
+    # ax[0].scatter(gt_a_bproj[:,0].mean(), gt_a_bproj[:,1].mean(), c='k', marker=marker, label=tmp+'Mean Error')# bproj[:,2].mean,
+    ax[0].scatter(gt_a_bproj[:,0], gt_a_bproj[:,1], c=colors[2], s=2*base, alpha=0.1, label=tmp+'gtAprilBackProj')
     ax[0].legend(fontsize = 12)
+
+    ax[1].scatter(reproj[:,0], reproj[:,1], s=6*base, c=colors[0], alpha=0.1, label=tmp+'Reproj')
+    ax[1].scatter(gt_a_reproj[:,0], gt_a_reproj[:,1], c=colors[1], s=4*base, alpha=0.1, label=tmp+'aprilReproj')
     ax[1].legend(fontsize = 12)
 
     lbl = tmp+f'BackProj Norm: {np.linalg.norm(bproj, axis=1).mean():.3f} +/- {np.linalg.norm(bproj, axis=1).std():.3f} m'
@@ -97,4 +122,14 @@ for i, data in enumerate([data_raw, data_rect]):
     ax2[0].legend(fontsize=12)
     ax2[1].legend(fontsize=12)
     print()
+
+    # ax3[0].plot(gt_c_bproj[:,0], gt_c_bproj[:,1], label='click_bproj')
+    # ax3[0].plot(gt_a_bproj[:,0], gt_a_bproj[:,1], label='april_bproj')
+    # ax3[1].plot(gt_c_bproj[:,0], label='click_bproj')
+    # ax3[1].plot(gt_a_bproj[:,0], label='april_bproj')
+    # ax3[1].plot(gt_c_bproj[:,1], label='click_bproj')
+    # ax3[2].plot(gt_a_bproj[:,1], label='april_bproj')
+    # ax3[2].legend(fontsize=12)
+
 plt.show()
+print()
