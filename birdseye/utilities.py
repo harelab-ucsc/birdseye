@@ -73,8 +73,7 @@ def string_list_converter(foo):
 def poseRowToTransform(pose):
     #Given a row from the db, produce a 4x4 homogeneous transform
     #Return as a 4x4 nparray
-    tmp = R.from_quat(pose[3:7]).as_euler('xyz')#, degrees=True)
-    rot = R.from_euler('xyz', [tmp[0], tmp[1], tmp[2]]).as_matrix()
+    rot = R.from_quat(pose[3:7]).as_matrix()
     t = np.array([pose[0],pose[1],pose[2]])
     T = np.eye(4)
     T[:3,:3] = rot
