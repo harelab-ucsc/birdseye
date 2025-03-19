@@ -92,6 +92,7 @@ class birdsEye():
         self.K = np.array([[tmp[2][0],0.0,tmp[2][2]], \
                            [0.0,tmp[2][1],tmp[2][3]], \
                            [0.0,0.0,1.0]])
+        print(self.K)
         self.K += np.array([[  0.0,   0.0, -90.0],
                             [  0.0,   0.0,   0.0],
                             [  0.0,   0.0,   0.0]])
@@ -139,7 +140,7 @@ class birdsEye():
             self.at_detector = Detector(
                 families="tag36h11",
                 nthreads=2,
-                quad_decimate=2.0,
+                quad_decimate=1.0,
                 quad_sigma=0.0,
                 refine_edges=1,
                 decode_sharpening=0.25,
@@ -203,35 +204,23 @@ class birdsEye():
         if List2D is not None:
             List2D = np.array(List2D)
 
-            # T_ENU_NED = np.array([[0, 1,  0, 0],
-            #                       [1, 0,  0, 0],
-            #                       [0, 0,  -1, 0],
-            #                       [0, 0,  0, 1]])
-
             for p in List2D:
                 # Homogeneous pixel coordinate
-                # print(p)
-                p = np.array([p[0], p[1], 1]).T;
+                p = np.array([p[0], p[1], 1]).T
+
                 # Transform pixel in Camera coordinate frame
                 pc = np.linalg.inv(self.K) @ p
-                # print(pc, pc.shape)
                 pc = np.hstack((pc,1.0))
-                # pc = T_ENU_NED@pc
-                # print(pc, pc.shape)
 
                 # Transform pixel in World coordinate frame
                 pw = self.T_WC @ pc
 
-                # Transform camera origin in World coordinate frame
-                cam = np.array([0,0,0,1]).T
-                cam_world = self.T_WC @ cam
-
                 # Find a ray from camera to 3d point
-                vector = pw - cam_world
+                vector = pw - self.T_WC[:,3]
                 unit_vector = vector / np.linalg.norm(vector)
 
                 # Point scaled along this ray
-                p3D = cam_world - self.radalt*unit_vector
+                p3D = self.T_WC[:,3] - self.radalt*unit_vector
                 List3D.append(p3D.tolist())
 
         return List3D
@@ -261,19 +250,9 @@ class birdsEye():
         if List3D.shape[1] == 3:
             List3D = np.hstack((List3D, np.ones((List3D.shape[0], 1))))  # Add w=1
 
-        # ENU to NED conversion matrix (same as in _2Dto3D)
-        # T_ENU_NED = np.array([[0, 1,  0, 0],
-        #                       [1, 0,  0, 0],
-        #                       [0, 0,  -1, 0],
-        #                       [0, 0,  0, 1]])
-
-        # Convert world points from NED to ENU (reverse of _2Dto3D transformation)
-        # List3D = np.dot(np.linalg.inv(T_ENU_NED), List3D.T).T
-
         # Transform world points into the camera frame
         cam_frame_points = np.linalg.inv(self.T_WC)@List3D.T  # 4xN result
-        # cam_frame_points = T_ENU_NED@cam_frame_points
-
+        
         # Apply intrinsic matrix to project into image plane
         projected = self.K@cam_frame_points[:-1, :]  # Remove homogeneous w
 
@@ -455,13 +434,10 @@ class birdsEye():
         self.radalt = frame[8]
         self.correct_altitude(frame)
         clicks = np.hstack((clks, np.ones_like(clks[:,0]).reshape(-1,1)*(frame[2]-self.radalt)))
-        clicks = (np.array([[0,1,0],[1,0,0],[0,0,-1]])@clicks.T).T
-
 
         # convert pose to 4x4 homogeneous transform
         T_WI = poseRowToTransform(frame[:7])  # our base link maps from the world origin to the base link
-        T_WI[:3,3] = np.array([[0,1,0],[1,0,0],[0,0,-1]])@T_WI[:3,3]
-        T_WI[:3,:3] = np.array([[0,1,0],[1,0,0],[0,0,-1]])@T_WI[:3,:3]
+        # T_WI[:3,:3] = np.array([[0,1,0],[1,0,0],[0,0,-1]])@T_WI[:3,:3]@np.array([[0,1,0],[1,0,0],[0,0,-1]])
 
         self.T_WC = T_WI@self.T_IC
 
@@ -489,18 +465,15 @@ class birdsEye():
         _ = plotTransform(self.ax, self.T_WC)
 
         self.ax.set_xlim(T_WI[0,3]-15, T_WI[0,3]+15)
-        self.ax.set_xlabel('East (m)')
+        self.ax.set_xlabel('North (m)')
         self.ax.set_ylim(T_WI[1,3]-15, T_WI[1,3]+15)
-        self.ax.set_ylabel('North (m)')
-        self.ax.set_zlim(T_WI[2,3]+20, T_WI[2,3]-1)
+        self.ax.set_ylabel('East (m)')
+        self.ax.set_zlim(T_WI[2,3]-20, T_WI[2,3]+1)
         self.ax.set_zlabel('Z (m)')
 
         self.ax.set_title(f'Time: {frame[-1]}')
         self.ax.set_box_aspect([1,1,1])
         self.ax.set_proj_type('ortho')
-
-        # if self.frame_index == 1:
-        #     pdb.set_trace()
 
         self._3DFrameVertices = self._2Dto3D(self._2DFrameVertices)
         self.ax.scatter(np.array(self._3DFrameVertices)[:,0], \
@@ -659,7 +632,9 @@ class birdsEye():
 
                 if self.apriltags:
                     state, april_2D, tag_pose, rect = self.apriltag_detect(rect)
+                    # print(april_2D)
                     april_3D = self._2Dto3D(april_2D)
+                    # print("aprils:", april_2D, april_3D)
                     if april_3D is not None:
                         self.april_3D += april_3D
 
@@ -667,6 +642,7 @@ class birdsEye():
                 inner, i_ind, _ = self._2DBoxCheck(clicks_2D, box='inner')
                 outer, o_ind, _ = self._2DBoxCheck(clicks_2D, box='outer')
                 clicks_2D, click_ind, clicks_3D = self._2DBoxCheck(clicks_2D, stats=self.stats)
+                # print("clicks", clicks, clicks_2D, clicks_3D)
                 if clicks_3D is not None:
                     self.clicks_3D += clicks_3D
 
@@ -718,6 +694,7 @@ if __name__ == '__main__':
     import argparse
     parser = argparse.ArgumentParser()
     parser.add_argument("-s", "--src_dir", help="path to source directory (default: parsed_flight)")
+    parser.add_argument("-p", "--plot", help="Boolean, whether or not to plot visualizations (default: True)")
     args = vars(parser.parse_args())
 
     if args['src_dir'] is not None:
@@ -728,8 +705,6 @@ if __name__ == '__main__':
     print(f'Processing data from {dir_path}')
 
     db_name = 'flight_data'
-    # dbc = dbConnector(os.path.join(dir_path,db_name))
-    tst = birdsEye(db_name=db_name, img_dir=dir_path, apriltags=True, plot=False)
+    tst = birdsEye(db_name=db_name, img_dir=dir_path, apriltags=True, plot=args['plot'])
 
     tst.parseFlightDatabase()
-    # tst.detectionProcess()

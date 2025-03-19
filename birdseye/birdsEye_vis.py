@@ -13,14 +13,14 @@ from birdsEye import birdsEye
 
 
 file_roots = [
-    '/home/mwmaster/parsed_flights/2025_03_03/', \
-    '/home/mwmaster/parsed_flights/2025_03_10/'
+    # '/home/mwmaster/parsed_flights/2025_03_03/', \
+    # '/home/mwmaster/parsed_flights/2025_03_10/', \
+    '/home/mwmaster/parsed_flights/2025_03_18/'
 ]
-# datasets = glob2.glob(os.path.join(file_root, 'acceptance_0*_rect/out_dict.pkl'))
+
 datasets = []
 for file_root in file_roots:
-    datasets += glob2.glob(os.path.join(file_root, 'acceptance_01*_rect/out_dict.pkl'))
-    datasets += glob2.glob(os.path.join(file_root, 'acceptance_02*_rect/out_dict.pkl'))
+    datasets += glob2.glob(os.path.join(file_root, 'acceptance_0*_rect/out_dict.pkl'))
 print(np.array(datasets))
 
 data_02 = {}

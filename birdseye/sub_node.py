@@ -149,9 +149,9 @@ class subscriberNode(rclpy.node.Node):
             for line in reader:
                 # breakdown line
                 # self.get_logger().info(f'{line}')
-                u = utm.from_latlon(float(line[0]), float(line[1]))
+                u = utm.from_latlon(float(line[0]), float(line[1]))  # returns easting, northing, zone number, zone letter
                 tag = int(line[-1][-1])
-                data.append([u[0], u[1], float(line[2]), float(line[3]), tag])
+                data.append([u[1], u[0], float(line[2]), float(line[3]), tag])  # save x:northing, y:easting
         self.dbc.insertClicks(f"clicks_{self.db_name}", data)
         self.get_logger().info('...Done reading clicks CSV file.\n')
 
@@ -327,9 +327,9 @@ class subscriberNode(rclpy.node.Node):
             time2 = f'{sec2}.{nsec2}'
             self.ins_times = [time1, time2]
 
-            u = utm.from_latlon(msg.lla[0], msg.lla[1])
-            self.pos = [u[0], u[1], msg.lla[2]]
-            self.quat = [msg.qn2b[1], msg.qn2b[2], msg.qn2b[3], msg.qn2b[0]]
+            u = utm.from_latlon(msg.lla[0], msg.lla[1])  # returns easting, northing, zone number, zone letter
+            self.pos = [u[1], u[0], msg.lla[2]]  # save x:northing, y:easting
+            self.quat = [msg.qn2b[1], msg.qn2b[2], msg.qn2b[3], msg.qn2b[0]]  # comes in scalar-first quaternion format, save as scalar-last
 
             self.update_check_list()
 

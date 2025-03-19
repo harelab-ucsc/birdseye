@@ -24,7 +24,7 @@ import matplotlib.pyplot as plt
 
 
 class BagProcessor:
-    def __init__(self, input_bag_path, output_bag_path, ds_dir, image_topic, ins_topic, intrinsics_path, rectify, sync):
+    def __init__(self, input_bag_path, ds_dir, output_bag_path, image_topic, ins_topic, intrinsics_path, rectify, sync):
         self.input_bag_path = input_bag_path
         self.output_bag_path = output_bag_path
         self.image_topic = image_topic
@@ -93,7 +93,7 @@ class BagProcessor:
             writer.create_topic(topic)
 
         # Ensure output directories exist
-        os.makedirs("images", exist_ok=True)
+        # os.makedirs("images", exist_ok=True)
 
         print('reading bag')
         # Read and process messages
@@ -145,10 +145,10 @@ class BagProcessor:
                         updated_image = self.rectify_image(updated_image)
 
                     timestamp_str = f"{ins_timestamp.sec}.{ins_timestamp.nanosec:09d}"
-                    self.save_image(updated_image, timestamp_str)
+                    # self.save_image(updated_image, timestamp_str)
 
                     # Append pose to JSON
-                    self.append_pose_to_json(ins_msg, updated_image, timestamp_str)
+                    # self.append_pose_to_json(ins_msg, updated_image, timestamp_str)
 
                     new_image = serialize_message(updated_image)
                     writer.write(self.image_topic, new_image, ins_timestamp_int)
@@ -165,7 +165,7 @@ class BagProcessor:
         plt.savefig(os.path.join(self.ds_dir,'hist.png'))
         plt.show()
 
-        self.save_json()
+        # self.save_json()
         writer.close()
         print(f'--> {sum(self.paired_flags)} images of {len(self.image_msgs)} matched')
         print(f'--> time correction mean: {mean} sec, std: {std} sec')
