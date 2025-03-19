@@ -3,3 +3,6 @@
 # macOS
 .DS_Store
 */.DS_Store
+launch/__pycache__/*
+benchmark/build/*
+birdseye/__pycache__/*
