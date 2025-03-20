@@ -71,7 +71,7 @@ def plotTriad(ax, x, y, z, roll, pitch, yaw, colors, labels):
     # Triad axes in local frame (before rotation)
     x_axis = np.array([L, 0, 0])  # Forward
     y_axis = np.array([0, L, 0])  # Right
-    z_axis = np.array([0, 0, -L])  # Down
+    z_axis = np.array([0, 0, L])  # Down
 
     # Rotate axes (yaw → pitch → roll)
     x_axis = r @ x_axis

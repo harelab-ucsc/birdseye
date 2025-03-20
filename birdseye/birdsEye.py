@@ -99,19 +99,20 @@ class birdsEye():
         self.D = np.array(tmp[3])
         self.T_WC = None
         self.T_IC = np.array(tmp[4])
-        # self.r = 0
-        # self.p = 0
-        # self.y = 0
-        # self.mod = 0
-        # r_adj = R.from_euler('xyz', \
-        #                      [self.r*self.mod, self.p*self.mod, self.y*self.mod], \
-        #                      degrees=True).as_matrix()
-        # t_adj = np.array([0,
-        #                   0,
-        #                   0])
-        # self.T_IC[:3,3] = r_adj@self.T_IC[:3,3]
-        # self.T_IC[:3,3] = t_adj + self.T_IC[:3,3]
-        # self.T_IC[:3,:3] = r_adj@self.T_IC[:3,:3]
+        print(self.T_IC)
+        self.r = 0
+        self.p = 0
+        self.y = 0
+        self.mod = 1
+        r_adj = R.from_euler('xyz', \
+                              [self.r*self.mod, self.p*self.mod, self.y*self.mod], \
+                              degrees=True).as_matrix()
+        t_adj = np.array([0,
+                          0,
+                          0])
+        self.T_IC[:3,3] = r_adj@self.T_IC[:3,3]
+        self.T_IC[:3,3] = t_adj + self.T_IC[:3,3]
+        self.T_IC[:3,:3] = r_adj@self.T_IC[:3,:3]
 
         self._2DFrameVertices = ((0,0), \
                                  (self.res[0] - 1, 0), \
@@ -428,6 +429,17 @@ class birdsEye():
         f.close()
         print(f'    Annotation saved: frame index {self.frame_index}, {save_name}.txt, {label}')
 
+    def ned_to_enu_se3(self, imu_pose_ned):
+        R_ned_to_enu = np.array([[0, 1,  0],
+                                [1, 0,  0],
+                                [0, 0, -1]])
+
+        T_ned_to_enu = np.eye(4)
+        T_ned_to_enu[:3, :3] = R_ned_to_enu
+
+        imu_pose_enu = T_ned_to_enu @ imu_pose_ned @ T_ned_to_enu.T
+        return imu_pose_enu
+
 
     def frameProcessSetup(self, frame, clks):
         # make homogeneous coordinates for clicks wrt drone pose and radalt
@@ -436,10 +448,13 @@ class birdsEye():
         clicks = np.hstack((clks, np.ones_like(clks[:,0]).reshape(-1,1)*(frame[2]-self.radalt)))
 
         # convert pose to 4x4 homogeneous transform
-        T_WI = poseRowToTransform(frame[:7])  # our base link maps from the world origin to the base link
+        T_WI_NED = poseRowToTransform(frame[:7])  # our base link maps from the world origin to the base link
         # T_WI[:3,:3] = np.array([[0,1,0],[1,0,0],[0,0,-1]])@T_WI[:3,:3]@np.array([[0,1,0],[1,0,0],[0,0,-1]])
+        #T_WI_ENU = self.ned_to_enu_se3(T_WI_NED)
+        #T_IC_ENU = self.ned_to_enu_se3(self.T_IC)
 
-        self.T_WC = T_WI@self.T_IC
+        self.T_WC = T_WI_NED@self.T_IC
+        #self.T_WC = T_WI_ENU@T_IC_ENU
 
         if frame[7] == 3:
             self.rtk_tracker[0] += 1
@@ -455,7 +470,7 @@ class birdsEye():
             self.RTK_watchdog = 0
 
         if self.plot:
-            self.framePlotterSetup(frame, clicks, T_WI)
+            self.framePlotterSetup(frame, clicks, T_WI_NED)
 
         return clicks
 
@@ -627,7 +642,11 @@ class birdsEye():
             clicks_3D = None
 
             if self.radalt > 3.0:
-                img = cv2.imread(frame[-5])
+                # changing to my filepath
+                modified_img_path = frame[-5].replace('/home/mwmaster/', '/media/akorycki/Data/')
+                img = cv2.imread(modified_img_path)
+
+                # rectify image distortion
                 rect = cv2.remap(img, map1, map2, interpolation=cv2.INTER_LINEAR)
 
                 if self.apriltags:
