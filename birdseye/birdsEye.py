@@ -92,7 +92,9 @@ class birdsEye():
         self.K = np.array([[tmp[2][0],0.0,tmp[2][2]], \
                            [0.0,tmp[2][1],tmp[2][3]], \
                            [0.0,0.0,1.0]])
-        print(self.K)
+        # self.K = np.array([[tmp[2][1],0.0,tmp[2][3]], \
+        #                    [0.0,tmp[2][0],tmp[2][2]], \
+        #                    [0.0,0.0,1.0]])
         self.K += np.array([[  0.0,   0.0, -90.0],
                             [  0.0,   0.0,   0.0],
                             [  0.0,   0.0,   0.0]])
@@ -253,7 +255,7 @@ class birdsEye():
 
         # Transform world points into the camera frame
         cam_frame_points = np.linalg.inv(self.T_WC)@List3D.T  # 4xN result
-        
+
         # Apply intrinsic matrix to project into image plane
         projected = self.K@cam_frame_points[:-1, :]  # Remove homogeneous w
 
@@ -427,9 +429,10 @@ class birdsEye():
         # print(line)
         f.write(line)
         f.close()
-        print(f'    Annotation saved: frame index {self.frame_index}, {save_name}.txt, {label}')
+        print(f'    Annotation saved: {self.frame_index}, {save_name}.txt, {label}')
 
-    def ned_to_enu_se3(self, imu_pose_ned):
+
+    def ned_to_enu_se3(self, pose_ned):
         R_ned_to_enu = np.array([[0, 1,  0],
                                 [1, 0,  0],
                                 [0, 0, -1]])
@@ -437,24 +440,25 @@ class birdsEye():
         T_ned_to_enu = np.eye(4)
         T_ned_to_enu[:3, :3] = R_ned_to_enu
 
-        imu_pose_enu = T_ned_to_enu @ imu_pose_ned @ T_ned_to_enu.T
-        return imu_pose_enu
+        pose_enu = T_ned_to_enu @ pose_ned @ T_ned_to_enu.T
+        return pose_enu
 
 
     def frameProcessSetup(self, frame, clks):
         # make homogeneous coordinates for clicks wrt drone pose and radalt
         self.radalt = frame[8]
         self.correct_altitude(frame)
-        clicks = np.hstack((clks, np.ones_like(clks[:,0]).reshape(-1,1)*(frame[2]-self.radalt)))
 
         # convert pose to 4x4 homogeneous transform
         T_WI_NED = poseRowToTransform(frame[:7])  # our base link maps from the world origin to the base link
-        # T_WI[:3,:3] = np.array([[0,1,0],[1,0,0],[0,0,-1]])@T_WI[:3,:3]@np.array([[0,1,0],[1,0,0],[0,0,-1]])
-        #T_WI_ENU = self.ned_to_enu_se3(T_WI_NED)
-        #T_IC_ENU = self.ned_to_enu_se3(self.T_IC)
+        T_WI_ENU = self.ned_to_enu_se3(T_WI_NED)
+        # T_IC_ENU = self.ned_to_enu_se3(self.T_IC)
 
         self.T_WC = T_WI_NED@self.T_IC
-        #self.T_WC = T_WI_ENU@T_IC_ENU
+        self.T_WC = self.ned_to_enu_se3(self.T_WC)
+
+        clicks = np.hstack((clks, np.ones_like(clks[:,0]).reshape(-1,1)*(T_WI_ENU[2,3]-self.radalt)))
+
 
         if frame[7] == 3:
             self.rtk_tracker[0] += 1
@@ -470,7 +474,7 @@ class birdsEye():
             self.RTK_watchdog = 0
 
         if self.plot:
-            self.framePlotterSetup(frame, clicks, T_WI_NED)
+            self.framePlotterSetup(frame, clicks, T_WI_ENU)
 
         return clicks
 
@@ -523,7 +527,7 @@ class birdsEye():
                     color = 'r'
                 else:
                     color = 'k'
-                self.ax.scatter(tmp[0], tmp[1], tmp[2], c=color, alpha=0.1, s=32)
+                self.ax.scatter(tmp[1], tmp[0], tmp[2], c=color, alpha=0.1, s=32)
         else:
             for tmp in self.data[:self.frame_index]:
                 if tmp[7] == 3:
@@ -534,7 +538,7 @@ class birdsEye():
                     color = 'r'
                 else:
                     color = 'k'
-                self.ax.scatter(tmp[0], tmp[1], tmp[2], c=color, alpha=0.1, s=32)
+                self.ax.scatter(tmp[1], tmp[0], tmp[2], c=color, alpha=0.1, s=32)
 
 
     def frameProcessPlotter(self, frame, rect, clicks_2D, april_3D):
@@ -608,8 +612,8 @@ class birdsEye():
     def parseFlightDatabase(self):
         clks = self.dbc.getFrom('x, y', f"clicks_{self.db_name}")
         clks = np.array(clks)
-        # print(clks)
-        # sys.exit()
+        print(clks.shape)
+        clks = clks@np.array([[0,1],[1,0]])
 
         # load every pose entry saved by `sub_node.py`; each row is a pose
         self.data = self.dbc.getFrom('x, y, z, q, u, a, t, rtk_status, radalt, save_loc, cam_time1, cam_time2, ins_time1, ins_time2', f'{self.sensor}_images_{self.db_name}')
@@ -643,7 +647,8 @@ class birdsEye():
 
             if self.radalt > 3.0:
                 # changing to my filepath
-                modified_img_path = frame[-5].replace('/home/mwmaster/', '/media/akorycki/Data/')
+                # modified_img_path = frame[-5].replace('/home/mwmaster/', '/media/akorycki/Data/')
+                modified_img_path = frame[-5]
                 img = cv2.imread(modified_img_path)
 
                 # rectify image distortion
@@ -651,9 +656,7 @@ class birdsEye():
 
                 if self.apriltags:
                     state, april_2D, tag_pose, rect = self.apriltag_detect(rect)
-                    # print(april_2D)
                     april_3D = self._2Dto3D(april_2D)
-                    # print("aprils:", april_2D, april_3D)
                     if april_3D is not None:
                         self.april_3D += april_3D
 
@@ -661,7 +664,6 @@ class birdsEye():
                 inner, i_ind, _ = self._2DBoxCheck(clicks_2D, box='inner')
                 outer, o_ind, _ = self._2DBoxCheck(clicks_2D, box='outer')
                 clicks_2D, click_ind, clicks_3D = self._2DBoxCheck(clicks_2D, stats=self.stats)
-                # print("clicks", clicks, clicks_2D, clicks_3D)
                 if clicks_3D is not None:
                     self.clicks_3D += clicks_3D
 
