@@ -23,26 +23,31 @@ for file_root in file_roots:
     datasets += glob2.glob(os.path.join(file_root, 'acceptance_0*_rect/out_dict.pkl'))
 print(np.array(datasets))
 
+data_06 = {}
+data_05 = {}
 data_02 = {}
 data_01 = {}
 for file in datasets:
     with open(file, 'rb') as f:
         tmp = pickle.load(f)
         if 'acceptance_01' in file:
-            for key in tmp.keys():
-                # print('rect: ', key)
-                try:
-                    data_01[key] += tmp[key]
-                except KeyError:
+            if 'acceptance_01_10m_01' in file:
+                pass
+            else:
+                for key in tmp.keys():
+                    # print('rect: ', key)
                     try:
-                        data_01[key] = tmp[key].tolist()
-                    except:
-                        data_01[key] = tmp[key]
-                except ValueError:
-                    # print(data_01[key].shape)
-                    # print(tmp[key].shape)
-                    data_01[key] += tmp[key].tolist()
-        else:
+                        data_01[key] += tmp[key]
+                    except KeyError:
+                        try:
+                            data_01[key] = tmp[key].tolist()
+                        except:
+                            data_01[key] = tmp[key]
+                    except ValueError:
+                        # print(data_01[key].shape)
+                        # print(tmp[key].shape)
+                        data_01[key] += tmp[key].tolist()
+        elif 'acceptance_02' in file:
             for key in tmp.keys():
                 # print('raw: ', key)
                 try:
@@ -54,6 +59,30 @@ for file in datasets:
                         data_02[key] = tmp[key]
                 except ValueError:
                     data_02[key] += tmp[key].tolist()
+        elif 'acceptance_05' in file:
+            for key in tmp.keys():
+                # print('raw: ', key)
+                try:
+                    data_05[key] += tmp[key]
+                except KeyError:
+                    try:
+                        data_05[key] = tmp[key].tolist()
+                    except:
+                        data_05[key] = tmp[key]
+                except ValueError:
+                    data_05[key] += tmp[key].tolist()
+        elif 'acceptance_06' in file:
+            for key in tmp.keys():
+                # print('raw: ', key)
+                try:
+                    data_06[key] += tmp[key]
+                except KeyError:
+                    try:
+                        data_06[key] = tmp[key].tolist()
+                    except:
+                        data_06[key] = tmp[key]
+                except ValueError:
+                    data_06[key] += tmp[key].tolist()
 
 
 fig, ax = plt.subplots(1, 2, figsize=(12,6))
@@ -76,17 +105,25 @@ ax[1].scatter(0.0, 0.0, c='k', s=20, label='Origin')
 fig2, ax2 = plt.subplots(1, 2, figsize=(12,6))
 # fig3, ax3 = plt.subplots(1, 3, figsize=(18,6))
 
-for i, data in enumerate([data_01, data_02]):
+for i, data in enumerate([data_01, data_02, data_05, data_06]):
     if len(data.keys()) == 0:
         continue
     if i == 0:
-        colors = ['g', 'r', 'b']
+        colors = ['xkcd:red', 'xkcd:magenta', 'xkcd:salmon']
         marker = '+'
         tmp = '01'
     elif i == 1:
-        colors = ['m', 'c', 'y']
+        colors = ['xkcd:green', 'xkcd:lime green', 'xkcd:sea green']
         marker = 'x'
         tmp = '02'
+    elif i == 2:
+        colors = ['xkcd:purple', 'xkcd:lavender', 'xkcd:dark purple']
+        marker = 'x'
+        tmp = '05'
+    elif i == 3:
+        colors = ['xkcd:blue', 'xkcd:cyan', 'xkcd:turquoise']
+        marker = 'x'
+        tmp = '06'
     # print(data.keys())  # dict_keys(['april_3D', 'bproj', 'clicks'])
     print()
     bproj = np.array(data['bproj'])  # back-projection of clicks (to and from pixel space)

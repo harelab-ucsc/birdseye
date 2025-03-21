@@ -101,20 +101,21 @@ class birdsEye():
         self.D = np.array(tmp[3])
         self.T_WC = None
         self.T_IC = np.array(tmp[4])
-        print(self.T_IC)
-        self.r = 0
-        self.p = 0
-        self.y = 0
-        self.mod = 1
-        r_adj = R.from_euler('xyz', \
-                              [self.r*self.mod, self.p*self.mod, self.y*self.mod], \
-                              degrees=True).as_matrix()
-        t_adj = np.array([0,
-                          0,
-                          0])
-        self.T_IC[:3,3] = r_adj@self.T_IC[:3,3]
-        self.T_IC[:3,3] = t_adj + self.T_IC[:3,3]
-        self.T_IC[:3,:3] = r_adj@self.T_IC[:3,:3]
+        self.T_IC = self.ned_to_enu_se3(self.T_IC)
+
+        # self.r = 0
+        # self.p = 0
+        # self.y = 0
+        # self.mod = 1
+        # r_adj = R.from_euler('xyz', \
+        #                       [self.r*self.mod, self.p*self.mod, self.y*self.mod], \
+        #                       degrees=True).as_matrix()
+        # t_adj = np.array([0,
+        #                   0,
+        #                   0])
+        # self.T_IC[:3,3] = r_adj@self.T_IC[:3,3]
+        # self.T_IC[:3,3] = t_adj + self.T_IC[:3,3]
+        # self.T_IC[:3,:3] = r_adj@self.T_IC[:3,:3]
 
         self._2DFrameVertices = ((0,0), \
                                  (self.res[0] - 1, 0), \
@@ -214,6 +215,7 @@ class birdsEye():
                 # Transform pixel in Camera coordinate frame
                 pc = np.linalg.inv(self.K) @ p
                 pc = np.hstack((pc,1.0))
+                pc = np.array([[0,-1,0,0],[-1,0,0,0],[0,0,1,0],[0,0,0,1]])@pc
 
                 # Transform pixel in World coordinate frame
                 pw = self.T_WC @ pc
@@ -255,6 +257,7 @@ class birdsEye():
 
         # Transform world points into the camera frame
         cam_frame_points = np.linalg.inv(self.T_WC)@List3D.T  # 4xN result
+        cam_frame_points = np.array([[0,-1,0,0],[-1,0,0,0],[0,0,1,0],[0,0,0,1]])@cam_frame_points
 
         # Apply intrinsic matrix to project into image plane
         projected = self.K@cam_frame_points[:-1, :]  # Remove homogeneous w
@@ -450,14 +453,15 @@ class birdsEye():
         self.correct_altitude(frame)
 
         # convert pose to 4x4 homogeneous transform
-        T_WI_NED = poseRowToTransform(frame[:7])  # our base link maps from the world origin to the base link
-        T_WI_ENU = self.ned_to_enu_se3(T_WI_NED)
-        # T_IC_ENU = self.ned_to_enu_se3(self.T_IC)
+        # T_WI_NED = poseRowToTransform(frame[:7])  # our base link maps from the world origin to the base link
+        # T_WI_ENU = self.ned_to_enu_se3(T_WI_NED)
+        T_WI_ENU = poseRowToTransform(frame[:7])  # our base link maps from the world origin to the base link
 
-        self.T_WC = T_WI_NED@self.T_IC
-        self.T_WC = self.ned_to_enu_se3(self.T_WC)
 
-        clicks = np.hstack((clks, np.ones_like(clks[:,0]).reshape(-1,1)*(T_WI_ENU[2,3]-self.radalt)))
+        self.T_WC = T_WI_ENU@self.T_IC
+        # self.T_WC = self.ned_to_enu_se3(self.T_WC)
+
+        clicks = np.hstack((clks, np.ones_like(clks[:,0]).reshape(-1,1)*(self.T_WC[2,3]-self.radalt)))
 
 
         if frame[7] == 3:
@@ -484,9 +488,9 @@ class birdsEye():
         _ = plotTransform(self.ax, self.T_WC)
 
         self.ax.set_xlim(T_WI[0,3]-15, T_WI[0,3]+15)
-        self.ax.set_xlabel('North (m)')
+        self.ax.set_xlabel('East (m)')
         self.ax.set_ylim(T_WI[1,3]-15, T_WI[1,3]+15)
-        self.ax.set_ylabel('East (m)')
+        self.ax.set_ylabel('North (m)')
         self.ax.set_zlim(T_WI[2,3]-20, T_WI[2,3]+1)
         self.ax.set_zlabel('Z (m)')
 
@@ -612,8 +616,8 @@ class birdsEye():
     def parseFlightDatabase(self):
         clks = self.dbc.getFrom('x, y', f"clicks_{self.db_name}")
         clks = np.array(clks)
-        print(clks.shape)
-        clks = clks@np.array([[0,1],[1,0]])
+        # print(clks.shape)
+        # clks = clks@np.array([[0,1],[1,0]])
 
         # load every pose entry saved by `sub_node.py`; each row is a pose
         self.data = self.dbc.getFrom('x, y, z, q, u, a, t, rtk_status, radalt, save_loc, cam_time1, cam_time2, ins_time1, ins_time2', f'{self.sensor}_images_{self.db_name}')

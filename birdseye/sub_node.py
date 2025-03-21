@@ -151,7 +151,7 @@ class subscriberNode(rclpy.node.Node):
                 # self.get_logger().info(f'{line}')
                 u = utm.from_latlon(float(line[0]), float(line[1]))  # returns easting, northing, zone number, zone letter
                 tag = int(line[-1][-1])
-                data.append([u[1], u[0], float(line[2]), float(line[3]), tag])  # save x:northing, y:easting
+                data.append([u[0], u[1], float(line[2]), float(line[3]), tag])
         self.dbc.insertClicks(f"clicks_{self.db_name}", data)
         self.get_logger().info('...Done reading clicks CSV file.\n')
 
@@ -328,8 +328,12 @@ class subscriberNode(rclpy.node.Node):
             self.ins_times = [time1, time2]
 
             u = utm.from_latlon(msg.lla[0], msg.lla[1])  # returns easting, northing, zone number, zone letter
-            self.pos = [u[1], u[0], msg.lla[2]]  # save x:northing, y:easting
-            self.quat = [msg.qn2b[1], msg.qn2b[2], msg.qn2b[3], msg.qn2b[0]]  # comes in scalar-first quaternion format, save as scalar-last
+            self.pos = [u[0], u[1], msg.lla[2]]  # save x:easting, y:northing, z:WGS84 altitude
+
+            # the quaternion comes in scalar-first format - convert it to scalar-last
+            self.quat = [msg.qn2b[1], msg.qn2b[2], msg.qn2b[3], msg.qn2b[0]]
+            # the quaternion comes in in a NED reference - convert it to ENU
+            self.quat = [self.quat[1], self.quat[0], self.quat[2], self.quat[3]]
 
             self.update_check_list()
 
