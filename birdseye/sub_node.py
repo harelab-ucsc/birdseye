@@ -333,7 +333,7 @@ class subscriberNode(rclpy.node.Node):
             # the quaternion comes in scalar-first format - convert it to scalar-last
             self.quat = [msg.qn2b[1], msg.qn2b[2], msg.qn2b[3], msg.qn2b[0]]
             # the quaternion comes in in a NED reference - convert it to ENU
-            self.quat = [self.quat[1], self.quat[0], self.quat[2], self.quat[3]]
+            self.quat = [self.quat[1], self.quat[0], -self.quat[2], self.quat[3]]
 
             self.update_check_list()
 
