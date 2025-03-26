@@ -95,7 +95,7 @@ class birdsEye():
         # self.K = np.array([[tmp[2][1],0.0,tmp[2][3]], \
         #                    [0.0,tmp[2][0],tmp[2][2]], \
         #                    [0.0,0.0,1.0]])
-        self.K += np.array([[  0.0,   0.0, -90.0],
+        self.K += np.array([[  0.0,   0.0,   0.0],
                             [  0.0,   0.0,   0.0],
                             [  0.0,   0.0,   0.0]])
         self.D = np.array(tmp[3])
@@ -103,19 +103,19 @@ class birdsEye():
         self.T_IC = np.array(tmp[4])
         self.T_IC = self.ned_to_enu_se3(self.T_IC)
 
-        # self.r = 0
-        # self.p = 0
-        # self.y = 0
-        # self.mod = 1
-        # r_adj = R.from_euler('xyz', \
-        #                       [self.r*self.mod, self.p*self.mod, self.y*self.mod], \
-        #                       degrees=True).as_matrix()
-        # t_adj = np.array([0,
-        #                   0,
-        #                   0])
-        # self.T_IC[:3,3] = r_adj@self.T_IC[:3,3]
-        # self.T_IC[:3,3] = t_adj + self.T_IC[:3,3]
-        # self.T_IC[:3,:3] = r_adj@self.T_IC[:3,:3]
+        self.r = -13
+        self.p = 2
+        self.y = 0
+        self.mod = 0.125
+        r_adj = R.from_euler('xyz', \
+                              [self.r*self.mod, self.p*self.mod, self.y*self.mod], \
+                              degrees=True).as_matrix()
+        t_adj = np.array([0,
+                          0,
+                          0])
+        self.T_IC[:3,3] = r_adj@self.T_IC[:3,3]
+        self.T_IC[:3,3] = t_adj + self.T_IC[:3,3]
+        self.T_IC[:3,:3] = r_adj@self.T_IC[:3,:3]
 
         self._2DFrameVertices = ((0,0), \
                                  (self.res[0] - 1, 0), \
@@ -718,8 +718,10 @@ class birdsEye():
 if __name__ == '__main__':
     import argparse
     parser = argparse.ArgumentParser()
-    parser.add_argument("-s", "--src_dir", help="path to source directory (default: parsed_flight)")
-    parser.add_argument("-p", "--plot", help="Boolean, whether or not to plot visualizations (default: True)")
+    parser.add_argument("-S", "--src_dir", help="path to source directory (default: parsed_flight)")
+    parser.add_argument("-s", "--stats", action='store_true', help="Boolean, whether or not to derive projection stats (default: False)")
+    parser.add_argument("-p", "--plot", action='store_true', help="Boolean, whether or not to plot visualizations (default: False)")
+    parser.add_argument("-a", "--apriltags", action='store_true', help="Boolean, whether or not to detect apriltags (default: False)")
     args = vars(parser.parse_args())
 
     if args['src_dir'] is not None:

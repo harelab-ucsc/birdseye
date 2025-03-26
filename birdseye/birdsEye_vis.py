@@ -12,11 +12,21 @@ from AMI_ContourClassFamily import Contour
 from birdsEye import birdsEye
 
 
+def skip_check(file, skip_patterns):
+    ret = True
+    for pattern in skip_patterns:
+        if pattern in file:
+            ret = False
+    return ret
+
+
 file_roots = [
     # '/home/mwmaster/parsed_flights/2025_03_03/', \
     # '/home/mwmaster/parsed_flights/2025_03_10/', \
     '/home/mwmaster/parsed_flights/2025_03_18/'
 ]
+
+skip_patterns = ['_20m_']
 
 datasets = []
 for file_root in file_roots:
@@ -28,12 +38,11 @@ data_05 = {}
 data_02 = {}
 data_01 = {}
 for file in datasets:
-    with open(file, 'rb') as f:
-        tmp = pickle.load(f)
-        if 'acceptance_01' in file:
-            if 'acceptance_01_10m_01' in file:
-                pass
-            else:
+    ret = skip_check(file, skip_patterns)
+    if ret:
+        with open(file, 'rb') as f:
+            tmp = pickle.load(f)
+            if 'acceptance_01' in file:
                 for key in tmp.keys():
                     # print('rect: ', key)
                     try:
@@ -44,46 +53,40 @@ for file in datasets:
                         except:
                             data_01[key] = tmp[key]
                     except ValueError:
-                        # print(data_01[key].shape)
-                        # print(tmp[key].shape)
                         data_01[key] += tmp[key].tolist()
-        elif 'acceptance_02' in file:
-            for key in tmp.keys():
-                # print('raw: ', key)
-                try:
-                    data_02[key] += tmp[key]
-                except KeyError:
+            elif 'acceptance_02' in file:
+                for key in tmp.keys():
                     try:
-                        data_02[key] = tmp[key].tolist()
-                    except:
-                        data_02[key] = tmp[key]
-                except ValueError:
-                    data_02[key] += tmp[key].tolist()
-        elif 'acceptance_05' in file:
-            for key in tmp.keys():
-                # print('raw: ', key)
-                try:
-                    data_05[key] += tmp[key]
-                except KeyError:
+                        data_02[key] += tmp[key]
+                    except KeyError:
+                        try:
+                            data_02[key] = tmp[key].tolist()
+                        except:
+                            data_02[key] = tmp[key]
+                    except ValueError:
+                        data_02[key] += tmp[key].tolist()
+            elif 'acceptance_05' in file:
+                for key in tmp.keys():
                     try:
-                        data_05[key] = tmp[key].tolist()
-                    except:
-                        data_05[key] = tmp[key]
-                except ValueError:
-                    data_05[key] += tmp[key].tolist()
-        elif 'acceptance_06' in file:
-            for key in tmp.keys():
-                # print('raw: ', key)
-                try:
-                    data_06[key] += tmp[key]
-                except KeyError:
+                        data_05[key] += tmp[key]
+                    except KeyError:
+                        try:
+                            data_05[key] = tmp[key].tolist()
+                        except:
+                            data_05[key] = tmp[key]
+                    except ValueError:
+                        data_05[key] += tmp[key].tolist()
+            elif 'acceptance_06' in file:
+                for key in tmp.keys():
                     try:
-                        data_06[key] = tmp[key].tolist()
-                    except:
-                        data_06[key] = tmp[key]
-                except ValueError:
-                    data_06[key] += tmp[key].tolist()
-
+                        data_06[key] += tmp[key]
+                    except KeyError:
+                        try:
+                            data_06[key] = tmp[key].tolist()
+                        except:
+                            data_06[key] = tmp[key]
+                    except ValueError:
+                        data_06[key] += tmp[key].tolist()
 
 fig, ax = plt.subplots(1, 2, figsize=(12,6))
 ax[0].set_xlim(-2,2)
