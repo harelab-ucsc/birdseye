@@ -103,21 +103,6 @@ class birdsEye():
         self.T_IC = np.array(tmp[4])
         self.T_IC = self.ned_to_enu_se3(self.T_IC)
 
-<<<<<<< Updated upstream
-        self.r = -13
-        self.p = 2
-        self.y = 0
-        self.mod = 0.125
-        r_adj = R.from_euler('xyz', \
-                              [self.r*self.mod, self.p*self.mod, self.y*self.mod], \
-                              degrees=True).as_matrix()
-        t_adj = np.array([0,
-                          0,
-                          0])
-        self.T_IC[:3,3] = r_adj@self.T_IC[:3,3]
-        self.T_IC[:3,3] = t_adj + self.T_IC[:3,3]
-        self.T_IC[:3,:3] = r_adj@self.T_IC[:3,:3]
-=======
         self.tx = 0
         self.ty = 0
         self.tz = 0
@@ -134,10 +119,6 @@ class birdsEye():
         self.T_IC[:3,3] = r_adj@self.T_IC[:3,3]
         self.T_IC[:3,3] = t_adj + self.T_IC[:3,3]
         self.T_IC[:3,:3] = r_adj@self.T_IC[:3,:3]
-        # print(self.T_IC)
-        # self.T_IC[:3,3] *= -1
-        # print(self.T_IC)
->>>>>>> Stashed changes
 
         self._2DFrameVertices = ((0,0), \
                                  (self.res[0] - 1, 0), \
@@ -753,15 +734,11 @@ class birdsEye():
 if __name__ == '__main__':
     import argparse
     parser = argparse.ArgumentParser()
-<<<<<<< Updated upstream
     parser.add_argument("-S", "--src_dir", help="path to source directory (default: parsed_flight)")
     parser.add_argument("-s", "--stats", action='store_true', help="Boolean, whether or not to derive projection stats (default: False)")
     parser.add_argument("-p", "--plot", action='store_true', help="Boolean, whether or not to plot visualizations (default: False)")
     parser.add_argument("-a", "--apriltags", action='store_true', help="Boolean, whether or not to detect apriltags (default: False)")
-=======
-    parser.add_argument("-s", "--src_dir", help="path to source directory (default: parsed_flight)")
-    parser.add_argument("-p", "--plot", action="store_true", help="Boolean, whether or not to plot visualizations (default: True)")
->>>>>>> Stashed changes
+
     args = vars(parser.parse_args())
 
     if args['src_dir'] is not None:
