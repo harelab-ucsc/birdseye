@@ -13,11 +13,18 @@ from birdsEye import birdsEye
 
 
 def skip_check(file, skip_patterns):
+<<<<<<< Updated upstream
     ret = True
     for pattern in skip_patterns:
         if pattern in file:
             ret = False
     return ret
+=======
+    for pattern in skip_patterns:
+        if pattern in file:
+            return False
+    return True
+>>>>>>> Stashed changes
 
 
 file_roots = [
@@ -33,12 +40,15 @@ for file_root in file_roots:
     datasets += glob2.glob(os.path.join(file_root, 'acceptance_0*_rect/out_dict.pkl'))
 print(np.array(datasets))
 
+skip_patterns = ['20m', 'acceptance_01_10m_01']
+
 data_06 = {}
 data_05 = {}
 data_02 = {}
 data_01 = {}
 for file in datasets:
     ret = skip_check(file, skip_patterns)
+<<<<<<< Updated upstream
     if ret:
         with open(file, 'rb') as f:
             tmp = pickle.load(f)
@@ -56,6 +66,35 @@ for file in datasets:
                         data_01[key] += tmp[key].tolist()
             elif 'acceptance_02' in file:
                 for key in tmp.keys():
+=======
+    if ret:# and '_02_rect' in file:
+        pass
+    else:
+        continue
+    with open(file, 'rb') as f:
+        tmp = pickle.load(f)
+        if 'acceptance_01' in file:
+
+            for key in tmp.keys():
+                # print('rect: ', key)
+                try:
+                    data_01[key] += tmp[key]
+                except KeyError:
+                    try:
+                        data_01[key] = tmp[key].tolist()
+                    except:
+                        data_01[key] = tmp[key]
+                except ValueError:
+                    # print(data_01[key].shape)
+                    # print(tmp[key].shape)
+                    data_01[key] += tmp[key].tolist()
+        elif 'acceptance_02' in file:
+            for key in tmp.keys():
+                # print('raw: ', key)
+                try:
+                    data_02[key] += tmp[key]
+                except KeyError:
+>>>>>>> Stashed changes
                     try:
                         data_02[key] += tmp[key]
                     except KeyError:
@@ -145,14 +184,14 @@ for i, data in enumerate([data_01, data_02, data_05, data_06]):
     base = 1
 
     ax[0].scatter(bproj[:,0], bproj[:,1], c=colors[0], s=6*base, alpha=0.1, label=tmp+'BackProj')#bproj[:,2],
-    # ax[0].scatter(gt_c_bproj[:,0].mean(), gt_c_bproj[:,1].mean(), c='k', marker=marker, label=tmp+'Mean Error')# bproj[:,2].mean,
-    ax[0].scatter(gt_c_bproj[:,0], gt_c_bproj[:,1], c=colors[1], s=4*base, alpha=0.1, label=tmp+'gtClickBackProj')
-    # ax[0].scatter(gt_a_bproj[:,0].mean(), gt_a_bproj[:,1].mean(), c='k', marker=marker, label=tmp+'Mean Error')# bproj[:,2].mean,
+    ax[0].scatter(bproj[:,0].mean(), bproj[:,1].mean(), c=colors[0], marker=marker, label=tmp+'Mean Error')# bproj[:,2].mean,
+    # ax[0].scatter(gt_c_bproj[:,0], gt_c_bproj[:,1], c=colors[1], s=4*base, alpha=0.1, label=tmp+'gtClickBackProj')
+    ax[0].scatter(gt_a_bproj[:,0].mean(), gt_a_bproj[:,1].mean(), c=colors[0], marker=marker, label=tmp+'Mean Error')# bproj[:,2].mean,
     ax[0].scatter(gt_a_bproj[:,0], gt_a_bproj[:,1], c=colors[2], s=2*base, alpha=0.1, label=tmp+'gtAprilBackProj')
     ax[0].legend(fontsize = 12)
 
     ax[1].scatter(reproj[:,0], reproj[:,1], s=6*base, c=colors[0], alpha=0.1, label=tmp+'Reproj')
-    ax[1].scatter(gt_a_reproj[:,0], gt_a_reproj[:,1], c=colors[1], s=4*base, alpha=0.1, label=tmp+'aprilReproj')
+    # ax[1].scatter(gt_a_reproj[:,0], gt_a_reproj[:,1], c=colors[1], s=4*base, alpha=0.1, label=tmp+'aprilReproj')
     ax[1].legend(fontsize = 12)
 
     lbl = tmp+f'BackProj Norm: {np.linalg.norm(bproj, axis=1).mean():.3f} +/- {np.linalg.norm(bproj, axis=1).std():.3f} m'

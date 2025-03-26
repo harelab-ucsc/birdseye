@@ -152,6 +152,7 @@ class BagProcessor:
 
                     new_image = serialize_message(updated_image)
                     writer.write(self.image_topic, new_image, ins_timestamp_int)
+        print()
         deltas = np.array(self.deltas)
         mean = deltas.mean()
         std = deltas.std()

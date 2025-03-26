@@ -103,6 +103,7 @@ class birdsEye():
         self.T_IC = np.array(tmp[4])
         self.T_IC = self.ned_to_enu_se3(self.T_IC)
 
+<<<<<<< Updated upstream
         self.r = -13
         self.p = 2
         self.y = 0
@@ -116,6 +117,27 @@ class birdsEye():
         self.T_IC[:3,3] = r_adj@self.T_IC[:3,3]
         self.T_IC[:3,3] = t_adj + self.T_IC[:3,3]
         self.T_IC[:3,:3] = r_adj@self.T_IC[:3,:3]
+=======
+        self.tx = 0
+        self.ty = 0
+        self.tz = 0
+        self.rr = -6
+        self.rp = 2
+        self.ry = 0
+        self.mod = 0.125
+        r_adj = R.from_euler('xyz', \
+                              [self.rr*self.mod, self.rp*self.mod, self.ry*self.mod], \
+                              degrees=True).as_matrix()
+        t_adj = np.array([self.tx,
+                          self.ty,
+                          self.tz])
+        self.T_IC[:3,3] = r_adj@self.T_IC[:3,3]
+        self.T_IC[:3,3] = t_adj + self.T_IC[:3,3]
+        self.T_IC[:3,:3] = r_adj@self.T_IC[:3,:3]
+        # print(self.T_IC)
+        # self.T_IC[:3,3] *= -1
+        # print(self.T_IC)
+>>>>>>> Stashed changes
 
         self._2DFrameVertices = ((0,0), \
                                  (self.res[0] - 1, 0), \
@@ -216,6 +238,7 @@ class birdsEye():
                 pc = np.linalg.inv(self.K) @ p
                 pc = np.hstack((pc,1.0))
                 pc = np.array([[0,-1,0,0],[-1,0,0,0],[0,0,1,0],[0,0,0,1]])@pc
+                # print(pc)
 
                 # Transform pixel in World coordinate frame
                 pw = self.T_WC @ pc
@@ -225,7 +248,10 @@ class birdsEye():
                 unit_vector = vector / np.linalg.norm(vector)
 
                 # Point scaled along this ray
+                # print(self.T_WC[:,3])
+                # print('radalt*unit_vector', self.radalt*unit_vector)
                 p3D = self.T_WC[:,3] - self.radalt*unit_vector
+                # print(p3D)
                 List3D.append(p3D.tolist())
 
         return List3D
@@ -258,13 +284,19 @@ class birdsEye():
         # Transform world points into the camera frame
         cam_frame_points = np.linalg.inv(self.T_WC)@List3D.T  # 4xN result
         cam_frame_points = np.array([[0,-1,0,0],[-1,0,0,0],[0,0,1,0],[0,0,0,1]])@cam_frame_points
-
+        # cam_frame_points = cam_frame_points.T
+        # for n,point in enumerate(cam_frame_points):# cam_frame_points[2,] =
+        #     if point[2] < 0:
+        #         point[2] *= -1
+        #         cam_frame_points[n,:] = point
+        # cam_frame_points = cam_frame_points.T
+        # print(cam_frame_points)
         # Apply intrinsic matrix to project into image plane
         projected = self.K@cam_frame_points[:-1, :]  # Remove homogeneous w
 
         # Normalize homogeneous coordinates
         projected /= projected[2]  # Normalize by depth (z)
-
+        # print(projected)
         # Collect results as Nx2 pixel coordinates
         List2D = projected[:2].T.tolist()
 
@@ -610,7 +642,7 @@ class birdsEye():
         self.ax.cla()
 
         cv2.imshow("Window", rect)
-        cv2.waitKey(10)
+        cv2.waitKey(200)
 
 
     def parseFlightDatabase(self):
@@ -659,14 +691,17 @@ class birdsEye():
                 rect = cv2.remap(img, map1, map2, interpolation=cv2.INTER_LINEAR)
 
                 if self.apriltags:
+                    print('apriltags: _2Dto3D')
                     state, april_2D, tag_pose, rect = self.apriltag_detect(rect)
                     april_3D = self._2Dto3D(april_2D)
                     if april_3D is not None:
                         self.april_3D += april_3D
 
+                print('clicks: _3Dto2D')
                 clicks_2D = self._3Dto2D(clicks)
                 inner, i_ind, _ = self._2DBoxCheck(clicks_2D, box='inner')
                 outer, o_ind, _ = self._2DBoxCheck(clicks_2D, box='outer')
+                print('clicks: _2Dto3D')
                 clicks_2D, click_ind, clicks_3D = self._2DBoxCheck(clicks_2D, stats=self.stats)
                 if clicks_3D is not None:
                     self.clicks_3D += clicks_3D
@@ -718,10 +753,15 @@ class birdsEye():
 if __name__ == '__main__':
     import argparse
     parser = argparse.ArgumentParser()
+<<<<<<< Updated upstream
     parser.add_argument("-S", "--src_dir", help="path to source directory (default: parsed_flight)")
     parser.add_argument("-s", "--stats", action='store_true', help="Boolean, whether or not to derive projection stats (default: False)")
     parser.add_argument("-p", "--plot", action='store_true', help="Boolean, whether or not to plot visualizations (default: False)")
     parser.add_argument("-a", "--apriltags", action='store_true', help="Boolean, whether or not to detect apriltags (default: False)")
+=======
+    parser.add_argument("-s", "--src_dir", help="path to source directory (default: parsed_flight)")
+    parser.add_argument("-p", "--plot", action="store_true", help="Boolean, whether or not to plot visualizations (default: True)")
+>>>>>>> Stashed changes
     args = vars(parser.parse_args())
 
     if args['src_dir'] is not None:
