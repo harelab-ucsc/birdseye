@@ -13,18 +13,11 @@ from birdsEye import birdsEye
 
 
 def skip_check(file, skip_patterns):
-<<<<<<< Updated upstream
-    ret = True
-    for pattern in skip_patterns:
-        if pattern in file:
-            ret = False
-    return ret
-=======
     for pattern in skip_patterns:
         if pattern in file:
             return False
     return True
->>>>>>> Stashed changes
+
 
 
 file_roots = [
@@ -33,7 +26,7 @@ file_roots = [
     '/home/mwmaster/parsed_flights/2025_03_18/'
 ]
 
-skip_patterns = ['_20m_']
+skip_patterns = ['_10m_']
 
 datasets = []
 for file_root in file_roots:
