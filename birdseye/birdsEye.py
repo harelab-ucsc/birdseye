@@ -92,9 +92,6 @@ class birdsEye():
         self.K = np.array([[tmp[2][0],0.0,tmp[2][2]], \
                            [0.0,tmp[2][1],tmp[2][3]], \
                            [0.0,0.0,1.0]])
-        # self.K = np.array([[tmp[2][1],0.0,tmp[2][3]], \
-        #                    [0.0,tmp[2][0],tmp[2][2]], \
-        #                    [0.0,0.0,1.0]])
         self.K += np.array([[  0.0,   0.0,   0.0],
                             [  0.0,   0.0,   0.0],
                             [  0.0,   0.0,   0.0]])
@@ -106,7 +103,7 @@ class birdsEye():
         self.tx = 0
         self.ty = 0
         self.tz = 0
-        self.rr = -6
+        self.rr = -12
         self.rp = 2
         self.ry = 0
         self.mod = 0.125
@@ -229,10 +226,7 @@ class birdsEye():
                 unit_vector = vector / np.linalg.norm(vector)
 
                 # Point scaled along this ray
-                # print(self.T_WC[:,3])
-                # print('radalt*unit_vector', self.radalt*unit_vector)
                 p3D = self.T_WC[:,3] - self.radalt*unit_vector
-                # print(p3D)
                 List3D.append(p3D.tolist())
 
         return List3D
@@ -265,19 +259,13 @@ class birdsEye():
         # Transform world points into the camera frame
         cam_frame_points = np.linalg.inv(self.T_WC)@List3D.T  # 4xN result
         cam_frame_points = np.array([[0,-1,0,0],[-1,0,0,0],[0,0,1,0],[0,0,0,1]])@cam_frame_points
-        # cam_frame_points = cam_frame_points.T
-        # for n,point in enumerate(cam_frame_points):# cam_frame_points[2,] =
-        #     if point[2] < 0:
-        #         point[2] *= -1
-        #         cam_frame_points[n,:] = point
-        # cam_frame_points = cam_frame_points.T
-        # print(cam_frame_points)
+
         # Apply intrinsic matrix to project into image plane
         projected = self.K@cam_frame_points[:-1, :]  # Remove homogeneous w
 
         # Normalize homogeneous coordinates
         projected /= projected[2]  # Normalize by depth (z)
-        # print(projected)
+
         # Collect results as Nx2 pixel coordinates
         List2D = projected[:2].T.tolist()
 
@@ -377,7 +365,6 @@ class birdsEye():
 
 
     def get_stats(self, clicks, click_ind, april_2D, april_3D, clicks_2D, clicks_3D):
-        # print('  getting stats')
         april_reproj = np.array(self._3Dto2D(april_3D)) - np.array(april_2D)
         april_reproj = april_reproj.tolist()
 
@@ -386,8 +373,6 @@ class birdsEye():
         try:
             gt_click_bproj = np.array(clicks_3D)[:,:3] - np.array(clicks)[click_ind,:]
             gt_april_bproj = np.array(april_3D)[:,:3] - np.array(clicks)[click_ind,:]
-            # print('    click proj-bproj:', gt_click_bproj)
-            # print('      apriltag bproj:', gt_april_bproj)
         except IndexError:
             # print('    lost one of the test points... clearing variables')
             gt_click_bproj = None
@@ -442,7 +427,6 @@ class birdsEye():
 
         line += vals
         line += '\n'
-        # print(line)
         f.write(line)
         f.close()
         print(f'    Annotation saved: {self.frame_index}, {save_name}.txt, {label}')
@@ -466,13 +450,9 @@ class birdsEye():
         self.correct_altitude(frame)
 
         # convert pose to 4x4 homogeneous transform
-        # T_WI_NED = poseRowToTransform(frame[:7])  # our base link maps from the world origin to the base link
-        # T_WI_ENU = self.ned_to_enu_se3(T_WI_NED)
         T_WI_ENU = poseRowToTransform(frame[:7])  # our base link maps from the world origin to the base link
 
-
         self.T_WC = T_WI_ENU@self.T_IC
-        # self.T_WC = self.ned_to_enu_se3(self.T_WC)
 
         clicks = np.hstack((clks, np.ones_like(clks[:,0]).reshape(-1,1)*(self.T_WC[2,3]-self.radalt)))
 
@@ -629,8 +609,6 @@ class birdsEye():
     def parseFlightDatabase(self):
         clks = self.dbc.getFrom('x, y', f"clicks_{self.db_name}")
         clks = np.array(clks)
-        # print(clks.shape)
-        # clks = clks@np.array([[0,1],[1,0]])
 
         # load every pose entry saved by `sub_node.py`; each row is a pose
         self.data = self.dbc.getFrom('x, y, z, q, u, a, t, rtk_status, radalt, save_loc, cam_time1, cam_time2, ins_time1, ins_time2', f'{self.sensor}_images_{self.db_name}')
@@ -672,17 +650,14 @@ class birdsEye():
                 rect = cv2.remap(img, map1, map2, interpolation=cv2.INTER_LINEAR)
 
                 if self.apriltags:
-                    print('apriltags: _2Dto3D')
                     state, april_2D, tag_pose, rect = self.apriltag_detect(rect)
                     april_3D = self._2Dto3D(april_2D)
                     if april_3D is not None:
                         self.april_3D += april_3D
 
-                print('clicks: _3Dto2D')
                 clicks_2D = self._3Dto2D(clicks)
                 inner, i_ind, _ = self._2DBoxCheck(clicks_2D, box='inner')
                 outer, o_ind, _ = self._2DBoxCheck(clicks_2D, box='outer')
-                print('clicks: _2Dto3D')
                 clicks_2D, click_ind, clicks_3D = self._2DBoxCheck(clicks_2D, stats=self.stats)
                 if clicks_3D is not None:
                     self.clicks_3D += clicks_3D
@@ -728,7 +703,8 @@ class birdsEye():
         print(f'    Status 2 (Float): {self.rtk_tracker[1]} of {sum(self.rtk_tracker)} ({self.rtk_tracker[1]/sum(self.rtk_tracker)})')
         print(f'    Status 1 (None): {self.rtk_tracker[2]} of {sum(self.rtk_tracker)} ({self.rtk_tracker[2]/sum(self.rtk_tracker)})')
         print(f'    Rare Statuses: {self.rtk_tracker[3]} of {sum(self.rtk_tracker)} ({self.rtk_tracker[3]/sum(self.rtk_tracker)})\n')
-        # print(f'r, p, y adjustments: {self.r}, {self.p}, {self.y} (mod: {self.mod})')
+
+        print(f'roll, pitch, yaw adjustments: {self.rr}, {self.rp}, {self.ry} (mod: {self.mod})')
 
 
 if __name__ == '__main__':
