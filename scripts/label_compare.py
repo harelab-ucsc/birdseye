@@ -109,14 +109,17 @@ def compare_labels(file1, file2):
     print(f'  False positive count: {false_pos} (FP Rate: {false_pos/one_count_file2 * 100:.03f}%)')
     print(f'  False negative count: {false_neg} (FN Rate: {false_neg/zero_count_file2 * 100:.03f}%)')
     print()
-    print(f'Test Conversion Rate: {(test_neg+test_pos)/test_count_file2 * 100:.03f}%')
-    print(f'  "Test" labels resolved to True: {test_pos} (Test-True Conversion Rate: {test_pos/test_count_file2 * 100:.03f}%)')
-    print(f'  "Test" labels resolved to False: {test_neg} (Test-False Conversion Rate: {test_neg/test_count_file2 * 100:.03f}%)')
-    print()
-    print(f'Revert to "Test" Rate: {(pos_test+neg_test)/(one_count_file2+zero_count_file2) * 100:.03f}%')
-    print(f'  True labels switched to "Test": {pos_test} (True-Test Conversion Rate: {pos_test/one_count_file2 * 100:.03f}%)')
-    print(f'  False labels switched to "Test": {neg_test} (False-Test Conversion Rate: {neg_test/zero_count_file2 * 100:.03f}%)')
-    print()
+    try:
+        print(f'Test Conversion Rate: {(test_neg+test_pos)/test_count_file2 * 100:.03f}%')
+        print(f'  "Test" labels resolved to True: {test_pos} (Test-True Conversion Rate: {test_pos/test_count_file2 * 100:.03f}%)')
+        print(f'  "Test" labels resolved to False: {test_neg} (Test-False Conversion Rate: {test_neg/test_count_file2 * 100:.03f}%)')
+        print()
+        print(f'Revert to "Test" Rate: {(pos_test+neg_test)/(one_count_file2+zero_count_file2) * 100:.03f}%')
+        print(f'  True labels switched to "Test": {pos_test} (True-Test Conversion Rate: {pos_test/one_count_file2 * 100:.03f}%)')
+        print(f'  False labels switched to "Test": {neg_test} (False-Test Conversion Rate: {neg_test/zero_count_file2 * 100:.03f}%)')
+        print()
+    except ZeroDivisionError:
+        pass
     print(f'Different lines: {diff_count}')
 
 # call function

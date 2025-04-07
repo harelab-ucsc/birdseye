@@ -14,35 +14,33 @@ import glob2
 import copy
 import random
 import itertools
-import pickle
 # import pdb
 import matplotlib.pyplot as plt
 from sklearn.model_selection import train_test_split
 from sklearn.manifold import TSNE # Function to extract penultimate layer embeddings
 from tensorflow.keras import mixed_precision
-from keras.applications import EfficientNetB3, MobileNetV2, MobileNetV3Small, MobileNetV3Large, Xception
+from tensorflow.keras.metrics import Metric
+from tensorflow.keras import backend as K
 
-
-# mixed_precision.set_global_policy('mixed_float16')
+mixed_precision.set_global_policy('mixed_float16')
 
 train = True
 tSNE = False
 
 # define , filepaths, and model savenames
 BUFFER_SIZE = 32
-BATCH_SIZE = 8
+BATCH_SIZE = 2
 # IMG_WIDTH = 960
 # IMG_HEIGHT = 600
 IMG_WIDTH = 720
 IMG_HEIGHT = 450
-# IMG_WIDTH = 224
-# IMG_HEIGHT = 224
 IMAGE_CHANNELS = 3
 epochs = 1000
+PCK_THRESH = 50
 
 models_dir = os.path.join(os.path.expanduser('~'), 'birdseye', 'models')
 filename_prefix = os.path.join(models_dir, f'birdseye_{IMG_WIDTH}_{IMG_HEIGHT}')
-val = str(len(glob2.glob(os.path.join(models_dir, filename_prefix+'*.weights.h5')))).rjust(3,'0')
+val = str(len(glob2.glob(os.path.join(models_dir, filename_prefix+'*')))).rjust(3,'0')
 filename = filename_prefix + f'_{val}'
 
 print(f'\n\n{filename}\n\n')
@@ -50,24 +48,8 @@ print(f'\n\n{filename}\n\n')
 paths = []
 
 label_file = 'labels_checked.txt'
-dates = [
-    # '2024_07_XX', 
-    # '2025_01_29', 
-    # '2025_02_05', 
-    '2025_03_25', 
-    '2025_04_04']
-dirlists = [
-    # ['farm_0__2024_07_25', 'farm_1__2024_07_25', 'farm_2__2024_07_29'],
-    # ['haybarn_01_rect', 'haybarn_02_rect', 'haybarn_05_rect'], 
-    # ['haybarn_01_rect'], 
-    ['haybarn_original_01_01_rect', 'haybarn_eviltwin_01_01_rect'],
-    ['original_01_rect', 'original_02_rect', 'eviltwin_01_rect', 'eviltwin_02_rect'] #,'eviltwin_03_rect']
-    ]
-
-
-def get_filepaths(paths, date, dirnames, label_file):
-    paths += [os.path.join(os.path.expanduser('~'), 'birdseye_CNN_data', date, dirname) for dirname in dirnames]
-    return paths 
+dates = ['2024_07_XX', '2025_01_29', '2025_02_05']
+dirlists = [['farm_0__2024_07_25', 'farm_1__2024_07_25', 'farm_2__2024_07_29'],['haybarn_01_rect', 'haybarn_02_rect', 'haybarn_05_rect'], ['haybarn_01_rect']]
 
 
 def load_trained_model(model, model_path):
@@ -127,9 +109,68 @@ def visualize_embeddings(embeddings, labels):
     plt.title("t-SNE Visualization of Learned Embeddings")
     plt.show()
 
+
+def get_filepaths(paths, date, dirnames, label_file):
+    paths += [os.path.join(os.path.expanduser('~'), 'birdseye_CNN_data', date, dirname) for dirname in dirnames]
+    return paths 
+
 # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ #
 # ~~~~ # data augmentation pipeline to add randomness/volume to dataset # ~~~~ #
 # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ #
+
+# Define YOLO parameters
+S = 7  # Grid size
+B = 2  # Number of points per cell
+C = 3  # Number of classes
+
+# Function to load image
+def load_image(image_path):
+    image = tf.io.read_file(image_path)
+    image = tf.image.decode_jpeg(image, channels=3)
+    image = tf.image.resize(image, (IMAGE_HEIGHT, IMAGE_WIDTH))  # Resize for YOLO
+    image = image / 255.0  # Normalize
+    return image
+
+
+def preprocess_label(image_path):
+    label = tf.zeros((S, S, B * (3 + C)))  # (x, y, confidence, class_one_hot...)
+
+    # Retrieve annotations (list of objects with 'x', 'y', and 'class')
+    # anns = annotations.get(image_path.numpy().decode(), [])
+    anns = read_label_file()
+
+    for obj in anns:
+        x, y = obj["loc"]  # Extract point coordinates
+        class_idx = obj["class"]    # Class index
+
+        grid_x, grid_y = int(S * x), int(S * y)  # Find grid cell location
+        
+        # Normalize x, y relative to grid cell
+        x_offset, y_offset = S * x - grid_x, S * y - grid_y  
+
+        # Assign values to the label tensor
+        label = tf.tensor_scatter_nd_update(label,
+                                            [[grid_y, grid_x, 0]],
+                                            [x_offset])  # x_offset
+        label = tf.tensor_scatter_nd_update(label,
+                                            [[grid_y, grid_x, 1]],
+                                            [y_offset])  # y_offset
+        label = tf.tensor_scatter_nd_update(label,
+                                            [[grid_y, grid_x, 2]],
+                                            [1.0])  # Confidence (1 = point exists)
+        label = tf.tensor_scatter_nd_update(label,
+                                            [[grid_y, grid_x, 3 + class_idx]],
+                                            [1.0])  # One-hot class encoding
+
+    return label
+
+# Function to load image and label together
+def load_data(image_path):
+    image = load_image(image_path)
+    label = tf.py_function(preprocess_label, [image_path], tf.float32)
+    label.set_shape((S, S, B * (5 + C)))
+    return image, label
+
 
 def read_label_file(load_name, image_file):
     try:
@@ -139,6 +180,7 @@ def read_label_file(load_name, image_file):
             tmp = mask.split()
             if os.path.split(tmp[1])[1] == os.path.split(image_file.numpy())[1]:
                 cl = float(tmp[2])
+                ## more here
                 break
             elif len(tmp) == 0:
                 break
@@ -194,7 +236,7 @@ def random_crop(input_image):
 
 def normalize(input_image):
     """ normalizing the images to [0, 1] """
-    input_image = input_image / 255
+    input_image = input_image / 255.0
     return input_image
 
 
@@ -240,7 +282,7 @@ def random_jitter(input_image, thresh=0.5):
 def load_rle_train(image_file):
     # pdb.set_trace()
     input_image, real_class = load_from_rle(image_file)
-    # input_image = normalize(input_image)
+    input_image = normalize(input_image)
     input_image = random_jitter(input_image)
     input_image = resize(input_image, IMG_HEIGHT, IMG_WIDTH)
     return input_image, real_class
@@ -249,7 +291,7 @@ def load_rle_train(image_file):
 @tf.function
 def load_rle_test(image_file):
     input_image, real_class = load_from_rle(image_file)
-    # input_image = normalize(input_image)
+    input_image = normalize(input_image)
     input_image = resize(input_image, IMG_HEIGHT, IMG_WIDTH)
     return input_image, real_class
 
@@ -402,15 +444,8 @@ def out_block_v2(x, filters, size, use_bias, ker_reg, ker_con, bias_reg, bias_co
                                         activity_regularizer=act_reg)(x)
     x = tf.keras.layers.LeakyReLU()(x)
     x = tf.keras.layers.BatchNormalization()(x)
-    x = tf.keras.layers.Dense(1,
-                                use_bias=use_bias,
-                                kernel_regularizer=ker_reg,
-                                kernel_constraint=ker_con,
-                                bias_regularizer=bias_reg,
-                                bias_constraint=bias_con,
-                                activity_regularizer=act_reg)(x)
-    x = tf.keras.layers.GlobalAveragePooling2D()(x)
-    x = tf.keras.activations.sigmoid(x)
+    x = layers.Conv2D(S * S * B * (5 + C), (1, 1), activation="linear")(x)
+    x = layers.Reshape((S, S, B * (5 + C)))(x)
     return x
 
 
@@ -424,59 +459,137 @@ def testing_net(inputs, use_bias, ker_reg, ker_con, bias_reg, bias_con, act_reg,
     x = down_block_v2(x, 1024, ker, [2, 4], use_bias, ker_reg, ker_con, bias_reg, bias_con, act_reg, dropout, pool=False)  # 1024
     x = down_block_v2(x, 1024, ker, [2, 4], use_bias, ker_reg, ker_con, bias_reg, bias_con, act_reg, dropout, pool=False)  # 1024
     x = down_block_v2(x, 1024, ker, [2, 4], use_bias, ker_reg, ker_con, bias_reg, bias_con, act_reg, dropout, pool=False)  # 1024
-    out = out_block_v2(x, [512, 256], ker, use_bias, ker_reg, ker_con, bias_reg, bias_con, act_reg)
-    return out
+    x = out_block_v2(x, [512, 256], ker, use_bias, ker_reg, ker_con, bias_reg, bias_con, act_reg)
+    return x
 
 
-# Define a custom detection head (binary classification: object present or not)
-def detection_head(inputs):
-    x = tf.keras.layers.GlobalAveragePooling2D()(inputs)  # Convert feature map to vector
-    x = tf.keras.layers.Dense(256, activation="relu")(x)  # Fully connected layer
-    x = tf.keras.layers.Dropout(0.5)(x)  # Regularization
-    outputs = tf.keras.layers.Dense(1, activation="sigmoid")(x)  # Binary detection (0 or 1)
-    return outputs
-
-
-def pretrained_backbone(inp, use_bias, ker_reg, ker_con, bias_reg, bias_con, act_reg, dropout, h=IMG_HEIGHT, w=IMG_WIDTH, c=IMAGE_CHANNELS, ker=3, trainable=False):
-    x = tf.keras.ops.cast(inp, "float32")
-    x = tf.keras.applications.mobilenet_v2.preprocess_input(x)
-    backbone = MobileNetV2(input_shape=(450, 720, 3), include_top=False, weights="imagenet")
-    # backbone = MobileNetV3Small(input_shape=(450, 720, 3), include_top=False, weights="imagenet")
-    # backbone = MobileNetV3Large(input_shape=(450, 720, 3), include_top=False, weights="imagenet")
-    # backbone = Xception(input_shape=(450, 720, 3), include_top=False, weights="imagenet")
-
-    # Freeze the backbone (optional for transfer learning)
-    backbone.trainable = False  
-
-    if trainable:
-        unfreeze_fraction = 0.3
-        n_total = len(backbone.layers)
-        n_unfreeze = int(n_total * unfreeze_fraction)
-
-        # 3. Unfreeze top layers
-        for layer in backbone.layers[-n_unfreeze:]:
-            if not isinstance(layer, tf.keras.layers.BatchNormalization):
-                layer.trainable = True
-            else:
-                # Optionally keep BatchNorm frozen (recommended for stability)
-                layer.trainable = False
-
-    # Build the final model
-    x = backbone(x, training=False)  # Extract features without updating backbone weights
-    outputs = detection_head(x)  # Apply binary detection head
-
-    return outputs
-
-
-def generator(use_bias, ker_reg, ker_con, bias_reg, bias_con, act_reg, dropout, h=IMG_HEIGHT, w=IMG_WIDTH, c=IMAGE_CHANNELS, ker=3, trainable=False):
+def generator(use_bias, ker_reg, ker_con, bias_reg, bias_con, act_reg, dropout, h=IMG_HEIGHT, w=IMG_WIDTH, c=IMAGE_CHANNELS, ker=3):
     inp = tf.keras.Input(shape=(h, w, c), name='inp_layer')
-    # out = testing_net(inp, use_bias, ker_reg, ker_con, bias_reg, bias_con, act_reg, dropout, ker=ker)
-    out = pretrained_backbone(inp, use_bias, ker_reg, ker_con, bias_reg, bias_con, act_reg, dropout, ker=ker, trainable=trainable)
+    out = testing_net(inp, use_bias, ker_reg, ker_con, bias_reg, bias_con, act_reg, dropout, ker=ker)
     return tf.keras.Model(inputs=inp, outputs=out)
 
 
+def point_yolo_loss(y_true, y_pred, S=7, B=2, C=3, lambda_coord=5, lambda_noobj=0.5):
+    """
+    Modified YOLO loss for point-based confidence rather than bounding box IoU.
+
+    Args:
+        y_true: (batch, S, S, B*(3+C)) - Ground truth tensor (x, y, conf, classes...).
+        y_pred: (batch, S, S, B*(3+C)) - Predicted tensor.
+        S: Grid size.
+        B: Number of points per grid cell.
+        C: Number of classes.
+        lambda_coord: Weighting factor for coordinate loss.
+        lambda_noobj: Weighting factor for confidence loss of no-object cells.
+
+    Returns:
+        Total loss (sum of localization, confidence, and classification loss).
+    """
+
+    # Reshape tensors
+    y_pred = tf.reshape(y_pred, (-1, S, S, B, 3 + C))  # (x, y, conf, classes...)
+    y_true = tf.reshape(y_true, (-1, S, S, B, 3 + C))  
+
+    # Extract predictions and ground truths
+    pred_xy = y_pred[..., 0:2]    # (x, y) predicted points
+    pred_conf = y_pred[..., 2]    # Predicted confidence
+    pred_class = y_pred[..., 3:]  # Predicted class probabilities
+
+    true_xy = y_true[..., 0:2]    # Ground truth (x, y)
+    true_conf = y_true[..., 2]    # Ground truth confidence
+    true_class = y_true[..., 3:]  # Ground truth class (one-hot)
+
+    # **1. Localization Loss (Point Regression)**
+    loc_loss = lambda_coord * tf.reduce_sum(true_conf * tf.square(true_xy - pred_xy))
+
+    # **2. Confidence Loss (Using Inverse Distance)**
+    # Compute Euclidean distance between predicted and ground truth points
+    distance = tf.norm(true_xy - pred_xy, axis=-1)  # Euclidean distance
+    
+    # Define confidence as an inverse function of distance (lower distance → higher confidence)
+    pred_conf_new = tf.exp(-distance)  # Confidence = exp(-distance) ensures smooth decay
+    
+    # Compute confidence loss
+    obj_loss = tf.reduce_sum(true_conf * tf.square(pred_conf_new - pred_conf))  # Object exists
+    noobj_loss = lambda_noobj * tf.reduce_sum((1 - true_conf) * tf.square(0 - pred_conf))  # No object
+
+    # **3. Classification Loss**
+    class_loss = tf.reduce_sum(true_conf * tf.square(true_class - pred_class))  # Only for object points
+
+    # **Total Loss**
+    total_loss = loc_loss + obj_loss + noobj_loss + class_loss
+
+    return total_loss
+
+
+class MeanEuclideanDistance(Metric):
+    """Mean Euclidean Distance (MED) between predicted and true keypoints."""
+    def __init__(self, name="mean_euclidean_distance", **kwargs):
+        super().__init__(name=name, **kwargs)
+        self.total_distance = self.add_weight(name="total_distance", initializer="zeros")
+        self.count = self.add_weight(name="count", initializer="zeros")
+
+    def update_state(self, y_true, y_pred, sample_weight=None):
+        true_xy = y_true[..., :2]
+        pred_xy = y_pred[..., :2]
+        distance = tf.norm(true_xy - pred_xy, axis=-1)  # Euclidean distance
+        self.total_distance.assign_add(tf.reduce_sum(distance))
+        self.count.assign_add(tf.cast(tf.size(distance), tf.float32))
+
+    def result(self):
+        return self.total_distance / (self.count + K.epsilon())  # Avoid division by zero
+
+class PCK(Metric):
+    """Percentage of Correct Keypoints (PCK) within a threshold."""
+    def __init__(self, threshold=PCK_THRESH, name="pck", **kwargs):  
+        super().__init__(name=name, **kwargs)
+        self.threshold = threshold # Threshold distance in pixels
+        self.correct_count = self.add_weight(name="correct_count", initializer="zeros")
+        self.total_count = self.add_weight(name="total_count", initializer="zeros")
+
+    def update_state(self, y_true, y_pred, sample_weight=None):
+        true_xy = y_true[..., :2]
+        pred_xy = y_pred[..., :2]
+        distance = tf.norm(true_xy - pred_xy, axis=-1)  # Euclidean distance
+        correct = tf.cast(distance < self.threshold, tf.float32)
+        self.correct_count.assign_add(tf.reduce_sum(correct))
+        self.total_count.assign_add(tf.cast(tf.size(correct), tf.float32))
+
+    def result(self):
+        return self.correct_count / (self.total_count + K.epsilon())  # Avoid division by zero
+
+class ConfidenceAveragePrecision(Metric):
+    """Average Precision (AP) for confidence scores (Precision-Recall Curve)."""
+    def __init__(self, name="confidence_ap", **kwargs):
+        super().__init__(name=name, **kwargs)
+        self.auc = tf.keras.metrics.AUC(curve="PR")
+
+    def update_state(self, y_true, y_pred, sample_weight=None):
+        true_conf = y_true[..., 2]  # Assuming confidence is at index 2
+        pred_conf = y_pred[..., 2]
+        self.auc.update_state(true_conf, pred_conf)
+
+    def result(self):
+        return self.auc.result()
+
+class ClassAccuracy(Metric):
+    """Categorical Accuracy for multi-class classification at detected keypoints."""
+    def __init__(self, name="class_accuracy", **kwargs):
+        super().__init__(name=name, **kwargs)
+        self.accuracy = tf.keras.metrics.CategoricalAccuracy()
+
+    def update_state(self, y_true, y_pred, sample_weight=None):
+        true_class = y_true[..., 3:]  # Assuming class labels start at index 3
+        pred_class = y_pred[..., 3:]
+        self.accuracy.update_state(true_class, pred_class)
+
+    def result(self):
+        return self.accuracy.result()
+
+
+
 if __name__ == '__main__':
-    os.environ["CUDA_VISIBLE_DEVICES"] = "1"
+    # os.environ["CUDA_VISIBLE_DEVICES"] = "1"
 
     for i, date in enumerate(dates):
         paths = get_filepaths(paths, date, dirlists[i], label_file)
@@ -497,22 +610,15 @@ if __name__ == '__main__':
 
     thresh = 0.5
     dropout = 0.2
-    monitor = 'val_loss'
-    # monitor = 'val_bce'
 
     tflite_conv = False
     use_bias = True
     use_regularizers = True
     use_constraints = True
     logits = False
-    finetune = True
-    if finetune:
-        # finetune_source = '/home/harey/birdseye/models/birdseye_720_450_027.weights.h5'
-        finetune_source = '/home/harey/birdseye/models/birdseye_720_450_040.weights.h5'
     if use_regularizers:
-        ker_reg = tf.keras.regularizers.L1L2(l1=1e-8, l2=1e-5)  # 1e-6, 1e-3
-        # act_reg = tf.keras.regularizers.L1L2(l1=1e-14, l2=1e-11)  # 1e-11, 1e-8
-        act_reg = None
+        ker_reg = tf.keras.regularizers.L1L2(l1=1e-7, l2=1e-4)  # 1e-6, 1e-3
+        act_reg = tf.keras.regularizers.L1L2(l1=1e-12, l2=1e-9)  # 1e-11, 1e-8
     else:
         ker_reg = None
         act_reg = None
@@ -522,7 +628,7 @@ if __name__ == '__main__':
         ker_con = None
     if use_bias:
         if use_regularizers:
-            bias_reg = tf.keras.regularizers.L1L2(l1=1e-8, l2=1e-5)  # 1e-6, 1e-3
+            bias_reg = tf.keras.regularizers.L1L2(l1=1e-7, l2=1e-4)  # 1e-6, 1e-3
         else:
             bias_reg = None
         if use_constraints:
@@ -569,99 +675,59 @@ if __name__ == '__main__':
 
         f.close()
 
-    preglob_tr, preglob_va = train_test_split(preglob, shuffle=False, test_size=0.3)
+    # Create dataset
+    preglob_tr, preglob_va = train_test_split(preglob, shuffle=False, test_size=0.2)  
 
     train_ds = tf.data.Dataset.from_tensor_slices(preglob_tr)
-    train_ds = train_ds.shuffle(BUFFER_SIZE)  # Shuffle early for better randomness
-    train_ds = train_ds.map(load_rle_train, num_parallel_calls=tf.data.experimental.AUTOTUNE)
-    train_ds = train_ds.batch(BATCH_SIZE)  # Batch after transformation
-    train_ds = train_ds.prefetch(tf.data.experimental.AUTOTUNE)  # Prefetch to optimize pipeline
+    train_ds = train_ds.map(load_data, num_parallel_calls=tf.data.experimental.AUTOTUNE)
+    train_ds = train_ds.batch(BATCH_SIZE).shuffle(BUFFER_SIZE).prefetch(tf.data.experimental.AUTOTUNE)
 
     test_ds = tf.data.Dataset.from_tensor_slices(preglob_va)
-    test_ds = test_ds.shuffle(BUFFER_SIZE)  # Shuffle early for better randomness
-    test_ds = test_ds.map(load_rle_test, num_parallel_calls=tf.data.experimental.AUTOTUNE)
-    test_ds = test_ds.batch(BATCH_SIZE)  # Batch after transformation
-    test_ds = test_ds.prefetch(tf.data.experimental.AUTOTUNE)  # Prefetch to optimize pipeline
+    test_ds = test_ds.map(load_data, num_parallel_calls=tf.data.experimental.AUTOTUNE)
+    test_ds = test_ds.batch(BATCH_SIZE).shuffle(BUFFER_SIZE).prefetch(tf.data.experimental.AUTOTUNE)
 
     # strategy = tf.distribute.MirroredStrategy()
     # print("Number of devices: {}".format(strategy.num_replicas_in_sync))
     # with strategy.scope():
-    generator = generator(use_bias, ker_reg, ker_con, bias_reg, bias_con, act_reg, dropout, ker=3, trainable=finetune)
+    generator = generator(use_bias, ker_reg, ker_con, bias_reg, bias_con, act_reg, dropout, ker=3)
     generator.compile(optimizer=tf.keras.optimizers.AdamW(learning_rate=1e-5, beta_1=0.9, beta_2=0.99),
-                    loss=tf.keras.losses.BinaryFocalCrossentropy(alpha=0.25, gamma=2.0, from_logits=logits),
-                    # loss=tf.keras.losses.BinaryCrossentropy(from_logits=logits),
-                    metrics=[tf.keras.metrics.BinaryCrossentropy(from_logits=logits, name='bce'), \
-                            tf.keras.metrics.BinaryAccuracy(threshold=thresh, name='bin_acc'), \
-                            tf.keras.metrics.F1Score(threshold=thresh, name='f1'), \
-                            tf.keras.metrics.Precision(name='prec'), \
-                            tf.keras.metrics.Recall(name='rec'), \
-                            tf.keras.metrics.AUC()])
-    if finetune:
-        print(f'loading model {finetune_source}')
-        generator.load_weights(finetune_source)
+                    loss=point_yolo_loss(),
+                    metrics=[
+                        MeanEuclideanDistance(),
+                        PCK(),  
+                        ConfidenceAveragePrecision(),
+                        ClassAccuracy()])
     generator.summary()
 
     print(f'\n\n {len(preglob)} samples: {len(preglob_tr)} training, {len(preglob_va)} validation\n\n')
 
     if train:
         print(f'\n\ntraining {filename}\n\n')
-        # Define TensorBoard callback
-        tensorboard_callback = tf.keras.callbacks.TensorBoard(
-            log_dir="logs",  # Directory to save logs
-            histogram_freq=1,  # Record weight histograms every epoch
-            write_graph=True,  # Save the model graph
-            write_images=True  # Log model weights as images
-        )
-        callbacks = [tensorboard_callback, 
-                tf.keras.callbacks.ReduceLROnPlateau(monitor=monitor, factor=0.5, patience=5, min_lr=0),
-                tf.keras.callbacks.EarlyStopping(monitor=monitor, patience=15),
-                tf.keras.callbacks.ModelCheckpoint(filepath=filename+'.weights.h5', save_weights_only=True, save_best_only=True, monitor=monitor, verbose=2)]
+        callbacks = [
+                tf.keras.callbacks.TensorBoard(log_dir="logs", histogram_freq=1),
+                tf.keras.callbacks.ReduceLROnPlateau(monitor='val_loss', factor=0.5, patience=3, min_lr=0),
+                tf.keras.callbacks.EarlyStopping(monitor='val_loss', patience=9),
+                tf.keras.callbacks.ModelCheckpoint(filepath=filename+'.weights.h5', save_weights_only=True, save_best_only=True, monitor='val_loss', verbose=2)]
         history = generator.fit(train_ds, validation_data=test_ds, epochs=epochs, callbacks=callbacks, verbose=1)
         print(history.history.keys())
-        with open(filename+'_history.pkl', 'wb') as f:
-            pickle.dump(history, f)
         
-        fig, ax = plt.subplots(3,2)
+        fig, ax = plt.subplots(2,2)
 
         ax[0,0].plot(history.history['loss'], c='g')
         ax[0,0].plot(history.history['val_loss'], c='b')
         ax[0,0].set_title('Loss')
 
-        ax[0,1].plot(history.history['bce'], c='g')
-        ax[0,1].plot(history.history['val_bce'], c='b')
+        ax[0,1].plot(history.history['binary_crossentropy'], c='g')
+        ax[0,1].plot(history.history['val_binary_crossentropy'], c='b')
         ax[0,1].set_title('BCE')
 
         ax[1,0].plot(history.history['auc'], c='g')
         ax[1,0].plot(history.history['val_auc'], c='b')
         ax[1,0].set_title('AUROC')
 
-        ax[1,1].plot(history.history['f1'], c='g', label='Train')
-        ax[1,1].plot(history.history['val_f1'], c='b', label='Valid')
+        ax[1,1].plot(history.history['f1_score'], c='g', label='Train')
+        ax[1,1].plot(history.history['val_f1_score'], c='b', label='Valid')
         ax[1,1].set_title('F1 Score')
-
-        ax[2,0].plot(history.history['prec'], c='g', label='Train')
-        ax[2,0].plot(history.history['val_rec'], c='b', label='Valid')
-        ax[2,0].set_title('Precision')
-
-        ax[2,1].plot(history.history['rec'], c='g', label='Train')
-        ax[2,1].plot(history.history['val_rec'], c='b', label='Valid')
-        ax[2,1].set_title('Recall')
-        ax[2,1].legend()
+        ax[1,1].legend()
 
         plt.show()
-    if tSNE:
-        # filename = '/home/harey/birdseye/models/birdseye_960_600_006.weights.h5'
-        print(f'\n\ncomputing t-SNE for {filename}\n\n')
-        model = load_trained_model(generator, filename)
-        
-        embeddings, labels = get_embeddings(model, test_ds)
-        visualize_embeddings(embeddings, labels)
-    if tflite_conv:
-        print(f'\n\nconverting {filename} to tflite\n\n')
-        converter = tf.lite.TFLiteConverter.from_keras_model(generator)
-        converter.optimizations = [tf.lite.Optimize.DEFAULT]
-        tflite_model = converter.convert()
-        with open(filename+'.tflite', 'wb') as f:
-            f.write(tflite_model)
-else:
-    print('train.py ran as import')
