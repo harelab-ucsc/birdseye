@@ -70,8 +70,8 @@ class birdsEye():
         self.dbc = dbConnector(os.path.join(self.img_dir, self.db_name))
         self.dbc.boot(self.db_name, self.sensor)
 
-        self.apriltags = kwargs.pop('apriltags', True)
-        self.stats = kwargs.pop('stats', True)
+        self.apriltags = kwargs.pop('apriltags', None)
+        self.stats = kwargs.pop('stats', None)
         self.plot = kwargs.pop('plot', True)
 
         # self.model_path = kwargs.pop('model_path', os.path.join(os.path.expanduser('~'),'ucsc_512_384_13.tflite'))
@@ -103,8 +103,8 @@ class birdsEye():
         self.tx = 0
         self.ty = 0
         self.tz = 0
-        self.rr = -12
-        self.rp = 2
+        self.rr = 4
+        self.rp = -5
         self.ry = 0
         self.mod = 0.125
         r_adj = R.from_euler('xyz', \
@@ -456,7 +456,6 @@ class birdsEye():
 
         clicks = np.hstack((clks, np.ones_like(clks[:,0]).reshape(-1,1)*(self.T_WC[2,3]-self.radalt)))
 
-
         if frame[7] == 3:
             self.rtk_tracker[0] += 1
             self.RTK_watchdog = 1
@@ -563,8 +562,9 @@ class birdsEye():
 
         bp = np.array(self.clicks_3D)
         bp = np.squeeze(bp)
-        ap = np.array(self.april_3D)
-        ap = np.squeeze(ap)
+        if self.apriltags:
+            ap = np.array(self.april_3D)
+            ap = np.squeeze(ap)
 
         if len(self.clicks_3D) > 1:
             self.ax.scatter(bp[:,0], \
@@ -580,30 +580,22 @@ class birdsEye():
         else:
             pass  # nothing yet
 
-        if len(self.april_3D) > 1:
-            self.ax.scatter(ap[:,0], \
-                            ap[:,1], \
-                            ap[:,2], \
-                            c='r', alpha=0.3, s=16, label='AprilBackProj')
-        elif len(self.april_3D) == 1:
-            # first click
-            self.ax.scatter(ap[0], \
-                            ap[1], \
-                            ap[2], \
-                            c='r', alpha=0.3, s=16)
-        else:
-            pass  # nothing yet
+        if self.apriltags:
+            if len(self.april_3D) > 1:
+                self.ax.scatter(ap[:,0], \
+                                ap[:,1], \
+                                ap[:,2], \
+                                c='r', alpha=0.3, s=16, label='AprilBackProj')
+            elif len(self.april_3D) == 1:
+                # first click
+                self.ax.scatter(ap[0], \
+                                ap[1], \
+                                ap[2], \
+                                c='r', alpha=0.3, s=16)
+            else:
+                pass  # nothing yet
 
         self.ax.legend()
-        self.fig.canvas.draw_idle()
-        plt.pause(0.01)
-        # p = os.path.expanduser('~')
-        # p = os.path.join(p, 'catch', 'tmp', f'3d_{str(self.frame_index).rjust(3,str(0))}.png')
-        # self.fig.savefig(p)
-        self.ax.cla()
-
-        cv2.imshow("Window", rect)
-        cv2.waitKey(200)
 
 
     def parseFlightDatabase(self):
@@ -698,6 +690,17 @@ class birdsEye():
                 else:
                     print(f'    skipping annotation: bad RTK_STATUS, {frame[-5]}')
 
+                if self.plot:
+                    self.fig.canvas.draw_idle()
+                    plt.pause(0.01)
+                    # p = os.path.expanduser('~')
+                    # p = os.path.join(p, 'catch', 'tmp', f'3d_{str(self.frame_index).rjust(3,str(0))}.png')
+                    # self.fig.savefig(p)
+                    self.ax.cla()
+
+                    cv2.imshow("Window", rect)
+                    cv2.waitKey(200)
+
         print('\nRTK Service Stats:')
         print(f'    Status 3 (Fix): {self.rtk_tracker[0]} of {sum(self.rtk_tracker)} ({self.rtk_tracker[0]/sum(self.rtk_tracker)})')
         print(f'    Status 2 (Float): {self.rtk_tracker[1]} of {sum(self.rtk_tracker)} ({self.rtk_tracker[1]/sum(self.rtk_tracker)})')
@@ -714,6 +717,7 @@ if __name__ == '__main__':
     parser.add_argument("-s", "--stats", action='store_true', help="Boolean, whether or not to derive projection stats (default: False)")
     parser.add_argument("-p", "--plot", action='store_true', help="Boolean, whether or not to plot visualizations (default: False)")
     parser.add_argument("-a", "--apriltags", action='store_true', help="Boolean, whether or not to detect apriltags (default: False)")
+    # parser.add_argument("-pr", "--playback-rate", help="Float, whether or not to detect apriltags (default: False)")
 
     args = vars(parser.parse_args())
 
@@ -725,6 +729,6 @@ if __name__ == '__main__':
     print(f'Processing data from {dir_path}')
 
     db_name = 'flight_data'
-    tst = birdsEye(db_name=db_name, img_dir=dir_path, apriltags=True, plot=args['plot'])
+    tst = birdsEye(db_name=db_name, img_dir=dir_path, apriltags=args['apriltags'], plot=args['plot'])
 
     tst.parseFlightDatabase()

@@ -21,7 +21,8 @@ def skip_check(file, skip_patterns):
 file_roots = [
     # '/home/mwmaster/parsed_flights/2025_03_03/', \
     # '/home/mwmaster/parsed_flights/2025_03_10/', \
-    '/home/mwmaster/parsed_flights/2025_03_18/'
+    '/home/mwmaster/parsed_flights/2025_03_18/', \
+    '/home/mwmaster/parsed_flights/2025_04_03/'
 ]
 
 skip_patterns = []
@@ -47,7 +48,7 @@ for file in datasets:
         continue
     with open(file, 'rb') as f:
         tmp = pickle.load(f)
-        if 'acceptance_01_10m' in file:
+        if '2025_04_03/acceptance_01_10m' in file:
             for key in tmp.keys():
                 # print('rect: ', key)
                 try:
@@ -98,7 +99,7 @@ for file in datasets:
                         data_06_10m[key] = tmp[key]
                 except ValueError:
                     data_06_10m[key] += tmp[key].tolist()
-        elif 'acceptance_01_20m' in file:
+        elif '2025_04_03/acceptance_01_20m' in file:
             for key in tmp.keys():
                 # print('rect: ', key)
                 try:
