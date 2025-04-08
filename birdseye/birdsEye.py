@@ -73,6 +73,25 @@ class birdsEye():
         self.apriltags = kwargs.pop('apriltags', None)
         self.stats = kwargs.pop('stats', None)
         self.plot = kwargs.pop('plot', True)
+        self.orthophoto_enabled = kwargs.pop('orthophoto', False)
+        self.gsd_res = kwargs.pop('gsd_resolution', 10)
+        if self.orthophoto_enabled:
+            self.ortho_res = 0.0025  # initial ortho pixel-resolution of 2.5 mm/pixel. (approximation at 10m flight altitude)
+            self.canvas_origin = None
+            self.canvas = None
+            self.count_canvas = None
+            self.prev_rect = None
+
+            # record homography corrections
+            self.homography_dx = []
+            self.homography_dy = []
+            self.homography_yaw = []
+
+            self.max_dx = 500    # pixels
+            self.max_dy = 500    # pixels
+            self.max_yaw_deg = 5.0 # degree
+
+
 
         # self.model_path = kwargs.pop('model_path', os.path.join(os.path.expanduser('~'),'ucsc_512_384_13.tflite'))
         # self.model = tflite.Interpreter(model_path=self.model_path, num_threads=4)
@@ -162,6 +181,114 @@ class birdsEye():
             self.bproj = []  # list of framewise (april_3D - clicks_3D)
             self.reproj = []  # list of framewise (clicks_2D - april_2D)
         # self.contour = Contour(res=(self.res[1], self.res[0]))
+
+    # set up the orthophoto canvas for pixel registration
+    def initialize_canvas(self):
+        coords = [poseRowToTransform(d[:7])[:2,3] for d in self.data]
+        coords = np.array(coords)
+        min_coords, max_coords = coords.min(axis=0), coords.max(axis=0)
+        padding = 5  # meters padding around the area
+        self.canvas_origin = min_coords - padding
+        canvas_size = ((max_coords - min_coords + 2*padding) / (self.gsd_res * self.ortho_res)).astype(int)
+        self.canvas = np.zeros((canvas_size[1], canvas_size[0], 3), dtype=np.float32)
+        self.count_canvas = np.zeros((canvas_size[1], canvas_size[0]), dtype=np.float32)
+
+    # register pixels in image to orthophoto
+    def add_to_orthophoto(self, img, T_WC, depth):
+        h, w = img.shape[:2]
+        y_idxs, x_idxs = np.indices((h, w))
+        pixels_homo = np.vstack((x_idxs.flatten(), y_idxs.flatten(), np.ones(x_idxs.size)))
+
+        # Project to camera frame
+        cam_coords = np.linalg.inv(self.K) @ pixels_homo * depth
+        cam_coords = np.vstack((cam_coords, np.ones(cam_coords.shape[1])))
+
+        # ENU transform if needed
+        cam_coords = np.array([[0, -1, 0, 0],
+                            [-1,  0, 0, 0],
+                            [ 0,  0, 1, 0],
+                            [ 0,  0, 0, 1]]) @ cam_coords
+
+        # Project to world
+        world_coords = T_WC @ cam_coords
+        x_world, y_world = world_coords[0], world_coords[1]
+
+        # Ground resolution (GSD)
+        self.ortho_res = self.radalt / ((self.K[0, 0] + self.K[1, 1]) / 2)
+        x_canvas = ((x_world - self.canvas_origin[0]) / (self.ortho_res * self.gsd_res)).astype(int)
+        y_canvas = ((y_world - self.canvas_origin[1]) / (self.ortho_res * self.gsd_res)).astype(int)
+
+        valid_idx = (x_canvas >= 0) & (y_canvas >= 0) & \
+                    (x_canvas < self.canvas.shape[1]) & (y_canvas < self.canvas.shape[0])
+
+        # View angle filter
+        camera_z = -T_WC[:3, 2]
+        view_angle = np.arccos(np.clip(np.dot(camera_z, np.array([0, 0, -1])), -1.0, 1.0))
+        angle_deg = np.degrees(view_angle)
+
+        if angle_deg <= 10.0:
+            img_pixels = img.reshape(-1, 3)[valid_idx]
+            xc = x_canvas[valid_idx]
+            yc = y_canvas[valid_idx]
+
+            # MASKING: only set pixels where count is zero
+            unfilled = (self.count_canvas[yc, xc] == 0)
+            self.canvas[yc[unfilled], xc[unfilled]] = img_pixels[unfilled]
+            self.count_canvas[yc[unfilled], xc[unfilled]] = 1
+        else:
+            print(f"    Skipping image due to oblique angle: {angle_deg:.1f}°")
+
+
+    
+    def warp_with_homography(self, img1, img2):
+        """
+        Warps img2 to align with img1 using homography based on SIFT feature matches.
+        Returns the warped img2 or None if matching fails.
+        """
+        scale = 0.5  # Downscale for speed
+
+        img1_small = cv2.resize(img1, (0, 0), fx=scale, fy=scale, interpolation=cv2.INTER_AREA)
+        img2_small = cv2.resize(img2, (0, 0), fx=scale, fy=scale, interpolation=cv2.INTER_AREA)
+
+        sift = cv2.SIFT_create()
+        kp1, des1 = sift.detectAndCompute(cv2.cvtColor(img1_small, cv2.COLOR_BGR2GRAY), None)
+        kp2, des2 = sift.detectAndCompute(cv2.cvtColor(img2_small, cv2.COLOR_BGR2GRAY), None)
+
+        if des1 is None or des2 is None or len(kp1) < 4 or len(kp2) < 4:
+            print("    Skipping homography: not enough features")
+            return None
+
+        matcher = cv2.BFMatcher()
+        matches = matcher.knnMatch(des1, des2, k=2)
+
+        good = []
+        for m, n in matches:
+            if m.distance < 0.75 * n.distance:
+                good.append(m)
+
+        if len(good) < 8:
+            print(f"    Skipping homography: only {len(good)} good matches")
+            return None
+
+        pts1 = np.float32([np.array(kp1[m.queryIdx].pt) / scale for m in good]).reshape(-1, 1, 2)
+        pts2 = np.float32([np.array(kp2[m.trainIdx].pt) / scale for m in good]).reshape(-1, 1, 2)
+
+        H, mask = cv2.findHomography(pts2, pts1, cv2.RANSAC)
+        if H is None:
+            print("    Homography estimation failed.")
+            return None
+
+        dx, dy = H[0, 2], H[1, 2]
+        theta = np.arctan2(H[1, 0], H[0, 0])
+        self.homography_dx.append(dx)
+        self.homography_dy.append(dy)
+        self.homography_yaw.append(np.degrees(theta))
+        if abs(dx) > self.max_dx or abs(dy) > self.max_dy or abs(theta) > self.max_yaw_deg:
+            print(f"    Homography rejected: Δx={dx:.1f}, Δy={dy:.1f}, Yaw={theta:.1f}°")
+            return None  # fallback to original pose/image
+
+        warped = cv2.warpPerspective(img2, H, (img1.shape[1], img1.shape[0]))
+        return warped
 
 
     def getParameters(self, device_key):
@@ -634,8 +761,15 @@ class birdsEye():
 
             if self.radalt > 3.0:
                 # changing to my filepath
-                # modified_img_path = frame[-5].replace('/home/mwmaster/', '/media/akorycki/Data/')
-                modified_img_path = frame[-5]
+                #modified_img_path = frame[-5].replace('/home/mwmaster/', '/media/akorycki/Data/')
+                #modified_img_path = frame[-5]
+                # Rebuild path with first 3 directories from src_dir
+                prefix_parts = self.img_dir.strip(os.sep).split(os.sep)[:3]
+                new_prefix = os.sep + os.path.join(*prefix_parts) + os.sep
+
+                # Replace '/home/whatever/' with new_prefix
+                parts = frame[-5].split(os.sep)
+                modified_img_path = os.path.join(new_prefix, *parts[3:])
                 img = cv2.imread(modified_img_path)
 
                 # rectify image distortion
@@ -690,6 +824,32 @@ class birdsEye():
                 else:
                     print(f'    skipping annotation: bad RTK_STATUS, {frame[-5]}')
 
+                if self.orthophoto_enabled:
+                    if self.canvas is None:
+                        self.initialize_canvas()
+
+                    if img is not None:
+                        # --- sharpness check ---
+                        gray = cv2.cvtColor(rect, cv2.COLOR_BGR2GRAY)
+                        sharpness = cv2.Laplacian(gray, cv2.CV_64F).var()
+                        if sharpness >= 600.0:
+                            if (i % 2) == 0: # use every 3rd image for ortho stitching
+                                # Attempt image warping 
+                                if self.prev_rect is not None:
+                                    warped = self.warp_with_homography(self.prev_rect, rect)
+                                    #warped = None
+                                    if warped is not None:
+                                        self.add_to_orthophoto(warped, self.T_WC, self.radalt)
+                                    else:
+                                        self.add_to_orthophoto(rect, self.T_WC, self.radalt)
+                                else:
+                                    self.add_to_orthophoto(rect, self.T_WC, self.radalt)
+
+                                self.prev_rect = rect  # for next frame's matching
+                        else:
+                            print(f'    Frame {i} skipped due to blur (sharpness={sharpness:.2f})')
+
+
                 if self.plot:
                     self.fig.canvas.draw_idle()
                     plt.pause(0.01)
@@ -700,6 +860,52 @@ class birdsEye():
 
                     cv2.imshow("Window", rect)
                     cv2.waitKey(200)
+        
+        if self.orthophoto_enabled:
+            mask = self.count_canvas > 0
+            self.canvas[mask] /= self.count_canvas[mask, None]
+            orthophoto = np.clip(self.canvas, 0, 255).astype(np.uint8)
+
+            # Crop orthophoto to remove unregistered pixel boundary
+            nonzero_y, nonzero_x = np.nonzero(self.count_canvas)
+
+            if nonzero_x.size > 0 and nonzero_y.size > 0:
+                min_x, max_x = np.min(nonzero_x), np.max(nonzero_x)
+                min_y, max_y = np.min(nonzero_y), np.max(nonzero_y)
+
+                # Crop orthophoto and count_canvas accordingly
+                orthophoto = orthophoto[min_y:max_y+1, min_x:max_x+1]
+                print(f"Orthophoto cropped to bounding box: x=({min_x}, {max_x}), y=({min_y}, {max_y})")
+            else:
+                print("Warning: No registered pixels found. Orthophoto will be empty.")
+            ortho_path = os.path.join(self.img_dir, 'ortho.png')
+            cv2.imwrite(ortho_path, orthophoto)
+            print(f'Orthophoto saved to {ortho_path}')
+
+            plt.figure(figsize=(15, 4))
+
+            # create histograms of homography corrections
+            plt.subplot(1, 3, 1)
+            plt.hist(self.homography_dx, bins=100, color='skyblue', edgecolor='k')
+            plt.title("Δx Translation")
+            plt.xlabel("Pixels")
+            plt.ylabel("Count")
+
+            plt.subplot(1, 3, 2)
+            plt.hist(self.homography_dy, bins=100, color='salmon', edgecolor='k')
+            plt.title("Δy Translation")
+            plt.xlabel("Pixels")
+
+            plt.subplot(1, 3, 3)
+            plt.hist(self.homography_yaw, bins=100, color='mediumseagreen', edgecolor='k')
+            plt.title("Yaw Correction (θ)")
+            plt.xlabel("Degrees")
+
+            plt.tight_layout()
+            hist_path = os.path.join(self.img_dir, "homography_components.png")
+            plt.savefig(hist_path)
+            print(f"Saved homography component histograms to {hist_path}")
+
 
         print('\nRTK Service Stats:')
         print(f'    Status 3 (Fix): {self.rtk_tracker[0]} of {sum(self.rtk_tracker)} ({self.rtk_tracker[0]/sum(self.rtk_tracker)})')
@@ -717,6 +923,8 @@ if __name__ == '__main__':
     parser.add_argument("-s", "--stats", action='store_true', help="Boolean, whether or not to derive projection stats (default: False)")
     parser.add_argument("-p", "--plot", action='store_true', help="Boolean, whether or not to plot visualizations (default: False)")
     parser.add_argument("-a", "--apriltags", action='store_true', help="Boolean, whether or not to detect apriltags (default: False)")
+    parser.add_argument("-o", "--orthophoto", action='store_true', help="Boolean, whether or not to generate orthophoto mosaic (default: False)")
+    parser.add_argument("-r", "--gsd_resolution", help="Int, scale the pixel ground sample distance. (1=real resolution, 2=half resolution etc) (default: 10)")
     # parser.add_argument("-pr", "--playback-rate", help="Float, whether or not to detect apriltags (default: False)")
 
     args = vars(parser.parse_args())
@@ -729,6 +937,6 @@ if __name__ == '__main__':
     print(f'Processing data from {dir_path}')
 
     db_name = 'flight_data'
-    tst = birdsEye(db_name=db_name, img_dir=dir_path, apriltags=args['apriltags'], plot=args['plot'])
+    tst = birdsEye(db_name=db_name, img_dir=dir_path, apriltags=args['apriltags'], plot=args['plot'], orthophoto=args['orthophoto'], gsd_res=args['gsd_resolution'])
 
     tst.parseFlightDatabase()
