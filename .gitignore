@@ -8,3 +8,4 @@ launch/__pycache__/*
 birdseye/__pycache__/*
 birdseye/venv/*
 *.zip
+venv/*
