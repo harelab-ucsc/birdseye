@@ -3,3 +3,5 @@
 # macOS
 .DS_Store
 */.DS_Store
+models/*
+birdseye/__pycache__/*
