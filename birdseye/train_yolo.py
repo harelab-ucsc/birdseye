@@ -300,172 +300,50 @@ def load_rle_test(image_file):
 # ~ # define model architecture as blocks of layers for ease of experiment # ~ #
 # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ #
 
-# stuff in play that I read papers/textbooks about:
-# separable convolutions (parameter-efficient convolutions, Xception, DeepLab architectures),
-# U-Net architecture (mainstay archetype of segmentation networks),
-# Batch normalization,
-# atrous/dilated convolutions (these seem very data-hungry, DeepLab architecture),
-# residual connections (ultra-effective way to improve network fidelity, ResNet architecture)
-# parameter regularization (weight decay)
-# parameter constraints (recast problem as constrained optimization)
-
-# following *_blocks are general building blocks themed off of Xception network
-# entry and main flow blocks (see paper)
-
-def in_block_v2(x, filters, size, dr, use_bias, ker_reg, ker_con, bias_reg, bias_con, act_reg):
-    x = tf.keras.layers.Conv2D(filters[0],
-                               size,  # Larger Kernel Size for Small Feature Detection
-                               strides=1,
-                               dilation_rate=dr[0],  # Use Dilation for Higher Resolution Features
-                               padding='same',
-                               use_bias=use_bias,
-                               kernel_regularizer=ker_reg,
-                               kernel_constraint=ker_con,
-                               bias_regularizer=bias_reg,
-                               bias_constraint=bias_con,
-                               activity_regularizer=act_reg)(x)
-    x = tf.keras.layers.LeakyReLU()(x)
-    x = tf.keras.layers.BatchNormalization()(x)
-    
-    x = tf.keras.layers.Conv2D(filters[1], size,
-                               strides=2,
-                               dilation_rate=dr[1],
-                               padding='same',
-                               use_bias=use_bias,
-                               kernel_regularizer=ker_reg,
-                               kernel_constraint=ker_con,
-                               bias_regularizer=bias_reg,
-                               bias_constraint=bias_con,
-                               activity_regularizer=act_reg)(x)
-    x = tf.keras.layers.LeakyReLU()(x)
-    x = tf.keras.layers.BatchNormalization()(x)
-    return x
+# Define a custom detection head (binary classification: object present or not)
+def detection_head(inputs):
+    x = tf.keras.layers.GlobalAveragePooling2D()(inputs)  # Convert feature map to vector
+    x = tf.keras.layers.Dense(256, activation="relu")(x)  # Fully connected layer
+    x = tf.keras.layers.Dropout(0.5)(x)  # Regularization
+    outputs = tf.keras.layers.Dense(1, activation="sigmoid")(x)  # Binary detection (0 or 1)
+    return outputs
 
 
-def down_block_v2(x, filters, size, dr, use_bias, ker_reg, ker_con, bias_reg, bias_con, act_reg, dropout, pool=True):
-    if pool:
-        res = tf.keras.layers.Conv2D(filters, 1,
-                                    strides=2,
-                                    use_bias=use_bias,
-                                    kernel_regularizer=ker_reg,
-                                    kernel_constraint=ker_con,
-                                    bias_regularizer=bias_reg,
-                                    bias_constraint=bias_con,
-                                    activity_regularizer=act_reg)(x)
-    else:
-        res = tf.keras.layers.Conv2D(filters, 1,
-                                    strides=1,
-                                    use_bias=use_bias,
-                                    kernel_regularizer=ker_reg,
-                                    kernel_constraint=ker_con,
-                                    bias_regularizer=bias_reg,
-                                    bias_constraint=bias_con,
-                                    activity_regularizer=act_reg)(x)
-    
-    x = tf.keras.layers.SeparableConv2D(filters, size,
-                                        strides=1,
-                                        dilation_rate=dr[0],  # Introduce dilation gradually
-                                        use_bias=use_bias,
-                                        padding='same',
-                                        depthwise_regularizer=ker_reg,
-                                        depthwise_constraint=ker_con,
-                                        pointwise_regularizer=ker_reg,
-                                        pointwise_constraint=ker_con,
-                                        bias_regularizer=bias_reg,
-                                        bias_constraint=bias_con,
-                                        activity_regularizer=act_reg)(x)
-    x = tf.keras.layers.LeakyReLU()(x)
-    x = tf.keras.layers.BatchNormalization()(x)
-    x = tf.keras.layers.Dropout(dropout)(x)
-    
-    if pool:
-        x = tf.keras.layers.SeparableConv2D(filters, size,
-                                            strides=2,
-                                            dilation_rate=1,  # Increase dilation in deeper layers
-                                            use_bias=use_bias,
-                                            padding='same',
-                                            depthwise_regularizer=ker_reg,
-                                            depthwise_constraint=ker_con,
-                                            pointwise_regularizer=ker_reg,
-                                            pointwise_constraint=ker_con,
-                                            bias_regularizer=bias_reg,
-                                            bias_constraint=bias_con,
-                                            activity_regularizer=act_reg)(x)
-    else:
-        x = tf.keras.layers.SeparableConv2D(filters, size,
-                                            strides=1,
-                                            dilation_rate=dr[1],  # Increase dilation in deeper layers
-                                            use_bias=use_bias,
-                                            padding='same',
-                                            depthwise_regularizer=ker_reg,
-                                            depthwise_constraint=ker_con,
-                                            pointwise_regularizer=ker_reg,
-                                            pointwise_constraint=ker_con,
-                                            bias_regularizer=bias_reg,
-                                            bias_constraint=bias_con,
-                                            activity_regularizer=act_reg)(x)
-    x = tf.keras.layers.LeakyReLU()(x)
-    x = tf.keras.layers.BatchNormalization()(x)
-    
-    # Squeeze-and-Excitation Block
-    se = tf.keras.layers.GlobalAveragePooling2D()(x)
-    se = tf.keras.layers.Dense(filters // 16, activation='relu')(se)
-    se = tf.keras.layers.Dense(filters, activation='sigmoid')(se)
-    x = tf.keras.layers.Multiply()([x, se])
-    
-    add = tf.keras.layers.add([res, x])
-    return add
+def pretrained_backbone(inp, use_bias, ker_reg, ker_con, bias_reg, bias_con, act_reg, dropout, h=IMG_HEIGHT, w=IMG_WIDTH, c=IMAGE_CHANNELS, ker=3, trainable=False):
+    x = tf.keras.ops.cast(inp, "float32")
+    x = tf.keras.applications.mobilenet_v2.preprocess_input(x)
+    backbone = MobileNetV2(input_shape=(h, w, c), include_top=False, weights="imagenet")
+    # backbone = MobileNetV3Small(input_shape=(h, w, c), include_top=False, weights="imagenet")
+    # backbone = MobileNetV3Large(input_shape=(h, w, c), include_top=False, weights="imagenet")
+    # backbone = Xception(input_shape=(h, w, c), include_top=False, weights="imagenet")
+
+    # Freeze the backbone (optional for transfer learning)
+    backbone.trainable = False  
+
+    if trainable:
+        unfreeze_fraction = 0.3
+        n_total = len(backbone.layers)
+        n_unfreeze = int(n_total * unfreeze_fraction)
+
+        # 3. Unfreeze top layers
+        for layer in backbone.layers[-n_unfreeze:]:
+            if not isinstance(layer, tf.keras.layers.BatchNormalization):
+                layer.trainable = True
+            else:
+                # Optionally keep BatchNorm frozen (recommended for stability)
+                layer.trainable = False
+
+    # Build the final model
+    x = backbone(x, training=False)  # Extract features without updating backbone weights
+    outputs = detection_head(x)  # Apply binary detection head
+
+    return outputs
 
 
-def out_block_v2(x, filters, size, use_bias, ker_reg, ker_con, bias_reg, bias_con, act_reg):
-    x = tf.keras.layers.SeparableConv2D(filters[0], size,
-                                        strides=1,
-                                        use_bias=use_bias,
-                                        padding='same',
-                                        depthwise_regularizer=ker_reg,
-                                        depthwise_constraint=ker_con,
-                                        pointwise_regularizer=ker_reg,
-                                        pointwise_constraint=ker_con,
-                                        bias_regularizer=bias_reg,
-                                        bias_constraint=bias_con,
-                                        activity_regularizer=act_reg)(x)
-    x = tf.keras.layers.LeakyReLU()(x)
-    x = tf.keras.layers.BatchNormalization()(x)
-    x = tf.keras.layers.SeparableConv2D(filters[1], size,
-                                        strides=1,
-                                        use_bias=use_bias,
-                                        padding='same',
-                                        depthwise_regularizer=ker_reg,
-                                        depthwise_constraint=ker_con,
-                                        pointwise_regularizer=ker_reg,
-                                        pointwise_constraint=ker_con,
-                                        bias_regularizer=bias_reg,
-                                        bias_constraint=bias_con,
-                                        activity_regularizer=act_reg)(x)
-    x = tf.keras.layers.LeakyReLU()(x)
-    x = tf.keras.layers.BatchNormalization()(x)
-    x = layers.Conv2D(S * S * B * (5 + C), (1, 1), activation="linear")(x)
-    x = layers.Reshape((S, S, B * (5 + C)))(x)
-    return x
-
-
-def testing_net(inputs, use_bias, ker_reg, ker_con, bias_reg, bias_con, act_reg, dropout, ker=3):
-    """ this model trains reliably """
-    x = in_block_v2(inputs, [32, 64], 5, [1, 1], use_bias, ker_reg, ker_con, bias_reg, bias_con, act_reg)  # 32, 64
-    x = down_block_v2(x, 128, 5, [1, 2], use_bias, ker_reg, ker_con, bias_reg, bias_con, act_reg, dropout)  # 128
-    x = down_block_v2(x, 256, 5, [1, 2], use_bias, ker_reg, ker_con, bias_reg, bias_con, act_reg, dropout)  # 256
-    x = down_block_v2(x, 512, ker, [2, 4], use_bias, ker_reg, ker_con, bias_reg, bias_con, act_reg, dropout)  # 512
-    x = down_block_v2(x, 1024, ker, [2, 4], use_bias, ker_reg, ker_con, bias_reg, bias_con, act_reg, dropout)  # 1024
-    x = down_block_v2(x, 1024, ker, [2, 4], use_bias, ker_reg, ker_con, bias_reg, bias_con, act_reg, dropout, pool=False)  # 1024
-    x = down_block_v2(x, 1024, ker, [2, 4], use_bias, ker_reg, ker_con, bias_reg, bias_con, act_reg, dropout, pool=False)  # 1024
-    x = down_block_v2(x, 1024, ker, [2, 4], use_bias, ker_reg, ker_con, bias_reg, bias_con, act_reg, dropout, pool=False)  # 1024
-    x = out_block_v2(x, [512, 256], ker, use_bias, ker_reg, ker_con, bias_reg, bias_con, act_reg)
-    return x
-
-
-def generator(use_bias, ker_reg, ker_con, bias_reg, bias_con, act_reg, dropout, h=IMG_HEIGHT, w=IMG_WIDTH, c=IMAGE_CHANNELS, ker=3):
+def generator(use_bias, ker_reg, ker_con, bias_reg, bias_con, act_reg, dropout, h=IMG_HEIGHT, w=IMG_WIDTH, c=IMAGE_CHANNELS, ker=3, trainable=False):
     inp = tf.keras.Input(shape=(h, w, c), name='inp_layer')
-    out = testing_net(inp, use_bias, ker_reg, ker_con, bias_reg, bias_con, act_reg, dropout, ker=ker)
+    # out = testing_net(inp, use_bias, ker_reg, ker_con, bias_reg, bias_con, act_reg, dropout, ker=ker)
+    out = pretrained_backbone(inp, use_bias, ker_reg, ker_con, bias_reg, bias_con, act_reg, dropout, ker=ker, trainable=trainable)
     return tf.keras.Model(inputs=inp, outputs=out)
 
 
@@ -507,7 +385,7 @@ def point_yolo_loss(y_true, y_pred, S=7, B=2, C=3, lambda_coord=5, lambda_noobj=
     distance = tf.norm(true_xy - pred_xy, axis=-1)  # Euclidean distance
     
     # Define confidence as an inverse function of distance (lower distance → higher confidence)
-    pred_conf_new = tf.exp(-distance)  # Confidence = exp(-distance) ensures smooth decay
+    pred_conf_new = tf.exp(-distance)  # Confidence = exp(-gamma * distance) ensures smooth decay
     
     # Compute confidence loss
     obj_loss = tf.reduce_sum(true_conf * tf.square(pred_conf_new - pred_conf))  # Object exists

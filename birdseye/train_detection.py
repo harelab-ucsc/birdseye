@@ -20,7 +20,7 @@ import matplotlib.pyplot as plt
 from sklearn.model_selection import train_test_split
 from sklearn.manifold import TSNE # Function to extract penultimate layer embeddings
 from tensorflow.keras import mixed_precision
-from keras.applications import EfficientNetB3, MobileNetV2, MobileNetV3Small, MobileNetV3Large, Xception
+from keras.applications import EfficientNetV2B3, MobileNetV2, MobileNetV3Small, MobileNetV3Large, Xception
 
 
 # mixed_precision.set_global_policy('mixed_float16')
@@ -29,39 +29,45 @@ train = True
 tSNE = False
 
 # define , filepaths, and model savenames
-BUFFER_SIZE = 32
-BATCH_SIZE = 8
-# IMG_WIDTH = 960
-# IMG_HEIGHT = 600
-IMG_WIDTH = 720
-IMG_HEIGHT = 450
+BUFFER_SIZE = 36
+BATCH_SIZE = 9
+# IMG_WIDTH = 1920
+# IMG_HEIGHT = 1200
+IMG_WIDTH = 960
+IMG_HEIGHT = 600
+# IMG_WIDTH = 720
+# IMG_HEIGHT = 450
 # IMG_WIDTH = 224
 # IMG_HEIGHT = 224
 IMAGE_CHANNELS = 3
+WARMUP_LENGTH = 1
 epochs = 1000
 
 models_dir = os.path.join(os.path.expanduser('~'), 'birdseye', 'models')
 filename_prefix = os.path.join(models_dir, f'birdseye_{IMG_WIDTH}_{IMG_HEIGHT}')
-val = str(len(glob2.glob(os.path.join(models_dir, filename_prefix+'*.weights.h5')))).rjust(3,'0')
+val = str(len(glob2.glob(os.path.join(models_dir, filename_prefix+'*.weights.h5')))+1).rjust(3,'0')
 filename = filename_prefix + f'_{val}'
 
-print(f'\n\n{filename}\n\n')
+# print(f'\n\n{filename}\n\n')
 
 paths = []
 
-label_file = 'labels_checked.txt'
+label_file = 'labels.txt'
 dates = [
     # '2024_07_XX', 
     # '2025_01_29', 
     # '2025_02_05', 
     '2025_03_25', 
-    '2025_04_04']
+    '2025_04_04',
+    # '2025_04_09'
+    ]
 dirlists = [
     # ['farm_0__2024_07_25', 'farm_1__2024_07_25', 'farm_2__2024_07_29'],
     # ['haybarn_01_rect', 'haybarn_02_rect', 'haybarn_05_rect'], 
     # ['haybarn_01_rect'], 
     ['haybarn_original_01_01_rect', 'haybarn_eviltwin_01_01_rect'],
-    ['original_01_rect', 'original_02_rect', 'eviltwin_01_rect', 'eviltwin_02_rect'] #,'eviltwin_03_rect']
+    ['original_01_rect', 'original_02_rect', 'eviltwin_01_rect', 'eviltwin_02_rect', 'eviltwin_03_rect'],
+    # ['original_01_rect', 'original_02_rect', 'eviltwin_01_rect', 'eviltwin_02_rect']
     ]
 
 
@@ -69,63 +75,6 @@ def get_filepaths(paths, date, dirnames, label_file):
     paths += [os.path.join(os.path.expanduser('~'), 'birdseye_CNN_data', date, dirname) for dirname in dirnames]
     return paths 
 
-
-def load_trained_model(model, model_path):
-    """Loads a trained Keras model from a given file path."""
-    model.load_weights(model_path)
-    return model
-
-
-def get_embeddings(model, dataset, embedding_layer_name="global_max_pooling2d"):
-    """
-    Extracts embeddings and labels from a trained model.
-    
-    Args:
-        model: A trained Keras model.
-        dataset: A tf.data.Dataset of (image, label) pairs.
-        embedding_layer_name: Name of the layer to extract embeddings from.
-    
-    Returns:
-        Tuple (embeddings, labels) as NumPy arrays.
-    """
-    # Create an embedding model
-    embedding_model = tf.keras.Model(
-        inputs=model.input, 
-        outputs=model.get_layer(embedding_layer_name).output
-    )
-
-    embeddings = []
-    labels = []
-    cnt = 0
-    for images, lbls in dataset:  # Extract images & labels
-        cnt += 1
-        emb = embedding_model.predict(images, verbose=0)  # Get embeddings
-        print(cnt, end='\r')
-        # # Flatten the 4D embeddings into 2D (N, height * width * channels)
-        # emb = emb.reshape(emb.shape[0], -1)  # Flatten to (N, features)
-        
-        embeddings.append(emb)
-        labels.append(lbls.numpy())
-
-    embeddings = np.vstack(embeddings)  # Stack all embeddings into (N, features)
-    labels = np.concatenate(labels)
-
-    print(f"\nExtracted embeddings shape: {embeddings.shape}")  
-    return embeddings, labels
-
-
-def visualize_embeddings(embeddings, labels):
-    """Applies t-SNE to embeddings and visualizes them."""
-    tsne = TSNE(n_components=2, perplexity=30, random_state=42)
-    reduced_embeddings = tsne.fit_transform(embeddings)
-
-    plt.figure(figsize=(8, 6))
-    plt.scatter(reduced_embeddings[:, 0], reduced_embeddings[:, 1], c=labels, cmap='viridis', alpha=0.7)
-    plt.colorbar(label="Class Labels")
-    plt.xlabel("t-SNE Dim 1")
-    plt.ylabel("t-SNE Dim 2")
-    plt.title("t-SNE Visualization of Learned Embeddings")
-    plt.show()
 
 # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ #
 # ~~~~ # data augmentation pipeline to add randomness/volume to dataset # ~~~~ #
@@ -141,6 +90,7 @@ def read_label_file(load_name, image_file):
                 cl = float(tmp[2])
                 break
             elif len(tmp) == 0:
+                cl = 0.0  # image_file had no clicks in view
                 break
         f.close()
     except FileNotFoundError:
@@ -162,7 +112,6 @@ def load_rle(image_file, label_file=label_file):
 
 @tf.function
 def load_from_rle(image_file):
-    # print('image_file: ', image_file)
     image = tf.io.read_file(image_file)
     image = tf.io.decode_png(image, channels=IMAGE_CHANNELS, name='image')
     image = tf.image.resize(image, [IMG_HEIGHT, IMG_WIDTH], \
@@ -198,37 +147,16 @@ def normalize(input_image):
     return input_image
 
 
-# next 5 functions generate randomness within dataset to help regularize training
-# can be thought of as synthesizing extra data from real data or
-# "adding water to the shampoo bottle to get every bit out"
-
-
-@tf.function
-def random_rotate(input_image, range=30):
-    rot = np.random.uniform(-range, range)
-    input_image = tf.py_function(lambda img: ndimage.rotate(img, rot, reshape=False, mode='nearest'),
-                                 inp=[input_image], Tout=tf.float32)
-    return input_image
-
-
-def tf_random_rotate(input_image):
-    im_shape = input_image.shape
-    input_image = random_rotate(input_image)
-    input_image.set_shape(im_shape)
-    return input_image
-
-
 def random_jitter(input_image, thresh=0.5):
-    input_image = resize(input_image, int(IMG_HEIGHT * 1.2), int(IMG_WIDTH * 1.2))
-    # input_image, real_image = random_crop(input_image, real_image)
     m = np.random.rand(5)
     n = np.random.choice((-1,1))
     if m[0] < thresh:
         input_image = tf.image.adjust_brightness(input_image, n*m[0]/2)
     if m[1] < thresh:
         input_image = tf.image.adjust_contrast(input_image, n*m[1]/2)
-    # if m[2] < thresh:
-    #     input_image = tf_random_rotate(input_image)
+    if m[2] < thresh:
+        input_image = tf.image.random_hue(input_image, 0.02)
+        input_image = tf.image.random_saturation(input_image, 0.95, 1.05)
     if m[3] < thresh:
         input_image = tf.image.flip_left_right(input_image)
     if m[4] < thresh:
@@ -254,202 +182,32 @@ def load_rle_test(image_file):
     return input_image, real_class
 
 
-# ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ #
-# ~ # define model architecture as blocks of layers for ease of experiment # ~ #
-# ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ #
-
-# stuff in play that I read papers/textbooks about:
-# separable convolutions (parameter-efficient convolutions, Xception, DeepLab architectures),
-# U-Net architecture (mainstay archetype of segmentation networks),
-# Batch normalization,
-# atrous/dilated convolutions (these seem very data-hungry, DeepLab architecture),
-# residual connections (ultra-effective way to improve network fidelity, ResNet architecture)
-# parameter regularization (weight decay)
-# parameter constraints (recast problem as constrained optimization)
-
-# following *_blocks are general building blocks themed off of Xception network
-# entry and main flow blocks (see paper)
-
-def in_block_v2(x, filters, size, dr, use_bias, ker_reg, ker_con, bias_reg, bias_con, act_reg):
-    x = tf.keras.layers.Conv2D(filters[0],
-                               size,  # Larger Kernel Size for Small Feature Detection
-                               strides=1,
-                               dilation_rate=dr[0],  # Use Dilation for Higher Resolution Features
-                               padding='same',
-                               use_bias=use_bias,
-                               kernel_regularizer=ker_reg,
-                               kernel_constraint=ker_con,
-                               bias_regularizer=bias_reg,
-                               bias_constraint=bias_con,
-                               activity_regularizer=act_reg)(x)
-    x = tf.keras.layers.LeakyReLU()(x)
-    x = tf.keras.layers.BatchNormalization()(x)
-    
-    x = tf.keras.layers.Conv2D(filters[1], size,
-                               strides=2,
-                               dilation_rate=dr[1],
-                               padding='same',
-                               use_bias=use_bias,
-                               kernel_regularizer=ker_reg,
-                               kernel_constraint=ker_con,
-                               bias_regularizer=bias_reg,
-                               bias_constraint=bias_con,
-                               activity_regularizer=act_reg)(x)
-    x = tf.keras.layers.LeakyReLU()(x)
-    x = tf.keras.layers.BatchNormalization()(x)
-    return x
-
-
-def down_block_v2(x, filters, size, dr, use_bias, ker_reg, ker_con, bias_reg, bias_con, act_reg, dropout, pool=True):
-    if pool:
-        res = tf.keras.layers.Conv2D(filters, 1,
-                                    strides=2,
-                                    use_bias=use_bias,
-                                    kernel_regularizer=ker_reg,
-                                    kernel_constraint=ker_con,
-                                    bias_regularizer=bias_reg,
-                                    bias_constraint=bias_con,
-                                    activity_regularizer=act_reg)(x)
-    else:
-        res = tf.keras.layers.Conv2D(filters, 1,
-                                    strides=1,
-                                    use_bias=use_bias,
-                                    kernel_regularizer=ker_reg,
-                                    kernel_constraint=ker_con,
-                                    bias_regularizer=bias_reg,
-                                    bias_constraint=bias_con,
-                                    activity_regularizer=act_reg)(x)
-    
-    x = tf.keras.layers.SeparableConv2D(filters, size,
-                                        strides=1,
-                                        dilation_rate=dr[0],  # Introduce dilation gradually
-                                        use_bias=use_bias,
-                                        padding='same',
-                                        depthwise_regularizer=ker_reg,
-                                        depthwise_constraint=ker_con,
-                                        pointwise_regularizer=ker_reg,
-                                        pointwise_constraint=ker_con,
-                                        bias_regularizer=bias_reg,
-                                        bias_constraint=bias_con,
-                                        activity_regularizer=act_reg)(x)
-    x = tf.keras.layers.LeakyReLU()(x)
-    x = tf.keras.layers.BatchNormalization()(x)
-    x = tf.keras.layers.Dropout(dropout)(x)
-    
-    if pool:
-        x = tf.keras.layers.SeparableConv2D(filters, size,
-                                            strides=2,
-                                            dilation_rate=1,  # Increase dilation in deeper layers
-                                            use_bias=use_bias,
-                                            padding='same',
-                                            depthwise_regularizer=ker_reg,
-                                            depthwise_constraint=ker_con,
-                                            pointwise_regularizer=ker_reg,
-                                            pointwise_constraint=ker_con,
-                                            bias_regularizer=bias_reg,
-                                            bias_constraint=bias_con,
-                                            activity_regularizer=act_reg)(x)
-    else:
-        x = tf.keras.layers.SeparableConv2D(filters, size,
-                                            strides=1,
-                                            dilation_rate=dr[1],  # Increase dilation in deeper layers
-                                            use_bias=use_bias,
-                                            padding='same',
-                                            depthwise_regularizer=ker_reg,
-                                            depthwise_constraint=ker_con,
-                                            pointwise_regularizer=ker_reg,
-                                            pointwise_constraint=ker_con,
-                                            bias_regularizer=bias_reg,
-                                            bias_constraint=bias_con,
-                                            activity_regularizer=act_reg)(x)
-    x = tf.keras.layers.LeakyReLU()(x)
-    x = tf.keras.layers.BatchNormalization()(x)
-    
-    # Squeeze-and-Excitation Block
-    se = tf.keras.layers.GlobalAveragePooling2D()(x)
-    se = tf.keras.layers.Dense(filters // 16, activation='relu')(se)
-    se = tf.keras.layers.Dense(filters, activation='sigmoid')(se)
-    x = tf.keras.layers.Multiply()([x, se])
-    
-    add = tf.keras.layers.add([res, x])
-    return add
-
-
-def out_block_v2(x, filters, size, use_bias, ker_reg, ker_con, bias_reg, bias_con, act_reg):
-    x = tf.keras.layers.SeparableConv2D(filters[0], size,
-                                        strides=1,
-                                        use_bias=use_bias,
-                                        padding='same',
-                                        depthwise_regularizer=ker_reg,
-                                        depthwise_constraint=ker_con,
-                                        pointwise_regularizer=ker_reg,
-                                        pointwise_constraint=ker_con,
-                                        bias_regularizer=bias_reg,
-                                        bias_constraint=bias_con,
-                                        activity_regularizer=act_reg)(x)
-    x = tf.keras.layers.LeakyReLU()(x)
-    x = tf.keras.layers.BatchNormalization()(x)
-    x = tf.keras.layers.SeparableConv2D(filters[1], size,
-                                        strides=1,
-                                        use_bias=use_bias,
-                                        padding='same',
-                                        depthwise_regularizer=ker_reg,
-                                        depthwise_constraint=ker_con,
-                                        pointwise_regularizer=ker_reg,
-                                        pointwise_constraint=ker_con,
-                                        bias_regularizer=bias_reg,
-                                        bias_constraint=bias_con,
-                                        activity_regularizer=act_reg)(x)
-    x = tf.keras.layers.LeakyReLU()(x)
-    x = tf.keras.layers.BatchNormalization()(x)
-    x = tf.keras.layers.Dense(1,
-                                use_bias=use_bias,
-                                kernel_regularizer=ker_reg,
-                                kernel_constraint=ker_con,
-                                bias_regularizer=bias_reg,
-                                bias_constraint=bias_con,
-                                activity_regularizer=act_reg)(x)
-    x = tf.keras.layers.GlobalAveragePooling2D()(x)
-    x = tf.keras.activations.sigmoid(x)
-    return x
-
-
-def testing_net(inputs, use_bias, ker_reg, ker_con, bias_reg, bias_con, act_reg, dropout, ker=3):
-    """ this model trains reliably """
-    x = in_block_v2(inputs, [32, 64], 5, [1, 1], use_bias, ker_reg, ker_con, bias_reg, bias_con, act_reg)  # 32, 64
-    x = down_block_v2(x, 128, 5, [1, 2], use_bias, ker_reg, ker_con, bias_reg, bias_con, act_reg, dropout)  # 128
-    x = down_block_v2(x, 256, 5, [1, 2], use_bias, ker_reg, ker_con, bias_reg, bias_con, act_reg, dropout)  # 256
-    x = down_block_v2(x, 512, ker, [2, 4], use_bias, ker_reg, ker_con, bias_reg, bias_con, act_reg, dropout)  # 512
-    x = down_block_v2(x, 1024, ker, [2, 4], use_bias, ker_reg, ker_con, bias_reg, bias_con, act_reg, dropout)  # 1024
-    x = down_block_v2(x, 1024, ker, [2, 4], use_bias, ker_reg, ker_con, bias_reg, bias_con, act_reg, dropout, pool=False)  # 1024
-    x = down_block_v2(x, 1024, ker, [2, 4], use_bias, ker_reg, ker_con, bias_reg, bias_con, act_reg, dropout, pool=False)  # 1024
-    x = down_block_v2(x, 1024, ker, [2, 4], use_bias, ker_reg, ker_con, bias_reg, bias_con, act_reg, dropout, pool=False)  # 1024
-    out = out_block_v2(x, [512, 256], ker, use_bias, ker_reg, ker_con, bias_reg, bias_con, act_reg)
-    return out
-
-
 # Define a custom detection head (binary classification: object present or not)
-def detection_head(inputs):
+def detection_head(inputs, dim=256, dropout=0.5):
     x = tf.keras.layers.GlobalAveragePooling2D()(inputs)  # Convert feature map to vector
-    x = tf.keras.layers.Dense(256, activation="relu")(x)  # Fully connected layer
-    x = tf.keras.layers.Dropout(0.5)(x)  # Regularization
+    x = tf.keras.layers.Dense(dim, activation="relu")(x)  # Fully connected layer
+    x = tf.keras.layers.Dropout(dropout)(x)  # Regularization
     outputs = tf.keras.layers.Dense(1, activation="sigmoid")(x)  # Binary detection (0 or 1)
     return outputs
 
 
-def pretrained_backbone(inp, use_bias, ker_reg, ker_con, bias_reg, bias_con, act_reg, dropout, h=IMG_HEIGHT, w=IMG_WIDTH, c=IMAGE_CHANNELS, ker=3, trainable=False):
+def pretrained_backbone(inp, unfreeze_frac=0.3, h=IMG_HEIGHT, w=IMG_WIDTH, c=IMAGE_CHANNELS, trainable=False):
     x = tf.keras.ops.cast(inp, "float32")
     x = tf.keras.applications.mobilenet_v2.preprocess_input(x)
-    backbone = MobileNetV2(input_shape=(450, 720, 3), include_top=False, weights="imagenet")
-    # backbone = MobileNetV3Small(input_shape=(450, 720, 3), include_top=False, weights="imagenet")
-    # backbone = MobileNetV3Large(input_shape=(450, 720, 3), include_top=False, weights="imagenet")
-    # backbone = Xception(input_shape=(450, 720, 3), include_top=False, weights="imagenet")
+    # x = tf.keras.applications.mobilenet_v3.preprocess_input(x)
+    # x = tf.keras.applications.efficientnet_v2.preprocess_input(x)
+    # x = tf.keras.applications.xception.preprocess_input(x)
+    backbone = MobileNetV2(input_shape=(h, w, c), include_top=False, weights="imagenet")
+    # backbone = MobileNetV3Small(input_shape=(h, w, c), include_top=False, weights="imagenet")
+    # backbone = MobileNetV3Large(input_shape=(h, w, c), include_top=False, weights="imagenet")
+    # backbone = Xception(input_shape=(h, w, c), include_top=False, weights="imagenet")
+    # backbone = EfficientNetV2B3(input_shape=(h, w, c), include_top=False, weights="imagenet")
 
     # Freeze the backbone (optional for transfer learning)
     backbone.trainable = False  
 
     if trainable:
-        unfreeze_fraction = 0.3
+        unfreeze_fraction = unfreeze_frac
         n_total = len(backbone.layers)
         n_unfreeze = int(n_total * unfreeze_fraction)
 
@@ -468,10 +226,9 @@ def pretrained_backbone(inp, use_bias, ker_reg, ker_con, bias_reg, bias_con, act
     return outputs
 
 
-def generator(use_bias, ker_reg, ker_con, bias_reg, bias_con, act_reg, dropout, h=IMG_HEIGHT, w=IMG_WIDTH, c=IMAGE_CHANNELS, ker=3, trainable=False):
+def generator(unfreeze_frac=0.3, h=IMG_HEIGHT, w=IMG_WIDTH, c=IMAGE_CHANNELS, trainable=False):
     inp = tf.keras.Input(shape=(h, w, c), name='inp_layer')
-    # out = testing_net(inp, use_bias, ker_reg, ker_con, bias_reg, bias_con, act_reg, dropout, ker=ker)
-    out = pretrained_backbone(inp, use_bias, ker_reg, ker_con, bias_reg, bias_con, act_reg, dropout, ker=ker, trainable=trainable)
+    out = pretrained_backbone(inp, unfreeze_frac=unfreeze_frac, trainable=trainable)
     return tf.keras.Model(inputs=inp, outputs=out)
 
 
@@ -496,43 +253,21 @@ if __name__ == '__main__':
             print(e)
 
     thresh = 0.5
+    unfreeze_frac = 0.3
     dropout = 0.2
     monitor = 'val_loss'
     # monitor = 'val_bce'
 
     tflite_conv = False
-    use_bias = True
-    use_regularizers = True
-    use_constraints = True
     logits = False
-    finetune = True
+    finetune = False
     if finetune:
-        # finetune_source = '/home/harey/birdseye/models/birdseye_720_450_027.weights.h5'
-        finetune_source = '/home/harey/birdseye/models/birdseye_720_450_040.weights.h5'
-    if use_regularizers:
-        ker_reg = tf.keras.regularizers.L1L2(l1=1e-8, l2=1e-5)  # 1e-6, 1e-3
-        # act_reg = tf.keras.regularizers.L1L2(l1=1e-14, l2=1e-11)  # 1e-11, 1e-8
-        act_reg = None
-    else:
-        ker_reg = None
-        act_reg = None
-    if use_constraints:
-        ker_con = tf.keras.constraints.MinMaxNorm(max_value=1.0, rate=1)
-    else:
-        ker_con = None
-    if use_bias:
-        if use_regularizers:
-            bias_reg = tf.keras.regularizers.L1L2(l1=1e-8, l2=1e-5)  # 1e-6, 1e-3
-        else:
-            bias_reg = None
-        if use_constraints:
-            bias_con = tf.keras.constraints.MinMaxNorm(max_value=1.0, rate=1)
-        else:
-            bias_con = None
-    else:
-        bias_reg = None
-        bias_con = None
-
+        # finetune_source = '/home/harey/birdseye/models/birdseye_720_450_027.weights.h5' # mobilenetv2
+        # finetune_source = '/home/harey/birdseye/models/birdseye_960_600_006.weights.h5' # mobilenetv2
+        # finetune_source = '/home/harey/birdseye/models/birdseye_960_600_019.weights.h5'  # mobilenetv3large
+        finetune_source = '/home/harey/birdseye/models/birdseye_960_600_021.weights.h5' # mobilenetv2
+        # finetune_source = '/home/harey/birdseye/models/birdseye_1920_1200_001.weights.h5' # mobilenetv2
+    
     global preglob_tr
     global preglob_va
     global preglob_te
@@ -546,7 +281,7 @@ if __name__ == '__main__':
             # print('  ', lbl)
             pass
         else:
-            # print(f'  the given label file does not exist: {lbl}')
+            # print(f'  the label file does not exist: {lbl}')
             continue
         # cnt = 0
         f = open(lbl, "rb")
@@ -583,27 +318,37 @@ if __name__ == '__main__':
     test_ds = test_ds.batch(BATCH_SIZE)  # Batch after transformation
     test_ds = test_ds.prefetch(tf.data.experimental.AUTOTUNE)  # Prefetch to optimize pipeline
 
-    # strategy = tf.distribute.MirroredStrategy()
-    # print("Number of devices: {}".format(strategy.num_replicas_in_sync))
-    # with strategy.scope():
-    generator = generator(use_bias, ker_reg, ker_con, bias_reg, bias_con, act_reg, dropout, ker=3, trainable=finetune)
+    generator = generator(unfreeze_frac=unfreeze_frac, trainable=finetune)
     generator.compile(optimizer=tf.keras.optimizers.AdamW(learning_rate=1e-5, beta_1=0.9, beta_2=0.99),
-                    loss=tf.keras.losses.BinaryFocalCrossentropy(alpha=0.25, gamma=2.0, from_logits=logits),
+                    loss=tf.keras.losses.BinaryFocalCrossentropy(alpha=0.4, gamma=2.0, from_logits=logits),
                     # loss=tf.keras.losses.BinaryCrossentropy(from_logits=logits),
                     metrics=[tf.keras.metrics.BinaryCrossentropy(from_logits=logits, name='bce'), \
                             tf.keras.metrics.BinaryAccuracy(threshold=thresh, name='bin_acc'), \
                             tf.keras.metrics.F1Score(threshold=thresh, name='f1'), \
                             tf.keras.metrics.Precision(name='prec'), \
                             tf.keras.metrics.Recall(name='rec'), \
+                            # tf.keras.metrics.TruePositives(name='TP'), \
+                            # tf.keras.metrics.FalsePositives(name='FP'), \
+                            # tf.keras.metrics.TrueNegatives(name='TN'), \
+                            # tf.keras.metrics.FalseNegatives(name='FN'), \
                             tf.keras.metrics.AUC()])
-    if finetune:
-        print(f'loading model {finetune_source}')
-        generator.load_weights(finetune_source)
     generator.summary()
+    
+    print(f'\n\n {len(preglob)} samples: {len(preglob_tr)} training, {len(preglob_va)} validation')
 
-    print(f'\n\n {len(preglob)} samples: {len(preglob_tr)} training, {len(preglob_va)} validation\n\n')
+    if finetune:
+        print(f'\n\nloading model {finetune_source}\n\n')
+        generator.load_weights(finetune_source)
 
     if train:
+
+        # print("\nRunning warm-up steps...\n")
+        # for _ in train_ds.take(5):
+        #     pass
+        # for _ in test_ds.take(5):
+        #     pass
+        # print("Warm-up complete.\n")
+
         print(f'\n\ntraining {filename}\n\n')
         # Define TensorBoard callback
         tensorboard_callback = tf.keras.callbacks.TensorBoard(
@@ -613,7 +358,7 @@ if __name__ == '__main__':
             write_images=True  # Log model weights as images
         )
         callbacks = [tensorboard_callback, 
-                tf.keras.callbacks.ReduceLROnPlateau(monitor=monitor, factor=0.5, patience=5, min_lr=0),
+                tf.keras.callbacks.ReduceLROnPlateau(monitor=monitor, factor=0.5, patience=3, min_lr=0),
                 tf.keras.callbacks.EarlyStopping(monitor=monitor, patience=15),
                 tf.keras.callbacks.ModelCheckpoint(filepath=filename+'.weights.h5', save_weights_only=True, save_best_only=True, monitor=monitor, verbose=2)]
         history = generator.fit(train_ds, validation_data=test_ds, epochs=epochs, callbacks=callbacks, verbose=1)
