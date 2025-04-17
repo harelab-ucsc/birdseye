@@ -40,7 +40,10 @@ class FrameLoader:
                     _, path, data = line.strip().split()
                     x_str, y_str, class_str = data.split(',')
                     if os.path.basename(path) == os.path.basename(image_filename):
-                        labels.append((float(x_str), float(y_str), int(class_str)))
+                        # Convert class_str to int, safely handling the float format '1.0'
+                        class_id = int(float(class_str))
+                        labels.append((float(x_str), float(y_str), class_id))
+
         except Exception as e:
             print(f"      [Label Load Error] {e}")
         return labels

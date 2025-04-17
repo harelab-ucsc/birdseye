@@ -188,10 +188,10 @@ def get_tile_level_class_weights(
     total_tiles = num_images * tiles_per_image
     num_neg_tiles = total_tiles - num_pos_tiles
 
-    print(f"📦 Total images:        {num_images}")
-    print(f"🧩 Tiles per image:     {tiles_per_image}")
-    print(f"✅ Positive tiles:       {num_pos_tiles}")
-    print(f"🚫 Estimated negatives:  {num_neg_tiles}")
+    print(f"Total images:        {num_images}")
+    print(f"Tiles per image:     {tiles_per_image}")
+    print(f"Positive tiles:       {num_pos_tiles}")
+    print(f"Estimated negatives:  {num_neg_tiles}")
 
     class_labels = [0] * num_neg_tiles + [1] * num_pos_tiles
     weights = compute_class_weight('balanced', classes=np.unique(class_labels), y=class_labels)
