@@ -5,3 +5,4 @@
 */.DS_Store
 models/*
 birdseye/__pycache__/*
+logs/*

@@ -1,199 +1,144 @@
 import os
 import glob2
 import numpy as np
-import tensorflow as tf
 import matplotlib.pyplot as plt
+import tensorflow as tf
 from sklearn.utils.class_weight import compute_class_weight
 from collections import defaultdict
-
-# Default config (can override)
-TILE_HEIGHT = 224
-TILE_WIDTH = 224
-TILE_CHANNELS = 3
-LABEL_FILENAME = 'labels.txt'
+import random
 
 
-# ========== Label Reading ========== #
+class TileLoader:
+    
+    def __init__(self, 
+        label_file='labels.txt', 
+        tile_size=(224, 224), 
+        edge_buffer=81, 
+        use_heatmaps=False, 
+        include_negatives=True, 
+        balance_ratio=1.0
+        ):
 
-def read_label_file(load_name, image_file):
-    labels = []
-    try:
-        with open(load_name, "r") as f:
-            for line in f:
-                tmp = line.strip().split()
-                if len(tmp) < 5:
-                    continue
-                frame_name = os.path.split(tmp[1])[1]
-                if frame_name == os.path.split(image_file.numpy())[1]:
-                    x = float(tmp[2])
-                    y = float(tmp[3])
-                    cl = int(tmp[4])
-                    labels.append((x, y, cl))
-    except FileNotFoundError:
-        pass
-    return labels
+        self.tile_height, self.tile_width = tile_size
+        self.label_file = label_file
+        self.edge_buffer = edge_buffer
+        self.use_heatmaps = use_heatmaps
+        self.include_negatives = include_negatives
+        self.balance_ratio = balance_ratio  # ratio of negatives to retain
 
 
-def load_rle(image_file, label_file=LABEL_FILENAME):
-    tmp = tf.keras.backend.get_value(image_file).decode('utf-8')
-    load_name = os.path.join(os.path.split(tmp)[0], label_file)
-    load_name = glob2.glob(load_name)[0]
-    labels = read_label_file(load_name, image_file)
-    return labels
+    def load_labels(self, label_file, image_filename):
+        """Parse labels from a text file. Each line: idx, filepath, [x,y,class]"""
+        labels = []
+        tmp = os.path.join(os.path.split(image_filename)[0], label_file)
+        load_name = glob2.glob(tmp)[0]
+        try:
+            with open(load_name, "r") as f:
+                for line in f:
+                    _, path, data = line.strip().split()
+                    x_str, y_str, class_str = data.split(',')
+                    if os.path.basename(path) == os.path.basename(image_filename):
+                        labels.append((float(x_str), float(y_str), float(class_str)))
+        except Exception as e:
+            print(f"      [Label Load Error] {e}")
+        return labels
 
 
-# ========== Optional: Gaussian Heatmap ========== #
+    def tile_image_and_label(self, image_np, labels):
+        h, w = image_np.shape[:2]
+        th, tw = self.tile_height, self.tile_width
+        buffer = self.edge_buffer
 
-def generate_heatmap(tile_labels, tile_x, tile_y, sigma=5):
-    heatmap = np.zeros((tile_size, tile_size), dtype=np.float32)
-    for x, y, _ in tile_labels:
-        if 0 <= x < tile_x and 0 <= y < tile_y:
-            xx, yy = int(x), int(y)
-            heatmap = add_gaussian(heatmap, xx, yy, sigma)
-    return np.expand_dims(heatmap, axis=-1)
+        tiles = []
+        label_list = []
 
-def add_gaussian(heatmap, x, y, sigma=5):
-    h, w = heatmap.shape
-    X, Y = np.meshgrid(np.arange(w), np.arange(h))
-    gaussian = np.exp(-((X - x)**2 + (Y - y)**2) / (2 * sigma**2))
-    return np.maximum(heatmap, gaussian)
+        for y in range(buffer, h - buffer - th + 1, th):
+            for x in range(buffer, w - buffer - tw + 1, tw):
+                tile = image_np[y:y+th, x:x+tw]
+                tile_labels = [cls for lx, ly, cls in labels if x <= lx < x+tw and y <= ly < y+th]
 
+                if tile_labels:
+                    tiles.append(tile)
+                    if self.use_heatmaps:
+                        heatmap = np.zeros((th, tw, 1), dtype=np.float32)
+                        for lx, ly, cls in labels:
+                            if x <= lx < x+tw and y <= ly < y+th:
+                                px, py = int(lx - x), int(ly - y)
+                                heatmap[py, px, 0] = cls
+                        label_list.append(heatmap)
+                    else:
+                        label_list.append(tile_labels[0])
+                elif self.include_negatives:
+                    if random.random() < self.balance_ratio:
+                        tiles.append(tile)
+                        label_list.append(np.zeros((th, tw, 1), dtype=np.float32) if self.use_heatmaps else 0.0)
 
-# ========== Image + Label Tiling ========== #
-
-def tile_image_and_label(
-    image, labels,
-    tile_x=TILE_WIDTH, tile_y=TILE_HEIGHT,
-    use_heatmaps=False,
-    edge_buffer=0
-):
-    tiles = []
-    h, w, _ = image.shape
-
-    for y in range(0, h, tile_y):
-        for x in range(0, w, tile_x):
-            # Tile must be fully inside bounds
-            if y + tile_y > h or x + tile_x > w:
-                continue
-
-            # Tile must NOT be inside the edge buffer
-            if x < edge_buffer or y < edge_buffer:
-                continue
-            if x + tile_x > w - edge_buffer or y + tile_y > h - edge_buffer:
-                continue
-
-            tile = image[y:y+tile_y, x:x+tile_x]
-            tile_labels = [
-                (lx - x, ly - y, cl)
-                for lx, ly, cl in labels
-                if x <= lx < x + tile_x and y <= ly < y + tile_y
-            ]
-
-            if use_heatmaps:
-                label = generate_heatmap(tile_labels, tile_x, tile_y)
-            else:
-                label = 1.0 if len(tile_labels) > 0 else 0.0
-
-            tiles.append((tile, label))
-
-    return tiles
+        return tiles, label_list
 
 
+    def tf_tile_fn(self, image_path):
 
-# ========== Loader Function ========== #
+        def pyfunc(image_path):
+            image_path_str = image_path.numpy().decode("utf-8")
+            image = tf.io.read_file(image_path_str)
+            image = tf.io.decode_png(image, channels=3).numpy()
 
-def tile_loader_single(image_file, use_heatmaps=False, edge_buffer=0):
-    image = tf.io.read_file(image_file)
-    image = tf.io.decode_png(image, channels=TILE_CHANNELS)
+            labels = self.load_labels(self.label_file, image_path_str)
+            tiles, classes = self.tile_image_and_label(image, labels)
 
-    def tile_and_label(img_path, img_tensor):
-        labels = load_rle(img_path)
-        img_np = img_tensor.numpy()
-        tile_label_pairs = tile_image_and_label(
-            img_np, labels,
-            tile_x=TILE_WIDTH, tile_y=TILE_HEIGHT,
-            use_heatmaps=use_heatmaps,
-            edge_buffer=edge_buffer  # buffer in pixels
+            tiles = np.array(tiles, dtype=np.uint8)
+            labels = np.array(classes, dtype=np.float32).reshape(-1)
+
+            return tiles, labels
+
+        tiles, labels = tf.py_function(
+            pyfunc,
+            [image_path],
+            [tf.uint8, tf.float32]
         )
 
-        tiles, labels = zip(*tile_label_pairs)
-        tiles = np.stack(tiles)  # shape [N, H, W, 3] - uint8
-
-        if use_heatmaps:
-            labels = np.stack(labels)
-        else:
-            labels = np.array(labels, dtype=np.float32).reshape(-1)
-
-        return tiles, labels
-
-    tiles, labels = tf.py_function(
-        tile_and_label,
-        [image_file, image],
-        [tf.uint8, tf.float32]
-    )
-
-    tiles.set_shape([None, TILE_HEIGHT, TILE_WIDTH, TILE_CHANNELS])
-    if use_heatmaps:
-        labels.set_shape([None, TILE_HEIGHT, TILE_WIDTH, 1])
-    else:
+        tiles.set_shape([None, self.tile_height, self.tile_width, 3])
         labels.set_shape([None])
 
-    return tf.data.Dataset.from_tensor_slices((tiles, labels))
+        return tf.data.Dataset.from_tensor_slices((tiles, labels))
 
 
-# ========== Data Augmentation ========== #
+    def augment(self, image, label):
+        image = tf.image.convert_image_dtype(image, tf.float32)
 
-def random_jitter(input_image, thresh=0.5):
-    m = tf.random.uniform([5])
+        m = tf.random.uniform([5])
+        n = tf.random.uniform([], minval=-1.0, maxval=1.0)
 
-    def maybe(fn, cond):
-        return tf.cond(cond, lambda: fn(input_image), lambda: input_image)
+        if m[0] < 0.5:
+            image = tf.image.adjust_brightness(image, n * m[0] / 2)
+        if m[1] < 0.5:
+            image = tf.image.adjust_contrast(image, 1 + n * m[1])
+        if m[2] < 0.5:
+            image = tf.image.random_hue(image, 0.02)
+            image = tf.image.random_saturation(image, 0.95, 1.05)
+        if m[3] < 0.5:
+            image = tf.image.flip_left_right(image)
+        if m[4] < 0.5:
+            image = tf.image.flip_up_down(image)
 
-    def adjust_brightness(img):
-        return tf.image.adjust_brightness(img, tf.random.uniform([], -0.1, 0.1))
-
-    def adjust_contrast(img):
-        return tf.image.adjust_contrast(img, tf.random.uniform([], 0.9, 1.1))
-
-    def adjust_color(img):
-        img = tf.image.random_hue(img, 0.02)
-        img = tf.image.random_saturation(img, 0.95, 1.05)
-        return img
-
-    def flip_lr(img): return tf.image.flip_left_right(img)
-    def flip_ud(img): return tf.image.flip_up_down(img)
-
-    input_image = maybe(adjust_brightness, m[0] < thresh)
-    input_image = maybe(adjust_contrast,   m[1] < thresh)
-    input_image = maybe(adjust_color,      m[2] < thresh)
-    input_image = maybe(flip_lr,           m[3] < thresh)
-    input_image = maybe(flip_ud,           m[4] < thresh)
-
-    return input_image
+        image = tf.image.convert_image_dtype(image, tf.uint8)
+        return image, tf.expand_dims(label, -1)
 
 
-# ========== Build Dataset ========== #
+    def build_dataset(self, file_list, label_file, batch_size, buffer_size=64, repeat=True, augment=False):
+        ds = tf.data.Dataset.from_tensor_slices(tf.convert_to_tensor(file_list, dtype=tf.string))
+        ds = ds.flat_map(self.tf_tile_fn)
 
-def build_dataset(file_list, batch_size, buffer_size=64, use_heatmaps=False, augment=False, edge_buffer=0, repeat=True):
-    ds = tf.data.Dataset.from_tensor_slices(tf.convert_to_tensor(file_list, dtype=tf.string))
-
-    def apply_loader(img_path):
-        return tile_loader_single(img_path, use_heatmaps)
-
-    def apply_aug(image_tile, label):
         if augment:
-            image_tile = tf.image.convert_image_dtype(image_tile, tf.float32)  # [0, 1]
-            image_tile = random_jitter(image_tile)
-            image_tile = tf.image.convert_image_dtype(image_tile, tf.uint8)
-        return image_tile, tf.expand_dims(label, axis=-1)
+            ds = ds.map(self.augment, num_parallel_calls=tf.data.AUTOTUNE)
+        else:
+            ds = ds.map(lambda x, y: (x, tf.expand_dims(y, -1)), num_parallel_calls=tf.data.AUTOTUNE)
 
-    ds = ds.flat_map(apply_loader)
-    ds = ds.map(apply_aug, num_parallel_calls=tf.data.AUTOTUNE)
-    ds = ds.shuffle(buffer_size).batch(batch_size).prefetch(tf.data.AUTOTUNE)
-    if repeat:
-        ds = ds.repeat()
-    return ds
+        if repeat:
+            ds = ds.repeat()
 
+        ds = ds.shuffle(buffer_size).batch(batch_size).prefetch(tf.data.AUTOTUNE)
+        return ds
 
 # ========== Class Weights Helper ========== #
 
@@ -253,3 +198,34 @@ def get_tile_level_class_weights(
     return {int(cls): float(w) for cls, w in zip(np.unique(class_labels), weights)}, num_images, tiles_per_image
 
 
+def visualize_tiles(dataset, heatmap=False, num_tiles=16):
+    count = 0
+    for images, labels in dataset.unbatch():
+        if count >= num_tiles:
+            break
+
+        try:
+            img = tf.cast(images, tf.uint8).numpy()
+
+            plt.figure(figsize=(4, 4))
+            plt.subplot(1, 2, 1)
+            plt.imshow(img)
+            plt.title("Tile")
+            plt.axis('off')
+
+            plt.subplot(1, 2, 2)
+            if heatmap:
+                label = tf.squeeze(labels).numpy()
+                plt.imshow(label, cmap='hot')
+                plt.title("Heatmap")
+            else:
+                label_val = labels.numpy() if tf.rank(labels) == 0 else labels.numpy()[0]
+                plt.text(0.5, 0.5, f"Class: {int(label_val)}", ha='center', va='center', fontsize=16)
+                plt.title("Label")
+                plt.axis('off')
+
+            plt.tight_layout()
+            plt.show()
+            count += 1
+        except Exception as e:
+            print(f"Skipped tile due to error: {e}")

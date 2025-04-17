@@ -21,12 +21,10 @@ from sklearn.model_selection import train_test_split
 from sklearn.manifold import TSNE # Function to extract penultimate layer embeddings
 from tensorflow.keras import mixed_precision
 from keras.applications import EfficientNetV2B3, MobileNetV2, MobileNetV3Small, MobileNetV3Large, Xception
-
+# from tile_loader import visualize_tiles
 
 # mixed_precision.set_global_policy('mixed_float16')
 
-train = True
-tSNE = False
 
 # define , filepaths, and model savenames
 BUFFER_SIZE = 36
@@ -40,7 +38,6 @@ IMG_HEIGHT = 600
 # IMG_WIDTH = 224
 # IMG_HEIGHT = 224
 IMAGE_CHANNELS = 3
-WARMUP_LENGTH = 1
 epochs = 1000
 
 models_dir = os.path.join(os.path.expanduser('~'), 'birdseye', 'models')
@@ -53,58 +50,78 @@ filename = filename_prefix + f'_{val}'
 paths = []
 
 label_file = 'labels.txt'
-dates = [
-    # '2024_07_XX', 
-    # '2025_01_29', 
-    # '2025_02_05', 
+
+train_dates = [
     '2025_03_25', 
     '2025_04_04',
-    # '2025_04_09'
-    ]
-dirlists = [
-    # ['farm_0__2024_07_25', 'farm_1__2024_07_25', 'farm_2__2024_07_29'],
-    # ['haybarn_01_rect', 'haybarn_02_rect', 'haybarn_05_rect'], 
-    # ['haybarn_01_rect'], 
+    '2025_04_09',
+]
+
+test_dates = [
+    '2025_04_16'
+]
+
+train_dirlists = [
     ['haybarn_original_01_01_rect', 'haybarn_eviltwin_01_01_rect'],
     ['original_01_rect', 'original_02_rect', 'eviltwin_01_rect', 'eviltwin_02_rect', 'eviltwin_03_rect'],
-    # ['original_01_rect', 'original_02_rect', 'eviltwin_01_rect', 'eviltwin_02_rect']
-    ]
+    ['original_01_rect', 'original_02_rect', 'eviltwin_01_rect', 'eviltwin_02_rect'],
+]
+
+test_dirlists = [
+    ['pieranch_rect']
+]
 
 
-def get_filepaths(paths, date, dirnames, label_file):
+def get_filepaths(paths, date, dirnames):
     paths += [os.path.join(os.path.expanduser('~'), 'birdseye_CNN_data', date, dirname) for dirname in dirnames]
     return paths 
+
+
+def build_file_lists(dates, dirlists):
+    paths = []
+    for i, date in enumerate(dates):
+        paths = get_filepaths(paths, date, dirlists[i])
+
+    preglob = []
+    for path in paths:
+        imgs = glob2.glob(os.path.join(path, '*.png'))
+        lbl = os.path.join(path, label_file)
+        if os.path.exists(lbl):
+            pass
+        else:
+            print(f'  the label file does not exist: {lbl}')
+            continue
+        preglob += imgs
+    return paths, preglob
 
 
 # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ #
 # ~~~~ # data augmentation pipeline to add randomness/volume to dataset # ~~~~ #
 # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ #
 
-def read_label_file(load_name, image_file):
-    try:
-        f = open(load_name, "rb")
-        while True:
-            mask = f.readline()
-            tmp = mask.split()
-            if os.path.split(tmp[1])[1] == os.path.split(image_file.numpy())[1]:
-                cl = float(tmp[2])
-                break
-            elif len(tmp) == 0:
-                cl = 0.0  # image_file had no clicks in view
-                break
-        f.close()
-    except FileNotFoundError:
-        # print('bonk')
-        pass
-    return cl
+def read_label_file(label_file, image_filename):
+        """Parse labels from a text file. Each line: idx, filepath, x, y, class"""
+        cl = 0.0
+        tmp = tf.keras.backend.get_value(image_filename).decode('utf-8')
+        load_name = os.path.join(os.path.split(tmp)[0], label_file)
+        load_name = glob2.glob(load_name)[0]
+        try:
+            with open(load_name, "r") as f:
+                for line in f:
+                    _, path, data = line.strip().split()
+                    x_str, y_str, class_str = data.split(',')
+                    if os.path.basename(path) == os.path.basename(tmp):
+                        cl = float(class_str)
+                        break
+        except Exception as e:
+            print(f"      [Label Load Error] {e}")
+        return cl
 
 
 def load_rle(image_file, label_file=label_file):
     load_name = None
-    tmp = tf.keras.backend.get_value(image_file).decode('utf-8')
-    tmp = os.path.join(os.path.split(tmp)[0], label_file)
-    load_name = glob2.glob(tmp)[0]
-    cl = read_label_file(load_name, image_file)
+    
+    cl = read_label_file(label_file, image_file)
     cl = np.array([cl])
     load_name = None
     return cl
@@ -235,9 +252,6 @@ def generator(unfreeze_frac=0.3, h=IMG_HEIGHT, w=IMG_WIDTH, c=IMAGE_CHANNELS, tr
 if __name__ == '__main__':
     os.environ["CUDA_VISIBLE_DEVICES"] = "1"
 
-    for i, date in enumerate(dates):
-        paths = get_filepaths(paths, date, dirlists[i], label_file)
-
     # tf.data.experimental.enable_debug_mode()
 
     gpus = tf.config.list_physical_devices('GPU')
@@ -258,6 +272,8 @@ if __name__ == '__main__':
     monitor = 'val_loss'
     # monitor = 'val_bce'
 
+    preview = True
+    train = True
     tflite_conv = False
     logits = False
     finetune = False
@@ -272,39 +288,12 @@ if __name__ == '__main__':
     global preglob_va
     global preglob_te
 
-    preglob = []
-    for path in paths:
-        imgs = glob2.glob(os.path.join(path, '*.png'))
-        lbl = os.path.join(path, label_file)
-        # print(f'cleaning {lbl}')
-        if os.path.exists(lbl):
-            # print('  ', lbl)
-            pass
-        else:
-            # print(f'  the label file does not exist: {lbl}')
-            continue
-        # cnt = 0
-        f = open(lbl, "rb")
-        while True:
-            line = f.readline()
-            line = line.split()
-
-            if len(line) == 0:
-                # print('end')
-                break
-            else:
-                for image_file in imgs:
-                    if os.path.split(line[1])[1].decode('utf-8') == os.path.split(image_file)[1]:
-                        try:
-                            float(line[2])
-                            preglob.append(image_file)
-                        except ValueError as e:
-                            # print(f'  {e},   pruning entry')
-                            pass
-
-        f.close()
-
-    preglob_tr, preglob_va = train_test_split(preglob, shuffle=False, test_size=0.3)
+    
+    print('\n\n    loading training and validation sets...')
+    paths_tr, preglob_tr = build_file_lists(train_dates, train_dirlists)
+    print(f'      ... training set found: {len(preglob_tr)} images from {paths_tr}')
+    paths_va, preglob_va = build_file_lists(test_dates, test_dirlists)
+    print(f'      ... validation set found: {len(preglob_va)} images from {paths_va} \n')
 
     train_ds = tf.data.Dataset.from_tensor_slices(preglob_tr)
     train_ds = train_ds.shuffle(BUFFER_SIZE)  # Shuffle early for better randomness
@@ -317,6 +306,12 @@ if __name__ == '__main__':
     test_ds = test_ds.map(load_rle_test, num_parallel_calls=tf.data.experimental.AUTOTUNE)
     test_ds = test_ds.batch(BATCH_SIZE)  # Batch after transformation
     test_ds = test_ds.prefetch(tf.data.experimental.AUTOTUNE)  # Prefetch to optimize pipeline
+
+    # if preview:
+    #     print('\n    sanity check visualization...')
+    #     ds = tf.data.Dataset.from_tensor_slices(preglob_va)
+    #     ds.shuffle(BUFFER_SIZE).batch(BATCH_SIZE).prefetch(tf.data.AUTOTUNE)
+    #     visualize_tiles(ds, heatmap=False)  
 
     generator = generator(unfreeze_frac=unfreeze_frac, trainable=finetune)
     generator.compile(optimizer=tf.keras.optimizers.AdamW(learning_rate=1e-5, beta_1=0.9, beta_2=0.99),
@@ -334,7 +329,7 @@ if __name__ == '__main__':
                             tf.keras.metrics.AUC()])
     generator.summary()
     
-    print(f'\n\n {len(preglob)} samples: {len(preglob_tr)} training, {len(preglob_va)} validation')
+    print(f'\n\n {len(preglob_tr)+len(preglob_va)} samples: {len(preglob_tr)} training, {len(preglob_va)} validation')
 
     if finetune:
         print(f'\n\nloading model {finetune_source}\n\n')
@@ -361,7 +356,11 @@ if __name__ == '__main__':
                 tf.keras.callbacks.ReduceLROnPlateau(monitor=monitor, factor=0.5, patience=3, min_lr=0),
                 tf.keras.callbacks.EarlyStopping(monitor=monitor, patience=15),
                 tf.keras.callbacks.ModelCheckpoint(filepath=filename+'.weights.h5', save_weights_only=True, save_best_only=True, monitor=monitor, verbose=2)]
-        history = generator.fit(train_ds, validation_data=test_ds, epochs=epochs, callbacks=callbacks, verbose=1)
+        history = generator.fit(train_ds, 
+            validation_data=test_ds, 
+            epochs=epochs, 
+            callbacks=callbacks, 
+            verbose=1)
         print(history.history.keys())
         with open(filename+'_history.pkl', 'wb') as f:
             pickle.dump(history, f)
@@ -394,13 +393,7 @@ if __name__ == '__main__':
         ax[2,1].legend()
 
         plt.show()
-    if tSNE:
-        # filename = '/home/harey/birdseye/models/birdseye_960_600_006.weights.h5'
-        print(f'\n\ncomputing t-SNE for {filename}\n\n')
-        model = load_trained_model(generator, filename)
-        
-        embeddings, labels = get_embeddings(model, test_ds)
-        visualize_embeddings(embeddings, labels)
+
     if tflite_conv:
         print(f'\n\nconverting {filename} to tflite\n\n')
         converter = tf.lite.TFLiteConverter.from_keras_model(generator)
