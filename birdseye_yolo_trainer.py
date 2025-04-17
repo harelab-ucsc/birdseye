@@ -2,6 +2,7 @@ import os
 import glob2
 import tensorflow as tf
 from frame_loader_yolo import FrameLoader
+from tile_loader_yolo import TileLoader, get_tile_level_class_weights
 from yolo_generator import yolo_model  # new: custom YOLO model for TensorFlow
 
 class BirdsEyeTrainer:
@@ -183,36 +184,46 @@ if __name__ == '__main__':
     val = str(len(glob2.glob(os.path.join(models_dir, filename_prefix+'*.weights.h5')))+1).rjust(3,'0')
     filename = filename_prefix + f'_{val}'
 
-    # Example usage
-    config = {
-        "tiled": False,
-        "data_root": data_root,
-        "train_dates": train_dates,
-        "train_dirlists": train_dirlists,
-        "val_dates": val_dates,
-        "val_dirlists": val_dirlists,
-        "label_file": label_file,
-        "img_height": IMG_HEIGHT,
-        "img_width": IMG_WIDTH,
-        "img_channels": 3,
-        "tile_size": (224, 224),
-        "edge_buffer": 81,
-        "batch_size": 9,
-        "buffer_size": 36,
-        # "batch_size": 32,
-        # "buffer_size": 128,
-        "unfreeze_frac": 0.3,
-        "finetune": False,
-        "finetune_source": finetune_source,
-        "lr": 1e-5,
-        "epochs": 50,
-        "alpha": 0.3,
-        "gamma": 2.0,
-        "thresh": 0.5,
-        "logits": False,
-        "monitor": "val_loss",
-        "filename": filename
-    }
+# Choose training mode: "tile", "frame", or "yolo"
+TRAINING_MODE = "yolo"
 
-    trainer = BirdsEyeTrainer(config)
-    trainer.run()
+config = {
+    "mode": TRAINING_MODE,  
+
+    # Dataset
+    "data_root": data_root,
+    "train_dates": train_dates,
+    "train_dirlists": train_dirlists,
+    "val_dates": val_dates,
+    "val_dirlists": val_dirlists,
+    "label_file": label_file,
+
+    # Image properties
+    "img_height": 416 if TRAINING_MODE == "yolo" else 1200,
+    "img_width": 416 if TRAINING_MODE == "yolo" else 1920,
+    "img_channels": 3,
+    "tile_size": (224, 224),
+    "edge_buffer": 81,
+
+    # Model & training
+    "batch_size": 9,
+    "buffer_size": 36,
+    "unfreeze_frac": 0.3,
+    "finetune": False,
+    "finetune_source": finetune_source,
+    "lr": 1e-4 if TRAINING_MODE == "yolo" else 1e-5,
+    "epochs": 50,
+
+    # Loss settings
+    "alpha": 0.3,
+    "gamma": 2.0,
+    "thresh": 0.5,
+    "logits": False,
+
+    # Monitoring & output
+    "monitor": "val_loss",
+    "num_classes": 2,  # adjust as needed
+    "filename": filename + f"_{TRAINING_MODE}"
+}
+trainer = BirdsEyeTrainer(config)
+trainer.run()
