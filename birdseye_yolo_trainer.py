@@ -3,7 +3,8 @@ import glob2
 import tensorflow as tf
 from frame_loader_yolo import FrameLoader
 from tile_loader_yolo import TileLoader, get_tile_level_class_weights
-from yolo_generator import yolo_model  # new: custom YOLO model for TensorFlow
+from yolo_generator import generator
+from yolo_generator import yolo_model
 
 class BirdsEyeTrainer:
     def __init__(self, config):
@@ -18,13 +19,13 @@ class BirdsEyeTrainer:
         self.IMG_CHANNELS = config.get("img_channels", 3)
         self.TILE_HEIGHT, self.TILE_WIDTH = config.get("tile_size", (224, 224))
 
-        # self.tile_loader = TileLoader(
-        #     tile_size=config.get("tile_size", (224, 224)),
-        #     edge_buffer=config.get("edge_buffer", 81),
-        #     use_heatmaps=config.get("use_heatmaps", False),
-        #     include_negatives=True,
-        #     balance_ratio=config.get("balance_ratio", 1.0)
-        # )
+        self.tile_loader = TileLoader(
+            tile_size=config.get("tile_size", (224, 224)),
+            edge_buffer=config.get("edge_buffer", 81),
+            use_heatmaps=config.get("use_heatmaps", False),
+            include_negatives=True,
+            balance_ratio=config.get("balance_ratio", 1.0)
+        )
 
         self.frame_loader = FrameLoader(
             image_size=(self.IMG_HEIGHT, self.IMG_WIDTH),
@@ -46,7 +47,7 @@ class BirdsEyeTrainer:
         self.train_files, train_paths = collect_paths(self.config["train_dates"], self.config["train_dirlists"])
         self.val_files, val_paths = collect_paths(self.config["val_dates"], self.config["val_dirlists"])
 
-        if self.config["mode"] == "tile":
+        if self.config.get("mode") == "tile":
             print("\n\nComputing class weights... \n\nTraining weights:")
             self.class_weights, _, _ = get_tile_level_class_weights(
                 train_paths, 
@@ -60,13 +61,13 @@ class BirdsEyeTrainer:
             )
             print("\n\n")
 
-
     def setup_data(self):
         self.build_file_lists()
 
-        loader = self.frame_loader if self.config.get("yolo", False) else (
-            self.tile_loader if self.config["tiled"] else self.frame_loader
-        )
+        if self.config.get("mode") == "tile":
+            loader = self.tile_loader
+        else:
+            loader = self.frame_loader
 
         self.train_ds = loader.build_dataset(
             file_list=self.train_files,
@@ -87,17 +88,17 @@ class BirdsEyeTrainer:
         )
 
     def build_model(self):
-        if self.config.get("yolo", False):
+        if self.config.get("mode") == "yolo":
             print("🔧 Building YOLO-style model...")
             self.model = yolo_model(
                 input_shape=(self.IMG_HEIGHT, self.IMG_WIDTH, self.IMG_CHANNELS),
                 num_classes=self.config["num_classes"]
             )
-            loss_fn = tf.keras.losses.BinaryCrossentropy(from_logits=False)  # or a custom YOLO loss
+            loss_fn = tf.keras.losses.BinaryCrossentropy(from_logits=False)
         else:
-            input_height = self.TILE_HEIGHT if self.config["tiled"] else self.IMG_HEIGHT
-            input_width = self.TILE_WIDTH if self.config["tiled"] else self.IMG_WIDTH
-            self.model = yolo_model(
+            input_height = self.TILE_HEIGHT if self.config.get("mode") == "tile" else self.IMG_HEIGHT
+            input_width = self.TILE_WIDTH if self.config.get("mode") == "tile" else self.IMG_WIDTH
+            self.model = generator(
                 input_height,
                 input_width,
                 self.IMG_CHANNELS,
@@ -148,7 +149,7 @@ class BirdsEyeTrainer:
             validation_data=self.val_ds,
             epochs=self.config["epochs"],
             callbacks=callbacks,
-            class_weight=self.class_weights if not self.config.get("yolo", False) else None,
+            class_weight=self.class_weights if self.config.get("mode") == "tile" else None,
             verbose=1,
             steps_per_epoch=self.config.get("steps_per_epoch")
         )
@@ -158,12 +159,10 @@ class BirdsEyeTrainer:
         self.build_model()
         self.train()
 
-
 if __name__ == '__main__':
     os.environ["CUDA_VISIBLE_DEVICES"] = "1"
 
     data_root = os.path.join(os.path.expanduser('~'), 'birdseye_CNN_data')
-
     label_file = 'labels.txt'
 
     train_dates = [
@@ -186,8 +185,7 @@ if __name__ == '__main__':
         ['pieranch_rect']
     ]
 
-    finetune_source = '/home/harey/birdseye/models/birdseye_960_600_021.weights.h5' # mobilenetv2
-
+    finetune_source = '/home/harey/birdseye/models/birdseye_960_600_021.weights.h5'
     IMG_HEIGHT = 1200
     IMG_WIDTH = 1920
 
@@ -196,46 +194,36 @@ if __name__ == '__main__':
     val = str(len(glob2.glob(os.path.join(models_dir, filename_prefix+'*.weights.h5')))+1).rjust(3,'0')
     filename = filename_prefix + f'_{val}'
 
-# Choose training mode: "tile", "frame", or "yolo"
-TRAINING_MODE = "yolo"
+    TRAINING_MODE = "yolo"
 
-config = {
-    "mode": TRAINING_MODE,  
+    config = {
+        "mode": TRAINING_MODE,
+        "data_root": data_root,
+        "train_dates": train_dates,
+        "train_dirlists": train_dirlists,
+        "val_dates": val_dates,
+        "val_dirlists": val_dirlists,
+        "label_file": label_file,
+        "img_height": 416 if TRAINING_MODE == "yolo" else 1200,
+        "img_width": 416 if TRAINING_MODE == "yolo" else 1920,
+        "img_channels": 3,
+        "tile_size": (224, 224),
+        "edge_buffer": 81,
+        "batch_size": 9,
+        "buffer_size": 36,
+        "unfreeze_frac": 0.3,
+        "finetune": False,
+        "finetune_source": finetune_source,
+        "lr": 1e-4 if TRAINING_MODE == "yolo" else 1e-5,
+        "epochs": 50,
+        "alpha": 0.3,
+        "gamma": 2.0,
+        "thresh": 0.5,
+        "logits": False,
+        "monitor": "val_loss",
+        "num_classes": 2,
+        "filename": filename + f"_{TRAINING_MODE}"
+    }
 
-    # Dataset
-    "data_root": data_root,
-    "train_dates": train_dates,
-    "train_dirlists": train_dirlists,
-    "val_dates": val_dates,
-    "val_dirlists": val_dirlists,
-    "label_file": label_file,
-
-    # Image properties
-    "img_height": 416 if TRAINING_MODE == "yolo" else 1200,
-    "img_width": 416 if TRAINING_MODE == "yolo" else 1920,
-    "img_channels": 3,
-    "tile_size": (224, 224),
-    "edge_buffer": 81,
-
-    # Model & training
-    "batch_size": 9,
-    "buffer_size": 36,
-    "unfreeze_frac": 0.3,
-    "finetune": False,
-    "finetune_source": finetune_source,
-    "lr": 1e-4 if TRAINING_MODE == "yolo" else 1e-5,
-    "epochs": 50,
-
-    # Loss settings
-    "alpha": 0.3,
-    "gamma": 2.0,
-    "thresh": 0.5,
-    "logits": False,
-
-    # Monitoring & output
-    "monitor": "val_loss",
-    "num_classes": 2,  # adjust as needed
-    "filename": filename + f"_{TRAINING_MODE}"
-}
-trainer = BirdsEyeTrainer(config)
-trainer.run()
+    trainer = BirdsEyeTrainer(config)
+    trainer.run()
