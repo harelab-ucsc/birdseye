@@ -3,7 +3,6 @@ import glob2
 import tensorflow as tf
 from frame_loader_yolo import FrameLoader
 from tile_loader_yolo import TileLoader, get_tile_level_class_weights
-from yolo_generator import generator
 from yolo_generator import yolo_model
 
 class BirdsEyeTrainer:
@@ -98,7 +97,7 @@ class BirdsEyeTrainer:
         else:
             input_height = self.TILE_HEIGHT if self.config.get("mode") == "tile" else self.IMG_HEIGHT
             input_width = self.TILE_WIDTH if self.config.get("mode") == "tile" else self.IMG_WIDTH
-            self.model = generator(
+            self.model = yolo_model(
                 input_height,
                 input_width,
                 self.IMG_CHANNELS,
