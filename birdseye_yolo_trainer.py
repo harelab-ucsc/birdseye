@@ -46,8 +46,20 @@ class BirdsEyeTrainer:
         self.train_files, train_paths = collect_paths(self.config["train_dates"], self.config["train_dirlists"])
         self.val_files, val_paths = collect_paths(self.config["val_dates"], self.config["val_dirlists"])
 
-        if self.config["yolo"] and not self.config.get("tiled", False):
-            print("Using YOLO for full-frame training!")
+        if self.config["mode"] == "tile":
+            print("\n\nComputing class weights... \n\nTraining weights:")
+            self.class_weights, _, _ = get_tile_level_class_weights(
+                train_paths, 
+                self.config["label_file"], 
+                edge_buffer=self.config.get("edge_buffer", 81)
+            )
+            print("\n\nValidation stats:")
+            _ = get_tile_level_class_weights(val_paths, 
+                self.config["label_file"],
+                edge_buffer=self.config.get("edge_buffer", 81)
+            )
+            print("\n\n")
+
 
     def setup_data(self):
         self.build_file_lists()
