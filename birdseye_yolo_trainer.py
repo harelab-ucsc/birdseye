@@ -1,4 +1,5 @@
 import os
+os.environ["CUDA_VISIBLE_DEVICES"] = "1"
 import glob2
 import tensorflow as tf
 from frame_loader_yolo import FrameLoader
@@ -85,48 +86,104 @@ class BirdsEyeTrainer:
             repeat=False,
             augment=False
         )
-
+        # Calculate steps_per_epoch after the dataset is built
+        self.config["steps_per_epoch"] = len(self.train_files) // self.config["batch_size"]
+    
     def build_model(self):
-        if self.config.get("mode") == "yolo":
-            print("🔧 Building YOLO-style model...")
-            self.model = yolo_model(
-                input_shape=(self.IMG_HEIGHT, self.IMG_WIDTH, self.IMG_CHANNELS),
-                num_classes=self.config["num_classes"]
-            )
+        mode = self.config.get("mode")
+        input_shape = (
+            self.TILE_HEIGHT, self.TILE_WIDTH, self.IMG_CHANNELS
+            if mode == "tile"
+            else (self.IMG_HEIGHT, self.IMG_WIDTH, self.IMG_CHANNELS)
+        )
+
+        print(f"Building model for mode: {mode.upper()}...")
+
+        self.model = yolo_model(
+            input_shape=input_shape,
+            num_classes=self.config["num_classes"]
+        )
+
+        # Choose loss based on mode
+        if mode == "yolo":
             loss_fn = tf.keras.losses.BinaryCrossentropy(from_logits=False)
-        else:
-            input_height = self.TILE_HEIGHT if self.config.get("mode") == "tile" else self.IMG_HEIGHT
-            input_width = self.TILE_WIDTH if self.config.get("mode") == "tile" else self.IMG_WIDTH
-            self.model = yolo_model(
-                input_height,
-                input_width,
-                self.IMG_CHANNELS,
-                unfreeze_frac=self.config.get("unfreeze_frac", 1.0),
-                trainable=self.config.get("finetune", False)
-            )
+            metrics = [
+                tf.keras.metrics.BinaryCrossentropy(from_logits=False, name="bce"),
+                tf.keras.metrics.BinaryAccuracy(threshold=0.3, name="bin_acc"),
+                tf.keras.metrics.Precision(thresholds=0.3, name="prec"),
+                tf.keras.metrics.Recall(thresholds=0.3, name="rec"),
+                tf.keras.metrics.AUC(name="roc_auc"),
+                tf.keras.metrics.AUC(curve="PR", name="pr_auc"),
+            ]
+        else:  # tile or frame
             loss_fn = tf.keras.losses.BinaryFocalCrossentropy(
                 alpha=self.config.get("alpha", 0.25),
                 gamma=self.config.get("gamma", 2.0),
-                from_logits=self.config.get("logits", False)
+                from_logits=False
             )
+            metrics = [
+                tf.keras.metrics.BinaryCrossentropy(from_logits=False, name="bce"),
+                tf.keras.metrics.BinaryAccuracy(threshold=0.5, name="bin_acc"),
+                tf.keras.metrics.Precision(thresholds=0.5, name="prec"),
+                tf.keras.metrics.Recall(thresholds=0.5, name="rec"),
+                tf.keras.metrics.AUC(name="roc_auc"),
+                tf.keras.metrics.AUC(curve="PR", name="pr_auc"),
+            ]
 
         self.model.compile(
             optimizer=tf.keras.optimizers.AdamW(learning_rate=self.config["lr"]),
             loss=loss_fn,
-            metrics=[
-                tf.keras.metrics.BinaryCrossentropy(from_logits=self.config.get("logits", True), name='bce'),
-                tf.keras.metrics.BinaryAccuracy(threshold=self.config.get("thresh", 0.5), name='bin_acc'),
-                tf.keras.metrics.Precision(name='prec'),
-                tf.keras.metrics.Recall(name='rec'),
-                tf.keras.metrics.AUC()
-            ]
+            metrics=metrics
         )
 
         self.model.summary()
 
         if self.config.get("finetune"):
-            print(f"\nLoading weights from: {self.config['finetune_source']}\n")
+            print(f"\ngit  Loading weights from: {self.config['finetune_source']}\n")
             self.model.load_weights(self.config["finetune_source"])
+
+
+    # def build_model(self):
+    #     if self.config.get("mode") == "yolo":
+    #         print("🔧 Building YOLO-style model...")
+    #         self.model = yolo_model(
+    #             input_shape=(self.IMG_HEIGHT, self.IMG_WIDTH, self.IMG_CHANNELS),
+    #             num_classes=self.config["num_classes"]
+    #         )
+    #         loss_fn = tf.keras.losses.BinaryCrossentropy(from_logits=False)
+    #     else:
+    #         input_height = self.TILE_HEIGHT if self.config.get("mode") == "tile" else self.IMG_HEIGHT
+    #         input_width = self.TILE_WIDTH if self.config.get("mode") == "tile" else self.IMG_WIDTH
+    #         self.model = yolo_model(
+    #             input_height,
+    #             input_width,
+    #             self.IMG_CHANNELS,
+    #             unfreeze_frac=self.config.get("unfreeze_frac", 1.0),
+    #             trainable=self.config.get("finetune", False)
+    #         )
+    #         loss_fn = tf.keras.losses.BinaryFocalCrossentropy(
+    #             alpha=self.config.get("alpha", 0.25),
+    #             gamma=self.config.get("gamma", 2.0),
+    #             from_logits=self.config.get("logits", False)
+    #         )
+
+    #     self.model.compile(
+    #         optimizer=tf.keras.optimizers.AdamW(learning_rate=self.config["lr"]),
+    #         loss=loss_fn,
+    #         metrics=[
+    #             tf.keras.metrics.BinaryCrossentropy(from_logits=self.config.get("logits", True), name='bce'),
+    #             tf.keras.metrics.BinaryAccuracy(threshold=self.config.get("thresh", 0.5), name='bin_acc'),
+    #             tf.keras.metrics.Precision(name='prec'),
+    #             tf.keras.metrics.Recall(name='rec'),
+    #             tf.keras.metrics.AUC()
+    #         ]
+    #     )
+
+    #     self.model.summary()
+
+    #     if self.config.get("finetune"):
+    #         print(f"\nLoading weights from: {self.config['finetune_source']}\n")
+    #         self.model.load_weights(self.config["finetune_source"])
 
     def train(self):
         callbacks = [
@@ -142,7 +199,7 @@ class BirdsEyeTrainer:
             )
         ]
 
-        print("\n\n🚀 Beginning Training...\n\n")
+        print("\n\n Beginning Training...\n\n")
         self.model.fit(
             self.train_ds,
             validation_data=self.val_ds,
@@ -208,8 +265,8 @@ if __name__ == '__main__':
         "img_channels": 3,
         "tile_size": (224, 224),
         "edge_buffer": 81,
-        "batch_size": 9,
-        "buffer_size": 36,
+        "batch_size": 4,
+        "buffer_size": 16,
         "unfreeze_frac": 0.3,
         "finetune": False,
         "finetune_source": finetune_source,
@@ -222,6 +279,7 @@ if __name__ == '__main__':
         "monitor": "val_loss",
         "num_classes": 2,
         "filename": filename + f"_{TRAINING_MODE}"
+
     }
 
     trainer = BirdsEyeTrainer(config)
