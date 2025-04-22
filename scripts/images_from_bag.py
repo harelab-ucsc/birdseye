@@ -19,12 +19,14 @@ import copy
 
 
 class BagProcessor:
-    def __init__(self, input_bag_path, ds_dir, image_topic):
+    def __init__(self, input_bag_path, ds_dir, image_topic, rate):
         self.input_bag_path = input_bag_path
         self.image_topic = image_topic
         self.ds_dir = ds_dir
 
         self.image_msgs = []
+        self.rate = int(rate)
+        self.br = CvBridge()
 
         print(self.input_bag_path)
         print(self.image_topic)
@@ -68,16 +70,19 @@ class BagProcessor:
         print('bag read done \n')
 
         for i, img in enumerate(self.image_msgs):
-            timestamp_str = f"{img.header.stamp.sec}.{img.header.stamp.nanosec:09d}"
-            if timestamp_str == '0.000000000':
-                timestamp_str = str(i)
-            # print(timestamp_str)
-            self.save_image(img, timestamp_str)
+            if not i%self.rate:
+                timestamp_str = f"{img.header.stamp.sec}.{img.header.stamp.nanosec:09d}"
+                if timestamp_str == '0.000000000':
+                    timestamp_str = str(i)
+                # print(timestamp_str)
+                self.save_image(img, timestamp_str)
 
 
     def save_image(self, image_msg, timestamp_str):
         """Save the image message as a PNG file."""
-        img_data = np.frombuffer(image_msg.data, dtype=np.uint8).reshape(image_msg.height, image_msg.width, -1)
+        # img_data = np.frombuffer(image_msg.data, dtype=np.uint8).reshape(image_msg.height, image_msg.width, -1)
+        image = self.br.imgmsg_to_cv2(image_msg, desired_encoding='passthrough')
+        image = cv2.cvtColor(image, cv2.COLOR_BAYER_RG2RGB)
         savename = os.path.join(self.ds_dir, 'images')
         if not os.path.isdir(savename):
             print(f'  Making Save Directory: {savename}')
@@ -85,7 +90,7 @@ class BagProcessor:
 
         savename = os.path.join(savename, f"{timestamp_str}.png")
 #        print(f"  Saving Image To: {savename}")
-        cv2.imwrite(savename, img_data)
+        cv2.imwrite(savename, image)
 
 
 def main():
@@ -93,12 +98,14 @@ def main():
     parser.add_argument("input_bag", help="Path to the input ROS2 bag file")
     parser.add_argument("ds_dir",  help="Path to the directory to save images/ and poses.json to")
     parser.add_argument("image_topic", help="Image topic name (e.g., /camera/image_raw)")
+    parser.add_argument("downsample",  help="Int, Rate to downsample at, taking every N^{th} message")
+
 
     args = parser.parse_args()
 
     rclpy.init()
 
-    processor = BagProcessor(args.input_bag, args.ds_dir, args.image_topic)
+    processor = BagProcessor(args.input_bag, args.ds_dir, args.image_topic, args.downsample)
     processor.process_bag()
 
     rclpy.shutdown()

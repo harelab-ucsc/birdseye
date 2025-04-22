@@ -25,7 +25,6 @@ from tensorflow.keras.applications import MobileNetV2
 
 from SLICAnnotator import SLICAnnotator
 
-
 memory = 25
 
 
@@ -184,6 +183,7 @@ class birdsEye():
             root = os.path.join(os.path.expanduser('~'),'ros2_ws/src/birdseye/models')
             default = os.path.join(root, 'birdseye_960_600_009.weights.h5')
             tmp = kwargs.pop('model_path', None)
+
             if tmp is not None:
                  self.model_path = tmp
             else:
@@ -912,19 +912,7 @@ class birdsEye():
 
                 if self.detect:
                     ret, ret_raw = self.detector(rect)
-                    self.annotate(frame[-5], ret, save_name=os.path.join(self.img_dir,'results'))
-                    if self.plot:
-                        bot = (0, 0, 255)
-                        vec = (0, 2.55, -2.55)
-                        tmp = int(ret_raw*100)
-                        c1 = (0, tmp*vec[1] + bot[1], tmp*vec[2] + bot[2])
-                        c2 = (0, ret*100*vec[1] + bot[1], ret*100*vec[2] + bot[2])
-                        cv2.putText(rect, f'CNN: ', (950,1190), \
-                            cv2.FONT_HERSHEY_SIMPLEX, 3, (0, 255, 255), 3)
-                        cv2.putText(rect, f' {ret_raw:.04f} -> ', (1150,1190), \
-                            cv2.FONT_HERSHEY_SIMPLEX, 3, c1, 3)
-                        cv2.putText(rect, f'{ret}', (1750,1190), \
-                            cv2.FONT_HERSHEY_SIMPLEX, 3, c2, 3)
+                    self.annotate(frame[-5], ret, save_name=os.path.join(self.img_dir,'results'))                        
 
                 clicks_2D = self._3Dto2D(clicks)
                 inner, i_ind, _ = self._2DBoxCheck(clicks_2D, box='inner')
@@ -943,7 +931,19 @@ class birdsEye():
                 # optional plotting step
                 if self.plot:
                     self.frameProcessPlotter(frame, rect, clicks_2D, april_3D)
-
+                    if self.detect:     
+                        bot = (0, 0, 255)
+                        vec = (0, 2.55, -2.55)
+                        tmp = int(ret_raw*100)
+                        c1 = (0, tmp*vec[1] + bot[1], tmp*vec[2] + bot[2])
+                        c2 = (0, ret*100*vec[1] + bot[1], ret*100*vec[2] + bot[2])
+                        cv2.putText(rect, f'CNN: ', (950,1190), \
+                            cv2.FONT_HERSHEY_SIMPLEX, 3, (0, 255, 255), 3)
+                        cv2.putText(rect, f' {ret_raw:.04f} -> ', (1150,1190), \
+                            cv2.FONT_HERSHEY_SIMPLEX, 3, c1, 3)
+                        cv2.putText(rect, f'{ret}', (1750,1190), \
+                            cv2.FONT_HERSHEY_SIMPLEX, 3, c2, 3)
+                    
                     self.fig.canvas.draw_idle()
                     plt.pause(0.01)
                     p = os.path.expanduser('~')
@@ -966,6 +966,7 @@ if __name__ == '__main__':
     parser.add_argument("-d", "--detect", action='store_true', help="Boolean, whether or not to run a loaded AI detector (default: False)")
     parser.add_argument("-m", "--manual", action='store_true', help="Boolean, whether or not to manually advance frames (default: False)")
     parser.add_argument("-M", "--model_path", help="path to trained detection model (default: birdseye/models/birdseye_960_600_009.weights.h5)")
+
     # parser.add_argument("-pr", "--playback-rate", help="Float, whether or not to detect apriltags (default: False)")
 
     args = vars(parser.parse_args())
@@ -985,5 +986,6 @@ if __name__ == '__main__':
         plot=args['plot'],
         detect=args['detect'],
         manual=args['manual'])
+
 
     tst.parseFlightDatabase()
