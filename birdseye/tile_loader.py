@@ -44,6 +44,17 @@ class TileLoader:
         return labels
 
 
+    def search_labels(self, x, y, labels):
+        tile_labels = []
+        th, tw = self.tile_height, self.tile_width
+
+        for entry in labels:
+            lx, ly, cls_str = entry
+            if x <= lx < x+tw and y <= ly < y+th:
+                tile_labels.append(cls_str)
+        return tile_labels
+
+
     def tile_image_and_label(self, image_np, labels):
         h, w = image_np.shape[:2]
         th, tw = self.tile_height, self.tile_width
@@ -55,24 +66,28 @@ class TileLoader:
         for y in range(buffer, h - buffer - th + 1, th):
             for x in range(buffer, w - buffer - tw + 1, tw):
                 tile = image_np[y:y+th, x:x+tw]
-                tile_labels = [cls for lx, ly, cls in labels if x <= lx < x+tw and y <= ly < y+th]
+                tile_labels = self.search_labels(x, y, labels)
 
-                if tile_labels:
+                if len(tile_labels) > 0:
                     tiles.append(tile)
                     if self.use_heatmaps:
                         heatmap = np.zeros((th, tw, 1), dtype=np.float32)
-                        for lx, ly, cls in labels:
+                        for lx, ly, cls_str in labels:
                             if x <= lx < x+tw and y <= ly < y+th:
                                 px, py = int(lx - x), int(ly - y)
-                                heatmap[py, px, 0] = cls
+                                heatmap[py, px, 0] = cls_str
                         label_list.append(heatmap)
                     else:
-                        label_list.append(tile_labels[0])
+                        label_list.append(1.0)
                 elif self.include_negatives:
                     if random.random() < self.balance_ratio:
                         tiles.append(tile)
-                        label_list.append(np.zeros((th, tw, 1), dtype=np.float32) if self.use_heatmaps else 0.0)
-
+                        if self.use_heatmaps:
+                            label_list.append(np.zeros((th, tw, 1), dtype=np.float32))
+                        else:
+                            label_list.append(0.0)
+                    else:
+                        continue
         return tiles, label_list
 
 
@@ -86,8 +101,19 @@ class TileLoader:
             labels = self.load_labels(self.label_file, image_path_str)
             tiles, classes = self.tile_image_and_label(image, labels)
 
+            if len(tiles) == 0: # add spacer to filter away later
+                return (
+                    np.zeros((0, self.tile_height, self.tile_width, 3), dtype=np.uint8),
+                    np.zeros((0, self.tile_height, self.tile_width, 1), dtype=np.float32) if self.use_heatmaps
+                    else np.zeros((0,), dtype=np.float32)
+                )
+
             tiles = np.array(tiles, dtype=np.uint8)
-            labels = np.array(classes, dtype=np.float32).reshape(-1)
+
+            if self.use_heatmaps:
+                labels = np.array(classes, dtype=np.float32)
+            else:
+                labels = np.array(classes, dtype=np.float32).reshape(-1)
 
             return tiles, labels
 
@@ -98,9 +124,17 @@ class TileLoader:
         )
 
         tiles.set_shape([None, self.tile_height, self.tile_width, 3])
-        labels.set_shape([None])
+        if self.use_heatmaps:
+            labels.set_shape([None, None, None, 1])
+        else:
+            labels.set_shape([None])
 
-        return tf.data.Dataset.from_tensor_slices((tiles, labels))
+        dataset = tf.data.Dataset.from_tensor_slices((tiles, labels))
+
+        # Filter out empty tile sets
+        dataset = dataset.filter(lambda x, y: tf.shape(x)[0] > 0)
+
+        return dataset
 
 
     def augment(self, image, label):
@@ -142,60 +176,42 @@ class TileLoader:
 
 # ========== Class Weights Helper ========== #
 
-def get_tile_level_class_weights(
-    paths, label_file,
-    image_shape=(1200, 1920),  # (H, W) — approximate if unknown
-    tile_size=(224, 224),
-    edge_buffer=0
-):
-    label_txt_paths = []
-    for path in paths:
-        tmp = os.path.join(path, label_file)
-        print(f'      adding: {tmp}')
-        label_txt_paths.append(tmp)
-    print()
-    tile_h, tile_w = tile_size
-    img_h, img_w = image_shape
+def get_class_weights(file_list, tile_loader):
+    """
+    Computes class weights accounting for:
+    - all tiled frames (positive or negative)
+    - balance_ratio governing negative sampling
+    """
+    total_pos = 0
+    total_neg = 0
 
-    tiles_x = (img_w - 2 * edge_buffer) // tile_w
-    tiles_y = (img_h - 2 * edge_buffer) // tile_h
-    tiles_per_image = tiles_x * tiles_y
+    for i, image_path in enumerate(file_list):
+        print(f'  Progress: {i+1}/{len(file_list)} images', end='\r')
+        try:
+            image_path_str = str(image_path)
+            image = tf.io.decode_png(tf.io.read_file(image_path_str), channels=3).numpy()
+            labels = tile_loader.load_labels(tile_loader.label_file, image_path_str)
+            tiles, label_list = tile_loader.tile_image_and_label(image, labels)
 
-    # Count positive tiles per image
-    positive_tile_map = defaultdict(set)
-    total_images = set()
+            for lbl in label_list:
+                if tile_loader.use_heatmaps:
+                    if np.any(lbl > 0):
+                        total_pos += 1
+                    else:
+                        total_neg += 1
+                else:
+                    if lbl == 1.0:
+                        total_pos += 1
+                    else:
+                        total_neg += 1
+        except Exception as e:
+            print(f"[Weight Estimation Skipped] {image_path}: {e}")
+            continue
 
-    for path in label_txt_paths:
-        with open(path, 'r') as f:
-            for line in f:
-                if not line.strip(): continue
-                try:
-                    _, img_path, data = line.strip().split(' ')
-                    x_str, y_str, class_str = data.split(',')
-                    x, y = float(x_str), float(y_str)
-                    if edge_buffer < x < img_w - edge_buffer and edge_buffer < y < img_h - edge_buffer:
-                        tile_x = int((x - edge_buffer) // tile_w)
-                        tile_y = int((y - edge_buffer) // tile_h)
-                        tile_id = (tile_x, tile_y)
-                        positive_tile_map[img_path].add(tile_id)
-                        total_images.add(img_path)
-                except ValueError as e:
-                    print(e)
-                    continue
-
-    num_pos_tiles = sum(len(tiles) for tiles in positive_tile_map.values())
-    num_images = len(total_images)
-    total_tiles = num_images * tiles_per_image
-    num_neg_tiles = total_tiles - num_pos_tiles
-
-    print(f"📦 Total images:        {num_images}")
-    print(f"🧩 Tiles per image:     {tiles_per_image}")
-    print(f"✅ Positive tiles:       {num_pos_tiles}")
-    print(f"🚫 Estimated negatives:  {num_neg_tiles}")
-
-    class_labels = [0] * num_neg_tiles + [1] * num_pos_tiles
-    weights = compute_class_weight('balanced', classes=np.unique(class_labels), y=class_labels)
-    return {int(cls): float(w) for cls, w in zip(np.unique(class_labels), weights)}, num_images, tiles_per_image
+    print(f"\n\n📏 Final class sample counts: pos={total_pos}, neg={total_neg}")
+    y_true = [0] * total_neg + [1] * total_pos
+    weights = compute_class_weight('balanced', classes=np.unique(y_true), y=y_true)
+    return {int(cl): float(w) for cl, w in zip(np.unique(y_true), weights)}
 
 
 def visualize_tiles(dataset, heatmap=False, num_tiles=16):

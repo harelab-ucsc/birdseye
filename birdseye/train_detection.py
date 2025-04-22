@@ -315,8 +315,8 @@ if __name__ == '__main__':
 
     generator = generator(unfreeze_frac=unfreeze_frac, trainable=finetune)
     generator.compile(optimizer=tf.keras.optimizers.AdamW(learning_rate=1e-5, beta_1=0.9, beta_2=0.99),
-                    loss=tf.keras.losses.BinaryFocalCrossentropy(alpha=0.4, gamma=2.0, from_logits=logits),
-                    # loss=tf.keras.losses.BinaryCrossentropy(from_logits=logits),
+                    # loss=tf.keras.losses.BinaryFocalCrossentropy(alpha=0.4, gamma=2.0, from_logits=logits),
+                    loss=tf.keras.losses.BinaryCrossentropy(from_logits=logits),
                     metrics=[tf.keras.metrics.BinaryCrossentropy(from_logits=logits, name='bce'), \
                             tf.keras.metrics.BinaryAccuracy(threshold=thresh, name='bin_acc'), \
                             tf.keras.metrics.F1Score(threshold=thresh, name='f1'), \

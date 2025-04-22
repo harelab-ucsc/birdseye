@@ -1,9 +1,10 @@
 import os
 import glob2
 import tensorflow as tf
-from tile_loader import TileLoader, get_tile_level_class_weights
+from tile_loader import TileLoader, get_class_weights
 from frame_loader import FrameLoader
 from generator import generator  # assumes you have a generator() model builder defined
+import pickle
 
 
 class BirdsEyeTrainer:
@@ -43,16 +44,11 @@ class BirdsEyeTrainer:
 
         if self.config["tiled"]:
             print('\n\nComputing class weights... \n\nTraining weights:')
-            self.class_weights, _, _ = get_tile_level_class_weights(
-                train_paths, 
-                self.config["label_file"], 
-                edge_buffer=self.config.get("edge_buffer", 81)
-            )
+            self.class_weights = get_class_weights(self.train_files, self.tile_loader)
+            print(self.class_weights)
             print('\n\nValidation stats:')
-            _ = get_tile_level_class_weights(val_paths, 
-                self.config["label_file"],
-                edge_buffer=self.config.get("edge_buffer", 81)
-                )
+            tmp = get_class_weights(self.val_files, self.tile_loader)
+            print(tmp)
             print('\n\n')
 
     def setup_data(self):
@@ -96,10 +92,11 @@ class BirdsEyeTrainer:
             )
         self.model.compile(
             optimizer=tf.keras.optimizers.AdamW(learning_rate=self.config["lr"]),
-            loss=tf.keras.losses.BinaryFocalCrossentropy(
-                alpha=self.config.get("alpha", 0.25),
-                gamma=self.config.get("gamma", 2.0),
-                from_logits=self.config.get("logits", False)
+                # loss=tf.keras.losses.BinaryCrossentropy(
+                loss=tf.keras.losses.BinaryFocalCrossentropy(
+                    alpha=self.config.get("alpha", 0.25),
+                    gamma=self.config.get("gamma", 2.0),
+                    from_logits=self.config.get("logits", False)
             ),
             metrics=[
                 tf.keras.metrics.BinaryCrossentropy(from_logits=self.config.get("logits", True), name='bce'),
@@ -133,7 +130,7 @@ class BirdsEyeTrainer:
         ]
 
         print("\n\nBeginning Training...\n\n")
-        self.model.fit(
+        history = self.model.fit(
             self.train_ds,
             validation_data=self.val_ds,
             epochs=self.config["epochs"],
@@ -142,6 +139,8 @@ class BirdsEyeTrainer:
             verbose=1,
             steps_per_epoch=self.config.get("steps_per_epoch")
         )
+        with open(self.config["filename"]+'_history.pkl', 'wb') as f:
+            pickle.dump(history, f)
 
     def run(self):
         self.setup_data()
@@ -188,7 +187,7 @@ if __name__ == '__main__':
 
     # Example usage
     config = {
-        "tiled": False,
+        "tiled": True,
         "data_root": data_root,
         "train_dates": train_dates,
         "train_dirlists": train_dirlists,
@@ -200,10 +199,11 @@ if __name__ == '__main__':
         "img_channels": 3,
         "tile_size": (224, 224),
         "edge_buffer": 81,
-        "batch_size": 9,
-        "buffer_size": 36,
-        # "batch_size": 32,
-        # "buffer_size": 128,
+        # "batch_size": 9,
+        # "buffer_size": 36,
+        "batch_size": 32,
+        "buffer_size": 128,
+        "balance_ratio": 0.1,
         "unfreeze_frac": 0.3,
         "finetune": False,
         "finetune_source": finetune_source,
