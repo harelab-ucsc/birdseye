@@ -20,6 +20,8 @@ from pupil_apriltags import Detector
 import time
 import math
 import pdb
+import tensorflow as tf
+from tensorflow.keras.applications import MobileNetV2
 
 memory = 25
 
@@ -72,7 +74,8 @@ class birdsEye():
 
         self.apriltags = kwargs.pop('apriltags', None)
         self.stats = kwargs.pop('stats', None)
-        self.plot = kwargs.pop('plot', True)
+        self.plot = kwargs.pop('plot', None)
+        self.detect = kwargs.pop('detect', None)
 
         # self.model_path = kwargs.pop('model_path', os.path.join(os.path.expanduser('~'),'ucsc_512_384_13.tflite'))
         # self.model = tflite.Interpreter(model_path=self.model_path, num_threads=4)
@@ -85,6 +88,7 @@ class birdsEye():
         self.RTK_watchdog = None
         self.data = None
         self.frame_index = None
+        self.clear_flag = None
 
         # camera specs
         tmp = self.getParameters(self.sensor)
@@ -121,7 +125,7 @@ class birdsEye():
                                  (self.res[0] - 1, 0), \
                                  (self.res[0] - 1, self.res[1] - 1), \
                                  (0, self.res[1] - 1))
-        self.noise = (125.65394801,90.87022367)  # projection sigma, in the order (sigma_x, sigma_y)
+        self.noise = (81.5, 81.5)  # projection sigma, in the order (sigma_x, sigma_y)
         self.scale = 1  # parameter to tune buffer width; self.scale*self.noise
         self._2DInnerBound = ((self.scale*self.noise[0],self.scale*self.noise[1]), \
                               (self.res[0]-self.scale*self.noise[0]-1, self.scale*self.noise[1]), \
@@ -152,6 +156,20 @@ class birdsEye():
                 )
             self.april_2D = []  # list of apriltag detection pixel coordinates
             self.april_3D = []  # list of apriltag detection world coordinates
+
+        if self.detect:
+            root = os.path.join(os.path.expanduser('~'),'ros2_ws/src/birdseye/models')
+            default = os.path.join(root, 'birdseye_960_600_009.weights.h5')
+            tmp = kwargs.pop('model_path')
+            if tmp is not None:
+                 self.model_path = tmp
+            else:
+                self.model_path = default
+            self.IMG_HEIGHT = int(self.model_path.split('_')[-2])
+            self.IMG_WIDTH = int(self.model_path.split('_')[-3])
+            self.IMG_CHANNELS = 3
+            self.model = self.generator()
+            self.model.load_weights(self.model_path)
         self.clicks_2D = []  # list of framewise click pixel coordinates
         self.clicks_3D = []  # list of framewise click world coordinates
 
@@ -162,6 +180,30 @@ class birdsEye():
             self.bproj = []  # list of framewise (april_3D - clicks_3D)
             self.reproj = []  # list of framewise (clicks_2D - april_2D)
         # self.contour = Contour(res=(self.res[1], self.res[0]))
+
+
+    # Define a custom detection head (binary classification: object present or not)
+    def detection_head(self, inputs):
+        x = tf.keras.layers.GlobalAveragePooling2D()(inputs)  # Convert feature map to vector
+        x = tf.keras.layers.Dense(256, activation="relu")(x)  # Fully connected layer
+        x = tf.keras.layers.Dropout(0.5)(x)  # Regularization
+        outputs = tf.keras.layers.Dense(1, activation="sigmoid")(x)  # Binary detection (0 or 1)
+        return outputs
+
+
+    def pretrained_backbone(self, inp):
+        x = tf.keras.ops.cast(inp, "float32")
+        x = tf.keras.applications.mobilenet_v2.preprocess_input(x)
+        backbone = MobileNetV2(input_shape=(self.IMG_HEIGHT, self.IMG_WIDTH, self.IMG_CHANNELS), include_top=False, weights="imagenet")
+        x = backbone(x)  # Extract features without updating backbone weights
+        outputs = self.detection_head(x)  # Apply binary detection head
+        return outputs
+
+
+    def generator(self):
+        inp = tf.keras.Input(shape=(self.IMG_HEIGHT, self.IMG_WIDTH, self.IMG_CHANNELS), name='inp_layer')
+        out = self.pretrained_backbone(inp)
+        return tf.keras.Model(inputs=inp, outputs=out)
 
 
     def getParameters(self, device_key):
@@ -364,6 +406,21 @@ class birdsEye():
             return state, px_ret, world_ret, img
 
 
+    def detector(self, img):
+        # print('  apriltag_detect')
+        img = tf.convert_to_tensor(img)
+        img = tf.image.resize(img, size=(self.IMG_HEIGHT,self.IMG_WIDTH))
+        ret_raw = self.model.predict(tf.expand_dims(img, axis=0), verbose=0)
+        ret_raw = ret_raw[0][0]**1.1
+        print(f'  detection results: {ret_raw}     -->     ', end=' ')
+        if ret_raw < 0.5:
+            ret = 0.0
+        else:
+            ret = 1.0
+        print(ret)
+        return ret, ret_raw
+
+
     def get_stats(self, clicks, click_ind, april_2D, april_3D, clicks_2D, clicks_3D):
         april_reproj = np.array(self._3Dto2D(april_3D)) - np.array(april_2D)
         april_reproj = april_reproj.tolist()
@@ -413,20 +470,23 @@ class birdsEye():
         if save_name is None:
             save_name = self.save_name
 
-        if self.frame_index == 0:
+        if self.clear_flag is None:
             f = open(f"{save_name}.txt", "w")
-        else:
-            f = open(f"{save_name}.txt", "a")
+            f.close()
+            self.clear_flag = True
 
+        f = open(f"{save_name}.txt", "a")
         line = f'{self.frame_index} {img_file} '
 
         try:  # if label is an iterable
             vals = ','.join([str(x) for x in label])
+            # print(vals)
         except TypeError:  # else
             vals = str(label)
 
         line += vals
         line += '\n'
+        # print(line)
         f.write(line)
         f.close()
         print(f'    Annotation saved: {self.frame_index}, {save_name}.txt, {label}')
@@ -554,7 +614,7 @@ class birdsEye():
         else:
             color = (0,0,0)
         for click in clicks_2D:
-            cv2.circle(rect, [int(click[0]), int(click[1])], 15, color, -1)
+            cv2.circle(rect, [int(click[0]), int(click[1])], 15, color, 3)
 
         for apr in self._3Dto2D(april_3D):
             cv2.circle(rect, [int(apr[0]), int(apr[1])], 15, color, 3)
@@ -647,6 +707,22 @@ class birdsEye():
                     if april_3D is not None:
                         self.april_3D += april_3D
 
+                if self.detect:
+                    ret, ret_raw = self.detector(rect)
+                    self.annotate(frame[-5], ret, save_name=os.path.join(self.img_dir,'results'))
+                    if self.plot:
+                        bot = (0, 0, 255)
+                        vec = (0, 2.55, -2.55)
+                        tmp = int(ret_raw*100)
+                        c1 = (0, tmp*vec[1] + bot[1], tmp*vec[2] + bot[2])
+                        c2 = (0, ret*100*vec[1] + bot[1], ret*100*vec[2] + bot[2])
+                        cv2.putText(rect, f'CNN: ', (950,1190), \
+                            cv2.FONT_HERSHEY_SIMPLEX, 3, (0, 255, 255), 3)
+                        cv2.putText(rect, f' {ret_raw:.04f} -> ', (1150,1190), \
+                            cv2.FONT_HERSHEY_SIMPLEX, 3, c1, 3)
+                        cv2.putText(rect, f'{ret}', (1750,1190), \
+                            cv2.FONT_HERSHEY_SIMPLEX, 3, c2, 3)
+
                 clicks_2D = self._3Dto2D(clicks)
                 inner, i_ind, _ = self._2DBoxCheck(clicks_2D, box='inner')
                 outer, o_ind, _ = self._2DBoxCheck(clicks_2D, box='outer')
@@ -667,39 +743,49 @@ class birdsEye():
                     if len(outer) > 0:
                         if len(inner) > 0:
                             # print('    clicks within InnerBound; annotating frame True')
-                            self.annotate(frame[-5], 1.0)
+                            for pt in inner:
+                                self.annotate(frame[-5], [pt[0], pt[1], 1.0])
                             if self.plot:
-                                cv2.putText(rect, 'True', (1600,80), \
+                                cv2.putText(rect, 'Label:', (1300,80), \
+                                    cv2.FONT_HERSHEY_SIMPLEX, 3, (0, 255, 255), 3)
+                                cv2.putText(rect, '1.0', (1750,80), \
                                     cv2.FONT_HERSHEY_SIMPLEX, 3, (0, 255, 0), 3)
                         elif len(inner) == 0:
                             # print('    click detected in frame buffer region; "Test"')
-                            self.annotate(frame[-5], "Test")
+                            # self.annotate(frame[-5], "Test")
                             if self.plot:
+                                cv2.putText(rect, 'Label:', (1300,80), \
+                                    cv2.FONT_HERSHEY_SIMPLEX, 3, (0, 255, 255), 3)
                                 cv2.putText(rect, 'Test', (1600,80), \
                                     cv2.FONT_HERSHEY_SIMPLEX, 3, (0, 255, 255), 3)
                     else:
-                        self.annotate(frame[-5], 0.0)
+                        # self.annotate(frame[-5], 0.0)
                         if self.plot:
-                            cv2.putText(rect, 'False', (1600,80), \
+                            cv2.putText(rect, 'Label:', (1400,80), \
+                                cv2.FONT_HERSHEY_SIMPLEX, 3, (0, 255, 255), 3)
+                            cv2.putText(rect, '0.0', (1750,80), \
                                 cv2.FONT_HERSHEY_SIMPLEX, 3, (0, 0, 255), 3)
+
                     if self.apriltags:
                         if april_2D is not None:
                             self.annotate(frame[-5], 1.0, save_name=os.path.join(self.img_dir,'april_labels'))
                         else:
                             self.annotate(frame[-5], 0.0, save_name=os.path.join(self.img_dir,'april_labels'))
+
                 else:
                     print(f'    skipping annotation: bad RTK_STATUS, {frame[-5]}')
 
                 if self.plot:
                     self.fig.canvas.draw_idle()
                     plt.pause(0.01)
-                    # p = os.path.expanduser('~')
-                    # p = os.path.join(p, 'catch', 'tmp', f'3d_{str(self.frame_index).rjust(3,str(0))}.png')
+                    p = os.path.expanduser('~')
+                    p = os.path.join(p, 'catch', 'tmp', f'2d_{str(self.frame_index).rjust(5,str(0))}.png')
                     # self.fig.savefig(p)
                     self.ax.cla()
 
                     cv2.imshow("Window", rect)
                     cv2.waitKey(200)
+                    cv2.imwrite(p, rect)
 
         print('\nRTK Service Stats:')
         print(f'    Status 3 (Fix): {self.rtk_tracker[0]} of {sum(self.rtk_tracker)} ({self.rtk_tracker[0]/sum(self.rtk_tracker)})')
@@ -717,6 +803,8 @@ if __name__ == '__main__':
     parser.add_argument("-s", "--stats", action='store_true', help="Boolean, whether or not to derive projection stats (default: False)")
     parser.add_argument("-p", "--plot", action='store_true', help="Boolean, whether or not to plot visualizations (default: False)")
     parser.add_argument("-a", "--apriltags", action='store_true', help="Boolean, whether or not to detect apriltags (default: False)")
+    parser.add_argument("-d", "--detect", action='store_true', help="Boolean, whether or not to run a loaded AI detector (default: False)")
+    parser.add_argument("-M", "--model_path", help="path to trained detection model (default: birdseye/models/birdseye_1920_1200_01.weights.h5)")
     # parser.add_argument("-pr", "--playback-rate", help="Float, whether or not to detect apriltags (default: False)")
 
     args = vars(parser.parse_args())
@@ -729,6 +817,6 @@ if __name__ == '__main__':
     print(f'Processing data from {dir_path}')
 
     db_name = 'flight_data'
-    tst = birdsEye(db_name=db_name, img_dir=dir_path, apriltags=args['apriltags'], plot=args['plot'])
+    tst = birdsEye(db_name=db_name, img_dir=dir_path, **args)
 
     tst.parseFlightDatabase()

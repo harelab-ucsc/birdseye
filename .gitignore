@@ -9,3 +9,4 @@ birdseye/__pycache__/*
 birdseye/venv/*
 *.zip
 venv/*
+models/*
