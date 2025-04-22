@@ -23,6 +23,8 @@ import pdb
 import tensorflow as tf
 from tensorflow.keras.applications import MobileNetV2
 
+from SLICAnnotator import SLICAnnotator
+
 
 memory = 25
 
@@ -64,9 +66,10 @@ def projection_stats(april_2D, april_3D, clicks_2D, clicks_3D):
 
 # GUI button click tracking - define outside the class
 button_regions = {
-    "prev": ((30, 30), (180, 100)),
-    "next": ((200, 30), (350, 100)),
-    "quit": ((370, 30), (520, 100))
+    "prev": ((30, 1132), (180, 1190)),
+    "next": ((200, 1132), (350, 1190)),
+    "edit": ((370, 1132), (520, 1190)),
+    "quit": ((540, 1132), (690, 1190))
 }
 button_clicked = None
 
@@ -94,7 +97,6 @@ class birdsEye():
         self.plot = kwargs.pop('plot', None)
         self.detect = kwargs.pop('detect', None)
         self.manual = kwargs.pop('manual', None)
-        print(self.detect)
 
         # self.model_path = kwargs.pop('model_path', os.path.join(os.path.expanduser('~'),'ucsc_512_384_13.tflite'))
         # self.model = tflite.Interpreter(model_path=self.model_path, num_threads=4)
@@ -110,6 +112,8 @@ class birdsEye():
         self.clear_flag = None
 
         # camera specs
+        self.map1 = None
+        self.map2 = None
         tmp = self.getParameters(self.sensor)
         self.res = [int(tmp[1][0]), int(tmp[1][1])]
         self.K = np.array([[tmp[2][0],0.0,tmp[2][2]], \
@@ -664,7 +668,7 @@ class birdsEye():
             cv2.putText(img, name.upper(), (x1 + 10, y1 + 50), font, 1.5, (0, 0, 0), 2)
 
         # Add frame index counter
-        cv2.putText(img, f'Frame {frame_index+1}/{total_frames}', (600, 80), font, 1.5, (255, 255, 255), 2)
+        cv2.putText(img, f'Frame {frame_index+1}/{total_frames}', (40, 1000), font, 1.5, (255, 255, 255), 2)
 
 
     def frameProcessPlotter(self, frame, rect, clicks_2D, april_3D):
@@ -736,7 +740,7 @@ class birdsEye():
         self.data = self.dbc.getFrom('x, y, z, q, u, a, t, rtk_status, radalt, save_loc, cam_time1, cam_time2, ins_time1, ins_time2', f'{self.sensor}_images_{self.db_name}')
 
         # Create rectification and projection maps
-        map1, map2 = cv2.initUndistortRectifyMap(self.K, self.D, None, self.K, (self.res[0], self.res[1]), cv2.CV_32FC1)
+        self.map1, self.map2 = cv2.initUndistortRectifyMap(self.K, self.D, None, self.K, (self.res[0], self.res[1]), cv2.CV_32FC1)
         self._2DFrameVertices = cv2.undistortPointsIter(np.array(self._2DFrameVertices,dtype = np.float64), self.K, self.D, None, self.K, (cv2.TERM_CRITERIA_COUNT | cv2.TERM_CRITERIA_EPS, 100, 0.003))
         self._2DFrameVertices = np.squeeze(self._2DFrameVertices).tolist()
         self._2DInnerBound = cv2.undistortPointsIter(np.array(self._2DInnerBound,dtype = np.float64), self.K, self.D, None, self.K, (cv2.TERM_CRITERIA_COUNT | cv2.TERM_CRITERIA_EPS, 100, 0.003))
@@ -749,9 +753,9 @@ class birdsEye():
             cv2.resizeWindow("Window", self.res[0], self.res[1])
 
         if self.manual:
-            self.manualProcess()
+            self.manualProcess(clks)
         else:
-            self.autoProcess()
+            self.autoProcess(clks)
 
         print('\nRTK Service Stats:')
         print(f'    Status 3 (Fix): {self.rtk_tracker[0]} of {sum(self.rtk_tracker)} ({self.rtk_tracker[0]/sum(self.rtk_tracker)})')
@@ -762,7 +766,17 @@ class birdsEye():
         print(f'roll, pitch, yaw adjustments: {self.rr}, {self.rp}, {self.ry} (mod: {self.mod})')
 
 
-    def manualProcess(self):
+    def manualProcess(self, clks):
+
+        if not hasattr(self, 'annotator_obj'):
+            self.annotator_obj = SLICAnnotator(
+                images=[frame[-5] for frame in self.data],
+                save_name=self.save_name,
+                K_matrix=self.K,
+                distortion_coefs=self.D,
+                src_res=(self.res[1], self.res[0])
+            )
+
         i = 0
         total_frames = len(self.data)
         while True:
@@ -787,7 +801,7 @@ class birdsEye():
                 img = cv2.imread(modified_img_path)
 
                 # rectify image distortion
-                rect = cv2.remap(img, map1, map2, interpolation=cv2.INTER_LINEAR)
+                rect = cv2.remap(img, self.map1, self.map2, interpolation=cv2.INTER_LINEAR)
 
                 if self.apriltags:
                     state, april_2D, tag_pose, rect = self.apriltag_detect(rect)
@@ -850,6 +864,8 @@ class birdsEye():
                             button_clicked = "next"
                         elif key == ord('a'):
                             button_clicked = "prev"
+                        elif key == ord('e'):
+                            button_clicked = "edit"
                         elif key == ord('q'):
                             button_clicked = "quit"
 
@@ -857,11 +873,14 @@ class birdsEye():
                         i = min(i + 1, total_frames - 1)
                     elif button_clicked == "prev":
                         i = max(i - 1, 0)
+                    elif button_clicked == "edit":
+                        self.annotator_obj.frame_index = i
+                        self.annotator_obj.frameProcess()
                     elif button_clicked == "quit":
                         break
 
 
-    def autoProcess(self):
+    def autoProcess(self, clks):
         for i, frame in enumerate(self.data):
             print(f'\nframe: {i+1} of {len(self.data)}')
             self.frame_index = i
@@ -883,7 +902,7 @@ class birdsEye():
                 img = cv2.imread(modified_img_path)
 
                 # rectify image distortion
-                rect = cv2.remap(img, map1, map2, interpolation=cv2.INTER_LINEAR)
+                rect = cv2.remap(img, self.map1, self.map2, interpolation=cv2.INTER_LINEAR)
 
                 if self.apriltags:
                     state, april_2D, tag_pose, rect = self.apriltag_detect(rect)
