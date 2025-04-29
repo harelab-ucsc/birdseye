@@ -1,8 +1,10 @@
 import os
 import glob2
 import tensorflow as tf
-from tile_loader import TileLoader, get_class_weights
+from tile_loader import TileLoader
+from tile_loader import get_class_weights as tile_weights
 from frame_loader import FrameLoader
+from frame_loader import get_class_weights as frame_weights
 from generator import generator  # assumes you have a generator() model builder defined
 import pickle
 
@@ -25,7 +27,9 @@ class BirdsEyeTrainer:
             include_negatives=True,
             balance_ratio=config.get("balance_ratio", 1.0)
         )
-        self.frame_loader = FrameLoader(image_size=(self.IMG_HEIGHT, self.IMG_WIDTH))
+        self.frame_loader = FrameLoader(
+            image_size=(self.IMG_HEIGHT, self.IMG_WIDTH))
+
 
     def build_file_lists(self):
         def collect_paths(dates, dirlists):
@@ -37,19 +41,21 @@ class BirdsEyeTrainer:
                     if os.path.isdir(full_path):
                         paths.append(full_path)
                         files.extend(tf.io.gfile.glob(os.path.join(full_path, "*.png")))
-            return sorted(files), paths
+            return sorted(files)
 
-        self.train_files, train_paths = collect_paths(self.config["train_dates"], self.config["train_dirlists"])
-        self.val_files, val_paths = collect_paths(self.config["val_dates"], self.config["val_dirlists"])
-
+        self.train_files = collect_paths(self.config["train_dates"], self.config["train_dirlists"])
+        self.val_files = collect_paths(self.config["val_dates"], self.config["val_dirlists"])
+        
+        print('\n\nComputing class weights... \n\n')
         if self.config["tiled"]:
-            print('\n\nComputing class weights... \n\nTraining weights:')
-            self.class_weights = get_class_weights(self.train_files, self.tile_loader)
-            print(self.class_weights)
-            print('\n\nValidation stats:')
-            tmp = get_class_weights(self.val_files, self.tile_loader)
-            print(tmp)
-            print('\n\n')
+            self.class_weights = tile_weights(self.train_files, self.tile_loader)
+            tmp = tile_weights(self.val_files, self.tile_loader)
+        else:
+            self.class_weights = frame_weights(self.train_files, self.frame_loader)
+            tmp = frame_weights(self.val_files, self.frame_loader)
+        print(f'Training weights:\n{self.class_weights}\n')
+        print(f'Validation stats:\n{tmp}\n\n')
+
 
     def setup_data(self):
         self.build_file_lists()
@@ -72,6 +78,7 @@ class BirdsEyeTrainer:
             repeat=False,
             augment=False
         )
+
 
     def build_model(self):
         if self.config["tiled"]:
@@ -114,6 +121,7 @@ class BirdsEyeTrainer:
             print(f"\nLoading weights from: {self.config['finetune_source']}\n")
             self.model.load_weights(self.config["finetune_source"])
 
+
     def train(self):
         
         callbacks = [
@@ -129,7 +137,8 @@ class BirdsEyeTrainer:
             )
         ]
 
-        print("\n\nBeginning Training...\n\n")
+        tmp = self.config["filename"]
+        print(f"\n\nBeginning training of model {tmp}...\n\n")
         history = self.model.fit(
             self.train_ds,
             validation_data=self.val_ds,
@@ -141,6 +150,7 @@ class BirdsEyeTrainer:
         )
         with open(self.config["filename"]+'_history.pkl', 'wb') as f:
             pickle.dump(history, f)
+
 
     def run(self):
         self.setup_data()
@@ -156,29 +166,46 @@ if __name__ == '__main__':
     label_file = 'labels.txt'
 
     train_dates = [
-        '2025_03_25', 
+        # '2025_03_25', 
         '2025_04_04',
         '2025_04_09',
+        '2025_04_23',
     ]
 
     val_dates = [
-        '2025_04_16'
+        '2025_04_16',
+        '2025_04_21',
+        '2025_04_23',
     ]
 
     train_dirlists = [
-        ['haybarn_original_01_01_rect', 'haybarn_eviltwin_01_01_rect'],
+        # ['haybarn_original_01_01_rect', 'haybarn_eviltwin_01_01_rect'],
         ['original_01_rect', 'original_02_rect', 'eviltwin_01_rect', 'eviltwin_02_rect', 'eviltwin_03_rect'],
         ['original_01_rect', 'original_02_rect', 'eviltwin_01_rect', 'eviltwin_02_rect'],
+        ['rosemary_rect'],  # first jacobs farm sample
     ]
 
     val_dirlists = [
-        ['pieranch_rect']
+        ['pieranch_rect'],
+        ['original_02_rect', 'original_03_rect'],
+        ['casfs_original', 'casfs_eviltwin'],
     ]
 
-    finetune_source = '/home/harey/birdseye/models/birdseye_960_600_021.weights.h5' # mobilenetv2
+    finetune = False
+    finetune_source = '/home/harey/birdseye/models/birdseye_960_600_032.weights.h5' 
 
-    IMG_HEIGHT = 1200
-    IMG_WIDTH = 1920
+    tiled = False
+
+    if tiled:
+        IMG_HEIGHT = 224
+        IMG_WIDTH = 224
+        BATCH_SIZE = 64
+        BUFFER_SIZE = 128
+    else:
+        IMG_HEIGHT = 600
+        IMG_WIDTH = 960
+        BATCH_SIZE = 9
+        BUFFER_SIZE = 36
 
     models_dir = os.path.join(os.path.expanduser('~'), 'birdseye', 'models')
     filename_prefix = os.path.join(models_dir, f'birdseye_{IMG_WIDTH}_{IMG_HEIGHT}')
@@ -187,7 +214,7 @@ if __name__ == '__main__':
 
     # Example usage
     config = {
-        "tiled": True,
+        "tiled": tiled,
         "data_root": data_root,
         "train_dates": train_dates,
         "train_dirlists": train_dirlists,
@@ -199,13 +226,11 @@ if __name__ == '__main__':
         "img_channels": 3,
         "tile_size": (224, 224),
         "edge_buffer": 81,
-        # "batch_size": 9,
-        # "buffer_size": 36,
-        "batch_size": 32,
-        "buffer_size": 128,
-        "balance_ratio": 0.1,
+        "batch_size": BATCH_SIZE,
+        "buffer_size": BUFFER_SIZE,
+        "balance_ratio": 0.05,
         "unfreeze_frac": 0.3,
-        "finetune": False,
+        "finetune": finetune,
         "finetune_source": finetune_source,
         "lr": 1e-5,
         "epochs": 50,

@@ -36,9 +36,9 @@ class TileLoader:
             with open(load_name, "r") as f:
                 for line in f:
                     _, path, data = line.strip().split()
-                    x_str, y_str, class_str = data.split(',')
+                    x_str, y_str, cls_str = data.split(',')
                     if os.path.basename(path) == os.path.basename(image_filename):
-                        labels.append((float(x_str), float(y_str), float(class_str)))
+                        labels.append((float(x_str), float(y_str), float(cls_str)))
         except Exception as e:
             print(f"      [Label Load Error] {e}")
         return labels
@@ -63,31 +63,34 @@ class TileLoader:
         tiles = []
         label_list = []
 
-        for y in range(buffer, h - buffer - th + 1, th):
-            for x in range(buffer, w - buffer - tw + 1, tw):
-                tile = image_np[y:y+th, x:x+tw]
-                tile_labels = self.search_labels(x, y, labels)
+        try:
+            for y in range(buffer, h - buffer - th + 1, th):
+                for x in range(buffer, w - buffer - tw + 1, tw):
+                    tile = image_np[y:y+th, x:x+tw]
+                    tile_labels = self.search_labels(x, y, labels)
 
-                if len(tile_labels) > 0:
-                    tiles.append(tile)
-                    if self.use_heatmaps:
-                        heatmap = np.zeros((th, tw, 1), dtype=np.float32)
-                        for lx, ly, cls_str in labels:
-                            if x <= lx < x+tw and y <= ly < y+th:
-                                px, py = int(lx - x), int(ly - y)
-                                heatmap[py, px, 0] = cls_str
-                        label_list.append(heatmap)
-                    else:
-                        label_list.append(1.0)
-                elif self.include_negatives:
-                    if random.random() < self.balance_ratio:
+                    if len(tile_labels) > 0:
                         tiles.append(tile)
                         if self.use_heatmaps:
-                            label_list.append(np.zeros((th, tw, 1), dtype=np.float32))
+                            heatmap = np.zeros((th, tw, 1), dtype=np.float32)
+                            for lx, ly, cls_str in labels:
+                                if x <= lx < x+tw and y <= ly < y+th:
+                                    px, py = int(lx - x), int(ly - y)
+                                    heatmap[py, px, 0] = cls_str
+                            label_list.append(heatmap)
                         else:
-                            label_list.append(0.0)
-                    else:
-                        continue
+                            label_list.append(1.0)
+                    elif self.include_negatives:
+                        if random.random() < self.balance_ratio:
+                            tiles.append(tile)
+                            if self.use_heatmaps:
+                                label_list.append(np.zeros((th, tw, 1), dtype=np.float32))
+                            else:
+                                label_list.append(0.0)
+                        else:
+                            continue
+        except Exception as e:
+            print(f'[Tiler Error] {e}')
         return tiles, label_list
 
 
@@ -208,7 +211,7 @@ def get_class_weights(file_list, tile_loader):
             print(f"[Weight Estimation Skipped] {image_path}: {e}")
             continue
 
-    print(f"\n\n📏 Final class sample counts: pos={total_pos}, neg={total_neg}")
+    print(f"\n📏 Final class sample counts: pos={total_pos}, neg={total_neg}\n")
     y_true = [0] * total_neg + [1] * total_pos
     weights = compute_class_weight('balanced', classes=np.unique(y_true), y=y_true)
     return {int(cl): float(w) for cl, w in zip(np.unique(y_true), weights)}

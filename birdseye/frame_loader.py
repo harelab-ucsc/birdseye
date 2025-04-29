@@ -3,11 +3,20 @@ import numpy as np
 import os
 import glob2
 import matplotlib.pyplot as plt
+from sklearn.utils.class_weight import compute_class_weight
+
 
 class FrameLoader:
-    def __init__(self, image_size=(224, 224), use_heatmaps=False):
+    def __init__(self, 
+        label_file='labels.txt', 
+        image_size=(224, 224), 
+        use_heatmaps=False
+        ):
+
+        self.label_file = label_file
         self.image_size = image_size
         self.use_heatmaps = use_heatmaps
+
 
     def load_labels(self, label_file, image_filename):
         """Parse labels from a text file. Each line: idx, filepath, [x,y,class]"""
@@ -25,6 +34,7 @@ class FrameLoader:
             print(f"      [Label Load Error] {e}")
         return labels
 
+
     def frame_label(self, image_np, labels):
         h, w = image_np.shape[:2]
         if self.use_heatmaps:
@@ -36,6 +46,7 @@ class FrameLoader:
             return heatmap
         else:
             return 1.0 if labels else 0.0
+
 
     def tf_frame_fn(self, image_path, label_file):
         def pyfunc(image_path_py):
@@ -64,6 +75,7 @@ class FrameLoader:
 
         return image, label
 
+
     def augment(self, image, label):
         image = tf.image.convert_image_dtype(image, tf.float32)
         m = tf.random.uniform([5])
@@ -81,6 +93,7 @@ class FrameLoader:
         image = tf.image.convert_image_dtype(image, tf.uint8)
         return image, tf.expand_dims(label, -1) if not self.use_heatmaps else label
 
+
     def build_dataset(self, file_list, label_file, batch_size, buffer_size=64, repeat=True, augment=False):
         ds = tf.data.Dataset.from_tensor_slices(tf.convert_to_tensor(file_list, dtype=tf.string))
         ds = ds.map(lambda path: self.tf_frame_fn(path, label_file), num_parallel_calls=tf.data.AUTOTUNE)
@@ -95,6 +108,7 @@ class FrameLoader:
 
         ds = ds.shuffle(buffer_size).batch(batch_size).prefetch(tf.data.AUTOTUNE)
         return ds
+
 
     def show_frame_batch(self, dataset, num_samples=6):
         for images, labels in dataset.take(1):
@@ -117,3 +131,40 @@ class FrameLoader:
 
                 plt.tight_layout()
                 plt.show()
+
+
+def get_class_weights(file_list, frame_loader):
+    """
+    Computes class weights accounting for:
+    - all tiled frames (positive or negative)
+    - balance_ratio governing negative sampling
+    """
+    total_pos = 0
+    total_neg = 0
+
+    for i, image_path in enumerate(file_list):
+        print(f'  Progress: {i+1}/{len(file_list)} images', end='\r')
+        try:
+            image_path_str = str(image_path)
+            image = tf.io.decode_png(tf.io.read_file(image_path_str), channels=3).numpy()
+            labels = frame_loader.load_labels(frame_loader.label_file, image_path_str)
+            label = frame_loader.frame_label(image, labels)
+
+            if frame_loader.use_heatmaps:
+                if np.any(label > 0):
+                    total_pos += 1
+                else:
+                    total_neg += 1
+            else:
+                if label == 1.0:
+                    total_pos += 1
+                else:
+                    total_neg += 1
+        except Exception as e:
+            print(f"[Weight Estimation Skipped] {image_path}: {e}")
+            continue
+
+    print(f"\n\n📏 Final class sample counts: pos={total_pos}, neg={total_neg}")
+    y_true = [0] * total_neg + [1] * total_pos
+    weights = compute_class_weight('balanced', classes=np.unique(y_true), y=y_true)
+    return {int(cl): float(w) for cl, w in zip(np.unique(y_true), weights)}

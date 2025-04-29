@@ -7,6 +7,10 @@ def detection_head(inputs, dim=256):
     x = tf.keras.layers.GlobalAveragePooling2D()(inputs)  # Convert feature map to vector
     x = tf.keras.layers.Dense(dim, activation="relu")(x)  # Fully connected layer
     x = tf.keras.layers.Dropout(0.5)(x)  # Regularization
+    x = tf.keras.layers.Dense(int(dim/2), activation="relu")(x)  # Fully connected layer
+    x = tf.keras.layers.Dropout(0.5)(x)  # Regularization
+    x = tf.keras.layers.Dense(int(dim/4), activation="relu")(x)  # Fully connected layer
+    x = tf.keras.layers.Dropout(0.5)(x)  # Regularization
     outputs = tf.keras.layers.Dense(1, activation="sigmoid")(x)  # Binary detection (0 or 1)
     return outputs
 
@@ -21,13 +25,13 @@ def heatmap_head(inputs, h, w):
 
 def pretrained_backbone(inp, unfreeze_frac=0.3, h=None, w=None, c=None, trainable=False):
     x = tf.keras.ops.cast(inp, "float32")
-    x = tf.keras.applications.mobilenet_v2.preprocess_input(x)
-    # x = tf.keras.applications.mobilenet_v3.preprocess_input(x)
+    # x = tf.keras.applications.mobilenet_v2.preprocess_input(x)
+    x = tf.keras.applications.mobilenet_v3.preprocess_input(x)
     # x = tf.keras.applications.efficientnet_v2.preprocess_input(x)
     # x = tf.keras.applications.xception.preprocess_input(x)
-    backbone = MobileNetV2(input_shape=(h, w, c), include_top=False, weights="imagenet")
+    # backbone = MobileNetV2(input_shape=(h, w, c), include_top=False, weights="imagenet")
     # backbone = MobileNetV3Small(input_shape=(h, w, c), include_top=False, weights="imagenet")
-    # backbone = MobileNetV3Large(input_shape=(h, w, c), include_top=False, weights="imagenet")
+    backbone = MobileNetV3Large(input_shape=(h, w, c), include_top=False, weights="imagenet")
     # backbone = Xception(input_shape=(h, w, c), include_top=False, weights="imagenet")
     # backbone = EfficientNetV2B3(input_shape=(h, w, c), include_top=False, weights="imagenet")
 
