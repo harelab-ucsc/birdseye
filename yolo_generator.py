@@ -34,8 +34,8 @@ def yolo_model(input_shape=(416, 416, 3), num_classes=1, l2_reg=0.01, dropout_ra
     )(x)
     x = layers.Dropout(dropout_rate)(x)
 
-    # Output layer: [x_center, y_center, width, height, objectness, class_probs...]
-    output = layers.Dense(5 + num_classes, activation='sigmoid')(x)
+    output = layers.Dense(1, activation='sigmoid')(x)
+
 
     model = models.Model(inputs=base_model.input, outputs=output)
 

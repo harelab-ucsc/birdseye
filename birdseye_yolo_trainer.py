@@ -91,20 +91,20 @@ class BirdsEyeTrainer:
     
     def build_model(self):
         mode = self.config.get("mode")
-        input_shape = (
-            self.TILE_HEIGHT, self.TILE_WIDTH, self.IMG_CHANNELS
-            if mode == "tile"
-            else (self.IMG_HEIGHT, self.IMG_WIDTH, self.IMG_CHANNELS)
-        )
 
-        print(f"Building model for mode: {mode.upper()}...")
+        if mode == "tile":
+            input_shape = (self.TILE_HEIGHT, self.TILE_WIDTH, self.IMG_CHANNELS)
+        else:
+            input_shape = (self.IMG_HEIGHT, self.IMG_WIDTH, self.IMG_CHANNELS)
+
+        print(f" Building model for mode: {mode.upper()}...")
 
         self.model = yolo_model(
             input_shape=input_shape,
             num_classes=self.config["num_classes"]
         )
 
-        # Choose loss based on mode
+        # Choose loss and metrics based on mode
         if mode == "yolo":
             loss_fn = tf.keras.losses.BinaryCrossentropy(from_logits=False)
             metrics = [
@@ -113,9 +113,9 @@ class BirdsEyeTrainer:
                 tf.keras.metrics.Precision(thresholds=0.3, name="prec"),
                 tf.keras.metrics.Recall(thresholds=0.3, name="rec"),
                 tf.keras.metrics.AUC(name="roc_auc"),
-                tf.keras.metrics.AUC(curve="PR", name="pr_auc"),
+                tf.keras.metrics.AUC(curve="PR", name="pr_auc")
             ]
-        else:  # tile or frame
+        else:
             loss_fn = tf.keras.losses.BinaryFocalCrossentropy(
                 alpha=self.config.get("alpha", 0.25),
                 gamma=self.config.get("gamma", 2.0),
@@ -127,7 +127,7 @@ class BirdsEyeTrainer:
                 tf.keras.metrics.Precision(thresholds=0.5, name="prec"),
                 tf.keras.metrics.Recall(thresholds=0.5, name="rec"),
                 tf.keras.metrics.AUC(name="roc_auc"),
-                tf.keras.metrics.AUC(curve="PR", name="pr_auc"),
+                tf.keras.metrics.AUC(curve="PR", name="pr_auc")
             ]
 
         self.model.compile(
@@ -139,7 +139,7 @@ class BirdsEyeTrainer:
         self.model.summary()
 
         if self.config.get("finetune"):
-            print(f"\ngit  Loading weights from: {self.config['finetune_source']}\n")
+            print(f"\n Loading weights from: {self.config['finetune_source']}\n")
             self.model.load_weights(self.config["finetune_source"])
 
 
@@ -216,71 +216,77 @@ class BirdsEyeTrainer:
         self.train()
 
 if __name__ == '__main__':
-    os.environ["CUDA_VISIBLE_DEVICES"] = "1"
-
-    data_root = os.path.join(os.path.expanduser('~'), 'birdseye_CNN_data')
-    label_file = 'labels.txt'
-
-    train_dates = [
-        '2025_03_25', 
-        '2025_04_04',
-        '2025_04_09',
-    ]
-
-    val_dates = [
-        '2025_04_16'
-    ]
-
-    train_dirlists = [
-        ['haybarn_original_01_01_rect', 'haybarn_eviltwin_01_01_rect'],
-        ['original_01_rect', 'original_02_rect', 'eviltwin_01_rect', 'eviltwin_02_rect', 'eviltwin_03_rect'],
-        ['original_01_rect', 'original_02_rect', 'eviltwin_01_rect', 'eviltwin_02_rect'],
-    ]
-
-    val_dirlists = [
-        ['pieranch_rect']
-    ]
-
-    finetune_source = '/home/harey/birdseye/models/birdseye_960_600_021.weights.h5'
-    IMG_HEIGHT = 1200
-    IMG_WIDTH = 1920
-
-    models_dir = os.path.join(os.path.expanduser('~'), 'birdseye', 'models')
-    filename_prefix = os.path.join(models_dir, f'birdseye_{IMG_WIDTH}_{IMG_HEIGHT}')
-    val = str(len(glob2.glob(os.path.join(models_dir, filename_prefix+'*.weights.h5')))+1).rjust(3,'0')
-    filename = filename_prefix + f'_{val}'
-
-    TRAINING_MODE = "yolo"
-
-    config = {
-        "mode": TRAINING_MODE,
-        "data_root": data_root,
-        "train_dates": train_dates,
-        "train_dirlists": train_dirlists,
-        "val_dates": val_dates,
-        "val_dirlists": val_dirlists,
-        "label_file": label_file,
-        "img_height": 416 if TRAINING_MODE == "yolo" else 1200,
-        "img_width": 416 if TRAINING_MODE == "yolo" else 1920,
-        "img_channels": 3,
-        "tile_size": (224, 224),
-        "edge_buffer": 81,
-        "batch_size": 4,
-        "buffer_size": 16,
-        "unfreeze_frac": 0.3,
-        "finetune": False,
-        "finetune_source": finetune_source,
-        "lr": 1e-4 if TRAINING_MODE == "yolo" else 1e-5,
-        "epochs": 50,
-        "alpha": 0.3,
-        "gamma": 2.0,
-        "thresh": 0.5,
-        "logits": False,
-        "monitor": "val_loss",
-        "num_classes": 2,
-        "filename": filename + f"_{TRAINING_MODE}"
-
-    }
-
+    from config_birdseye import get_config
+    config = get_config(mode="tile")
     trainer = BirdsEyeTrainer(config)
     trainer.run()
+
+# if __name__ == '__main__':
+#     os.environ["CUDA_VISIBLE_DEVICES"] = "1"
+
+#     data_root = os.path.join(os.path.expanduser('~'), 'birdseye_CNN_data')
+#     label_file = 'labels.txt'
+
+#     train_dates = [
+#         '2025_03_25', 
+#         '2025_04_04',
+#         '2025_04_09',
+#     ]
+
+#     val_dates = [
+#         '2025_04_16'
+#     ]
+
+#     train_dirlists = [
+#         ['haybarn_original_01_01_rect', 'haybarn_eviltwin_01_01_rect'],
+#         ['original_01_rect', 'original_02_rect', 'eviltwin_01_rect', 'eviltwin_02_rect', 'eviltwin_03_rect'],
+#         ['original_01_rect', 'original_02_rect', 'eviltwin_01_rect', 'eviltwin_02_rect'],
+#     ]
+
+#     val_dirlists = [
+#         ['pieranch_rect']
+#     ]
+
+#     finetune_source = '/home/harey/birdseye/models/birdseye_960_600_021.weights.h5'
+#     IMG_HEIGHT = 1200
+#     IMG_WIDTH = 1920
+
+#     models_dir = os.path.join(os.path.expanduser('~'), 'birdseye', 'models')
+#     filename_prefix = os.path.join(models_dir, f'birdseye_{IMG_WIDTH}_{IMG_HEIGHT}')
+#     val = str(len(glob2.glob(os.path.join(models_dir, filename_prefix+'*.weights.h5')))+1).rjust(3,'0')
+#     filename = filename_prefix + f'_{val}'
+
+#     TRAINING_MODE = "yolo"
+
+#     config = {
+#         "mode": TRAINING_MODE,
+#         "data_root": data_root,
+#         "train_dates": train_dates,
+#         "train_dirlists": train_dirlists,
+#         "val_dates": val_dates,
+#         "val_dirlists": val_dirlists,
+#         "label_file": label_file,
+#         "img_height": 416 if TRAINING_MODE == "yolo" else 1200,
+#         "img_width": 416 if TRAINING_MODE == "yolo" else 1920,
+#         "img_channels": 3,
+#         "tile_size": (224, 224),
+#         "edge_buffer": 81,
+#         "batch_size": 4,
+#         "buffer_size": 16,
+#         "unfreeze_frac": 0.3,
+#         "finetune": False,
+#         "finetune_source": finetune_source,
+#         "lr": 1e-4 if TRAINING_MODE == "yolo" else 1e-5,
+#         "epochs": 50,
+#         "alpha": 0.3,
+#         "gamma": 2.0,
+#         "thresh": 0.5,
+#         "logits": False,
+#         "monitor": "val_loss",
+#         "num_classes": 2,
+#         "filename": filename + f"_{TRAINING_MODE}"
+
+#     }
+
+#     trainer = BirdsEyeTrainer(config)
+#     trainer.run()
