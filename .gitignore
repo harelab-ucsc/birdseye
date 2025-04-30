@@ -6,3 +6,4 @@
 launch/__pycache__/*
 benchmark/build/*
 birdseye/__pycache__/*
+__pycache__/*
