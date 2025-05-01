@@ -10,3 +10,4 @@ birdseye/venv/*
 *.zip
 venv/*
 models/*
+scripts/__pycache__/*

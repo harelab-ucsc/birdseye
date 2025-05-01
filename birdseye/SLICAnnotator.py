@@ -33,7 +33,7 @@ class SLICAnnotator:
         self.K = kwargs.pop('K_matrix', np.eye(3))
         self.rle = kwargs.pop('rle', True)
         self.src_res = kwargs.pop('src_res', (1200,1920))
-        self.mask_res = kwargs.pop('mask_res', (384, 512))
+        self.mask_res = kwargs.pop('mask_res', (600, 960))
         self.mask = np.zeros(self.mask_res, dtype='uint8')
         self.draw = False
 
@@ -144,14 +144,14 @@ class SLICAnnotator:
             key = cv2.waitKey(1) & 0xFF
 
             # client-side commands
-            if key == ord('1'):
+            if key == ord('a'):
                 self.frame_index -= 1
                 self.monitor_frame_index()
                 self.load_frame()
                 clone = self.image.copy()
                 print('previous frame: ', self.images[self.frame_index])
 
-            elif key == ord('2'):
+            elif key == ord('d'):
                 self.frame_index += 1
                 self.monitor_frame_index()
                 self.load_frame()
@@ -168,11 +168,11 @@ class SLICAnnotator:
                 cmds.append(['write', self.mask])
                 print('write to channel')
 
-            elif key == ord('d'):
+            elif key == ord('2'):
                 cmds.append(['next',])
                 # print('next channel')
 
-            elif key == ord('a'):
+            elif key == ord('1'):
                 cmds.append(['prev',])
                 # print('previous channel')
 
@@ -193,9 +193,9 @@ class SLICAnnotator:
                 # print('load mask')
 
             # Quit command
-            elif key == ord("q"):
-                print('quit')
-                sys.exit()
+            elif key == ord('f'):
+                print('    [MASK EDITOR] Quitting edit mode')
+                break
 
             self._mask.update(cmds)
 
@@ -245,7 +245,7 @@ class offlineSLICAnnotator(SLICAnnotator):
             self._mask.update([['write', self.mask]])
             # cv2.imshow("image", mark_boundaries(img_as_float(self.image), self.segments, color=(0.5,0.5,0.5)))
             cv2.namedWindow("Click", cv2.WINDOW_NORMAL)
-            cv2.resizeWindow("Click", 512, 384)
+            cv2.resizeWindow("Click", 960, 600)
             cv2.imshow("Click", self.mask)
             key = cv2.waitKey(30)
             self._mask.update([['next',]]) # need to add class adjustment capability
@@ -314,6 +314,14 @@ class SLICTranslator(SLICAnnotator):
     def translate_dataset(self):
         for i in range(len(self.images)):
             self.frameProcess()
+
+
+# class ClickAnnotator(SLICAnnotator):
+#     def __init__(self, **kwargs):
+#         super().__init__(**kwargs)
+#
+#
+#     def
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()

@@ -161,6 +161,8 @@ class birdsEye():
         self._3DFrameVertices = None
         self._3DInnerBound = None
         self._3DOuterBound = None
+        self.TILE_WIDTH = 224
+        self.TILE_HEIGHT = 224
 
         if self.plot:
             self.fig = plt.figure()
@@ -182,7 +184,7 @@ class birdsEye():
 
         if self.detect:
             root = os.path.join(os.path.expanduser('~'),'ros2_ws/src/birdseye/models')
-            default = os.path.join(root, 'birdseye_960_600_009.weights.h5')
+            default = os.path.join(root, 'birdseye_960_600_025.weights.h5')
             tmp = kwargs.pop('model_path', None)
             if tmp is not None:
                  self.model_path = tmp
@@ -434,7 +436,7 @@ class birdsEye():
         img = tf.convert_to_tensor(img)
         img = tf.image.resize(img, size=(self.IMG_HEIGHT,self.IMG_WIDTH))
         ret_raw = self.model.predict(tf.expand_dims(img, axis=0), verbose=0)
-        ret_raw = ret_raw[0][0]**1.1
+        ret_raw = ret_raw[0][0]#**1.1
         print(f'  detection results: {ret_raw}     -->     ', end=' ')
         if ret_raw < 0.5:
             ret = 0.0
@@ -489,7 +491,7 @@ class birdsEye():
                 pickle.dump(out_dict, f)
 
 
-    def annotator(self, outer, inner, rect, frame, ret):
+    def annotator(self, outer, inner, rect, frame, ret=None):
         if self.RTK_watchdog:
             if len(outer) > 0:
                 if len(inner) > 0:
@@ -497,25 +499,25 @@ class birdsEye():
                     for pt in inner:
                         self.annotate(frame[-5], [pt[0], pt[1], 1.0])
                     if self.plot:
-                        cv2.putText(rect, 'Label:', (1300,80), \
-                            cv2.FONT_HERSHEY_SIMPLEX, 3, (0, 255, 255), 3)
+                        cv2.putText(rect, 'Label:', (1600,80), \
+                            cv2.FONT_HERSHEY_SIMPLEX, 1.5, (0, 255, 255), 2)
                         cv2.putText(rect, '1.0', (1750,80), \
-                            cv2.FONT_HERSHEY_SIMPLEX, 3, (0, 255, 0), 3)
+                            cv2.FONT_HERSHEY_SIMPLEX, 1.5, (0, 255, 0), 2)
                 elif len(inner) == 0:
                     # print('    click detected in frame buffer region; "Test"')
                     # self.annotate(frame[-5], "Test")
                     if self.plot:
-                        cv2.putText(rect, 'Label:', (1300,80), \
-                            cv2.FONT_HERSHEY_SIMPLEX, 3, (0, 255, 255), 3)
-                        cv2.putText(rect, 'Test', (1600,80), \
-                            cv2.FONT_HERSHEY_SIMPLEX, 3, (0, 255, 255), 3)
+                        cv2.putText(rect, 'Label:', (1600,80), \
+                            cv2.FONT_HERSHEY_SIMPLEX, 1.5, (0, 255, 255), 2)
+                        cv2.putText(rect, 'Test', (1750,80), \
+                            cv2.FONT_HERSHEY_SIMPLEX, 1.5, (0, 255, 255), 2)
             else:
                 # self.annotate(frame[-5], 0.0)
                 if self.plot:
                     cv2.putText(rect, 'Label:', (1400,80), \
-                        cv2.FONT_HERSHEY_SIMPLEX, 3, (0, 255, 255), 3)
+                        cv2.FONT_HERSHEY_SIMPLEX, 1.5, (0, 255, 255), 2)
                     cv2.putText(rect, '0.0', (1750,80), \
-                        cv2.FONT_HERSHEY_SIMPLEX, 3, (0, 0, 255), 3)
+                        cv2.FONT_HERSHEY_SIMPLEX, 1.5, (0, 0, 255), 2)
 
             if self.apriltags:
                 if april_2D is not None:
@@ -523,7 +525,7 @@ class birdsEye():
                 else:
                     self.annotate(frame[-5], 0.0, save_name=os.path.join(self.img_dir,'april_labels'))
 
-            if self.detect:
+            if ret:
                 self.annotate(frame[-5], ret, save_name=os.path.join(self.img_dir,'results'))
 
         else:
@@ -668,17 +670,33 @@ class birdsEye():
             cv2.putText(img, name.upper(), (x1 + 10, y1 + 50), font, 1.5, (0, 0, 0), 2)
 
         # Add frame index counter
-        cv2.putText(img, f'Frame {frame_index+1}/{total_frames}', (40, 1000), font, 1.5, (255, 255, 255), 2)
+        cv2.putText(img, f'Frame {frame_index+1}/{total_frames}', (40, 1120), font, 1.5, (255, 255, 255), 2)
 
 
     def frameProcessPlotter(self, frame, rect, clicks_2D, april_3D):
-        rect = cv2.rectangle(rect, \
-             [int(i) for i in self._2DInnerBound[0]], \
-             [int(i) for i in self._2DInnerBound[2]], \
-             (0,255,255), \
-             2)
-        cv2.putText(rect, f'{frame[-1]}', (30,80), \
-            cv2.FONT_HERSHEY_SIMPLEX, 3, (0, 255, 0), 3)
+        # rect = cv2.rectangle(rect, \
+        #      [int(i) for i in self._2DInnerBound[0]], \
+        #      [int(i) for i in self._2DInnerBound[2]], \
+        #      (0,255,255), \
+        #      2)
+
+        fh = int(self._2DInnerBound[2][1] - self._2DInnerBound[0][1])
+        fw = int(self._2DInnerBound[2][0] - self._2DInnerBound[0][0])
+        num_tiles_overlap_y = math.ceil(fh/self.TILE_HEIGHT)
+        num_tiles_overlap_x = math.ceil(fw/self.TILE_WIDTH)
+        delta_y = math.ceil(self.TILE_HEIGHT - fh/num_tiles_overlap_y)
+        delta_x = math.ceil(self.TILE_WIDTH - fw/num_tiles_overlap_x)
+        for y in range(num_tiles_overlap_y):
+            for x in range(num_tiles_overlap_x):
+                tmp_x = int(self._2DInnerBound[0][0] + x*(self.TILE_WIDTH-delta_x-1))
+                tmp_y = int(self._2DInnerBound[0][1] + y*(self.TILE_HEIGHT-delta_y-1))
+                rect = cv2.rectangle(rect, \
+                    [tmp_x, tmp_y], \
+                    [tmp_x+self.TILE_WIDTH-1, tmp_y+self.TILE_HEIGHT-1], \
+                    (255,0,0), 2)
+
+        cv2.putText(rect, f'{frame[-1]}', (10,50), \
+            cv2.FONT_HERSHEY_SIMPLEX, 1.5, (0, 255, 0), 2)
         if frame[7] == 3:
             color = (0,255,0)
         elif frame[7] == 2:
@@ -808,10 +826,9 @@ class birdsEye():
                     april_3D = self._2Dto3D(april_2D)
                     if april_3D is not None:
                         self.april_3D += april_3D
-
+                ret = None
                 if self.detect:
                     ret, ret_raw = self.detector(rect)
-                    self.annotate(frame[-5], ret, save_name=os.path.join(self.img_dir,'results'))
 
                 clicks_2D = self._3Dto2D(clicks)
                 inner, i_ind, _ = self._2DBoxCheck(clicks_2D, box='inner')
@@ -825,7 +842,7 @@ class birdsEye():
                     self.get_stats(clicks, click_ind, april_2D, april_3D, clicks_2D, clicks_3D)
 
                 # annotation step
-                self.annotator(outer, inner, rect, frame, ret)
+                self.annotator(outer, inner, rect, frame, ret=ret)
 
                 # optional plotting step
                 if self.plot:
@@ -838,11 +855,11 @@ class birdsEye():
                         c1 = (0, tmp*vec[1] + bot[1], tmp*vec[2] + bot[2])
                         c2 = (0, ret*100*vec[1] + bot[1], ret*100*vec[2] + bot[2])
                         cv2.putText(rect, f'CNN: ', (950,1190), \
-                            cv2.FONT_HERSHEY_SIMPLEX, 3, (0, 255, 255), 3)
+                            cv2.FONT_HERSHEY_SIMPLEX, 1.5, (0, 255, 255), 2)
                         cv2.putText(rect, f' {ret_raw:.04f} -> ', (1150,1190), \
-                            cv2.FONT_HERSHEY_SIMPLEX, 3, c1, 3)
+                            cv2.FONT_HERSHEY_SIMPLEX, 1.5, c1, 2)
                         cv2.putText(rect, f'{ret}', (1750,1190), \
-                            cv2.FONT_HERSHEY_SIMPLEX, 3, c2, 3)
+                            cv2.FONT_HERSHEY_SIMPLEX, 1.5, c2, 2)
 
                     self.fig.canvas.draw_idle()
                     plt.pause(0.01)
@@ -876,6 +893,9 @@ class birdsEye():
                     elif button_clicked == "edit":
                         self.annotator_obj.frame_index = i
                         self.annotator_obj.frameProcess()
+                        cv2.destroyWindow("Click")
+                        cv2.destroyWindow("image")
+                        cv2.destroyWindow("mask")
                     elif button_clicked == "quit":
                         break
 
@@ -912,19 +932,18 @@ class birdsEye():
 
                 if self.detect:
                     ret, ret_raw = self.detector(rect)
-                    self.annotate(frame[-5], ret, save_name=os.path.join(self.img_dir,'results'))
                     if self.plot:
                         bot = (0, 0, 255)
                         vec = (0, 2.55, -2.55)
                         tmp = int(ret_raw*100)
                         c1 = (0, tmp*vec[1] + bot[1], tmp*vec[2] + bot[2])
                         c2 = (0, ret*100*vec[1] + bot[1], ret*100*vec[2] + bot[2])
-                        cv2.putText(rect, f'CNN: ', (950,1190), \
-                            cv2.FONT_HERSHEY_SIMPLEX, 3, (0, 255, 255), 3)
-                        cv2.putText(rect, f' {ret_raw:.04f} -> ', (1150,1190), \
-                            cv2.FONT_HERSHEY_SIMPLEX, 3, c1, 3)
-                        cv2.putText(rect, f'{ret}', (1750,1190), \
-                            cv2.FONT_HERSHEY_SIMPLEX, 3, c2, 3)
+                        cv2.putText(rect, f'CNN: ', (1400,1190), \
+                            cv2.FONT_HERSHEY_SIMPLEX, 2, (0, 255, 255), 2)
+                        cv2.putText(rect, f' {ret_raw:.04f} -> ', (1525,1190), \
+                            cv2.FONT_HERSHEY_SIMPLEX, 1.5, c1, 2)
+                        cv2.putText(rect, f'{ret}', (1815,1190), \
+                            cv2.FONT_HERSHEY_SIMPLEX, 2, c2, 2)
 
                 clicks_2D = self._3Dto2D(clicks)
                 inner, i_ind, _ = self._2DBoxCheck(clicks_2D, box='inner')

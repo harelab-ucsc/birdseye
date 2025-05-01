@@ -2,6 +2,9 @@ import numpy as np
 import pickle as pkl
 from pycocotools.mask import *
 import matplotlib.pyplot as plt
+from PIL import Image
+import os
+
 import pdb
 
 class Mask:
@@ -100,7 +103,7 @@ class Mask:
 
 
     def export_classes(self):
-        onehot = [[0.0]*self.num_classes]*self.num_channels
+        onehot = np.zeros((self.num_channels, self.num_classes))
         for i, cl in enumerate(self.classes):
             onehot[i][cl] = 1.0
         onehot = np.array(onehot).T
@@ -140,3 +143,100 @@ class Mask:
                 f.close()
             except FileNotFoundError:
                 pass
+
+
+class PointMask(Mask):
+    def __init__(self, annotation_txt, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.annotation_txt = annotation_txt
+        self.annotations = self._parse_annotations()
+
+    def _parse_annotations(self):
+        annotations = {}
+        with open(self.annotation_txt, 'r') as f:
+            for line in f:
+                # Each line: frame_index, /path/to/image/file, x, y, class
+                parts = line.strip().split(',')
+                if len(parts) != 5:
+                    continue  # skip malformed lines
+                frame_index, img_path, data = parts
+                x, y, class_str = data.split(',')
+                frame_index = int(frame_index)
+                x, y = int(float(x)), int(float(y))  # allow float coordinates
+                class_ = int(class_str)
+                if frame_index not in annotations:
+                    annotations[frame_index] = []
+                annotations[frame_index].append({
+                    'x': x,
+                    'y': y,
+                    'class': class_str,
+                    'img_path': img_path.strip()
+                })
+        return annotations
+
+    def load(self, frame_index):
+        """Populate mask for the given frame index based on point annotations."""
+        # Clear previous masks
+        self.channels.fill(0)
+        self.classes.fill(0)
+
+        if frame_index not in self.annotations:
+            print(f"No annotations found for frame {frame_index}")
+            return
+
+        point_data = self.annotations[frame_index]
+
+        # Use class IDs to select channels, or spread across sequential channels
+        channel_map = {}  # Map class_id to channel index
+        channel_counter = 0
+
+        for point in point_data:
+            x, y, cls = point['x'], point['y'], point['class']
+            if cls not in channel_map:
+                if channel_counter >= self.num_channels:
+                    print(f"Warning: exceeded max number of channels ({self.num_channels})")
+                    continue
+                channel_map[cls] = channel_counter
+                self.classes[channel_counter] = cls
+                channel_counter += 1
+
+            ch = channel_map[cls]
+
+            if 0 <= x < self.res[1] and 0 <= y < self.res[0]:
+                self.channels[y, x, ch] = 255  # Use 255 for visualization compatibility
+            else:
+                print(f"Point ({x}, {y}) out of bounds for resolution {self.res}")
+
+        print(f"Loaded {len(point_data)} points for frame {frame_index}")
+
+    def get_image_path(self, frame_index):
+        """Get image path associated with a frame index (optional helper)."""
+        if frame_index in self.annotations and self.annotations[frame_index]:
+            return self.annotations[frame_index][0]['img_path']
+        return None
+
+    def show_overlay(self, frame_index, image=None):
+        """Visualize the overlaid masks on the image."""
+        img_path = self.get_image_path(frame_index)
+
+        if image is None and img_path and os.path.exists(img_path):
+            image = np.array(Image.open(img_path).resize((self.res[1], self.res[0])))
+
+        if image is None:
+            image = np.zeros((*self.res, 3), dtype=np.uint8)
+
+        mask_sum = np.sum(self.channels, axis=2)
+        mask_overlay = np.clip(mask_sum, 0, 255).astype(np.uint8)
+
+        plt.figure(figsize=(10, 5))
+        plt.subplot(1, 2, 1)
+        plt.imshow(image)
+        plt.title("Original Image")
+        plt.axis('off')
+
+        plt.subplot(1, 2, 2)
+        plt.imshow(image)
+        plt.imshow(mask_overlay, cmap='jet', alpha=0.5)
+        plt.title("Overlay with Mask Points")
+        plt.axis('off')
+        plt.show()

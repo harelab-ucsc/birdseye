@@ -11,12 +11,19 @@ from rclpy.serialization import deserialize_message, serialize_message
 from scipy.spatial.transform import Rotation as R
 from scipy.optimize import linear_sum_assignment
 import matplotlib.pyplot as plt
+from matplotlib.path import Path
 from mpl_toolkits.mplot3d import Axes3D
-from cv_bridge import CvBridge
 from sklearn.gaussian_process import GaussianProcessRegressor
 from sklearn.gaussian_process.kernels import RBF, Matern, WhiteKernel, RationalQuadratic, ConstantKernel as C
 from sklearn.preprocessing import StandardScaler
+from sklearn.model_selection import GridSearchCV
+from scipy.spatial import ConvexHull
 
+import torch
+import gpytorch
+from torch.utils.data import TensorDataset, DataLoader
+
+import joblib
 import cv2
 import os
 import json
@@ -33,13 +40,33 @@ def quat2euler(qx, qy, qz, qw, degrees=False):
     return euler
 
 
+class SVGPModel(gpytorch.models.ApproximateGP):
+    def __init__(self, inducing_points):
+        variational_distribution = gpytorch.variational.CholeskyVariationalDistribution(inducing_points.size(0))
+        variational_strategy = gpytorch.variational.VariationalStrategy(
+            self, inducing_points, variational_distribution, learn_inducing_locations=True
+        )
+        super().__init__(variational_strategy)
+        self.mean_module = gpytorch.means.ConstantMean()
+        self.covar_module = gpytorch.kernels.ScaleKernel(gpytorch.kernels.RBFKernel())
+
+    def forward(self, x):
+        mean_x = self.mean_module(x)
+        covar_x = self.covar_module(x)
+        return gpytorch.distributions.MultivariateNormal(mean_x, covar_x)
+
+
 class BagProcessor:
-    def __init__(self, input_bags, ds_dir, radalt_topic, ins_topic, ds_rate=200):
+    def __init__(self, input_bags, ds_dir, radalt_topic, ins_topic, tune_gp, load_gp, ds_rate=1):
         self.input_bags = input_bags
         self.bag_index = 0
         self.radalt_topic = radalt_topic
         self.ins_topic = ins_topic
         self.ds_dir = ds_dir
+        if not os.path.isdir(self.ds_dir):
+            os.makedirs(self.ds_dir, exist_ok=True)
+        self.tune_gp = tune_gp
+        self.load_gp = load_gp
         self.ds_rate = ds_rate
         self.count = 0
         self.radalt = None
@@ -88,6 +115,14 @@ class BagProcessor:
             return yaml.safe_load(file)
 
 
+    def load_trained_gp(self):
+        print("Loading saved GP model and scalers...")
+        self.GP = joblib.load(os.path.join(self.ds_dir, "trained_gp_model.pkl"))
+        self.scaler_X = joblib.load(os.path.join(self.ds_dir, "scaler_X.pkl"))
+        self.scaler_Y = joblib.load(os.path.join(self.ds_dir, "scaler_Y.pkl"))
+        print("  GP model and scalers loaded.")
+
+
     def get_timestamp(self, msg):
         ts = msg.header.stamp
         ts = int(ts.sec * 1e9 + ts.nanosec)
@@ -132,21 +167,122 @@ class BagProcessor:
         self.train_ds.append([self.east, self.north])
 
 
+    def tune_GP_hyperparameters(self):
+        print("Starting GP hyperparameter tuning...")
+
+        x_tmp = np.array(self.train_ds)
+        y_tmp = np.array(self.DEM)
+        y_tmp = y_tmp[:,-1].reshape(-1, 1)
+
+        self.scaler_X.fit(x_tmp)
+        self.scaler_Y.fit(y_tmp)
+        x_tmp = self.scaler_X.transform(x_tmp)
+        y_tmp = self.scaler_Y.transform(y_tmp)
+
+        # Define kernel options for grid search
+        kernel_options = [
+            C(1.0) * RBF(length_scale=ls) for ls in [0.001, 0.01, 0.1, 0.5, 1.0, 10.0, 100.0]
+        ] + [
+            C(1.0) * RationalQuadratic(length_scale=ls, alpha=alpha)
+            for ls in [0.001, 0.01, 0.1, 1.0, 10.0, 100.0] for alpha in [1e-7, 1e-6, 1e-5, 1e-4]
+        ] + [
+            C(1.0) * Matern(length_scale=ls, nu=nu)
+            for ls in [0.001, 0.01, 0.1, 1.0, 10.0, 100.0] for nu in [0.5, 1.5, 2.5, 3.5]
+        ]
+
+        param_grid = {'kernel': kernel_options}
+
+        gp = GaussianProcessRegressor(n_restarts_optimizer=3, optimizer='fmin_l_bfgs_b')
+        search = GridSearchCV(gp, param_grid, cv=3, scoring='neg_mean_squared_error', n_jobs=-1, verbose=3)
+
+        search.fit(x_tmp, y_tmp)
+
+        print("Best kernel found:", search.best_params_['kernel'])
+        print("Best score:", -search.best_score_)
+
+        # Assign the best model to self.GP
+        self.GP = search.best_estimator_
+
+
     def GP_train(self):
         x_tmp = np.array(self.train_ds)
         y_tmp = np.array(self.DEM)
         y_tmp = y_tmp[:,-1].reshape(-1,1)
         start = time.time()
         self.scaler_X.fit(x_tmp)
-        # self.scaler_Y.fit(y_tmp)
+        self.scaler_Y.fit(y_tmp)
         x_tmp = self.scaler_X.transform(x_tmp)
-        # y_tmp = self.scaler_Y.transform(y_tmp)
+        y_tmp = self.scaler_Y.transform(y_tmp)
         print('  training GP...')
         print(f'    initial performance: {self.GP.score(x_tmp, y_tmp)}, {self.GP.kernel}')
         start = time.time()
         self.GP.fit(x_tmp, y_tmp)
         print(f'    optimized performance: {self.GP.score(x_tmp, y_tmp)}, {self.GP.kernel_}')
         print(f'    took {time.time()-start:.04f}s')
+
+
+    def train_svgp(self, epochs=100, batch_size=128):
+        print("Training Sparse GP with GPyTorch...")
+
+        x_tmp = torch.tensor(self.train_ds, dtype=torch.float32)
+        y_tmp = torch.tensor(np.array(self.DEM)[:,-1], dtype=torch.float32).view(-1)
+
+        # Normalize
+        self.scaler_X.fit(x_tmp)
+        x_tmp = torch.tensor(self.scaler_X.transform(x_tmp), dtype=torch.float32)
+
+        # Setup model
+        inducing_points = x_tmp[:500]  # Take first 500 as inducing
+        model = SVGPModel(inducing_points)
+        likelihood = gpytorch.likelihoods.GaussianLikelihood()
+
+        model.train()
+        likelihood.train()
+
+        optimizer = torch.optim.Adam([
+            {'params': model.parameters()},
+            {'params': likelihood.parameters()}
+        ], lr=0.01)
+
+        mll = gpytorch.mlls.VariationalELBO(likelihood, model, y_tmp.numel())
+
+        dataset = TensorDataset(x_tmp, y_tmp)
+        loader = DataLoader(dataset, batch_size=batch_size, shuffle=True)
+
+        for epoch in range(epochs):
+            for x_batch, y_batch in loader:
+                optimizer.zero_grad()
+                output = model(x_batch)
+                loss = -mll(output, y_batch)
+                loss.backward()
+                optimizer.step()
+            print(f"[{epoch+1}/{epochs}] Loss: {loss.item():.4f}")
+
+        self.GP = model
+        self.likelihood = likelihood
+        model.eval()
+        likelihood.eval()
+
+
+    def GP_save(self):
+        joblib.dump(self.GP, os.path.join(self.ds_dir, "trained_gp_model.pkl"))
+        joblib.dump(self.scaler_X, os.path.join(self.ds_dir, "scaler_X.pkl"))
+        joblib.dump(self.scaler_Y, os.path.join(self.ds_dir, "scaler_Y.pkl"))
+        print("  Saved GP model and scalers to:", self.ds_dir)
+
+
+    def get_hull(self):
+        if not hasattr(self, 'train_ds') or len(self.train_ds) == 0:
+            raise ValueError("Training data not available to compute convex hull.")
+        points_2d = np.array(self.train_ds)
+        self.hull = ConvexHull(points_2d)
+        self.hull_path = Path(points_2d[self.hull.vertices])
+        print("  Convex hull computed.")
+
+
+    def crop_to_hull(self, grid_points):
+        """Filter grid points to those inside the convex hull."""
+        return self.hull_path.contains_points(grid_points)
 
 
     def plot_dem_points(self, title='DEM', elev=30, azim=30):
@@ -206,14 +342,19 @@ class BagProcessor:
                 off = self.center + np.array([xoff, yoff, 0])
                 off = np.expand_dims(off[:2], axis=0)
                 src.append(off.tolist())
-                # print(off, end='\r')
+
         # pdb.set_trace()
+
         src = np.array(src)
         src = np.squeeze(src)
+        self.get_hull()  # Make sure hull is computed
+        mask = self.crop_to_hull(src)
+        src = src[mask]
+
         X = self.scaler_X.transform(src)
         Y = self.GP.predict(X)
         Y = Y.reshape(-1,1)
-        # Y = self.scaler_Y.inverse_transform(Y)
+        Y = self.scaler_Y.inverse_transform(Y)
         dst = np.squeeze(Y)
         scatter = self.ax.scatter(src[:, 0], src[:, 1], dst,
                             c=dst, cmap='terrain', marker='o', s=10)
@@ -261,13 +402,13 @@ class BagProcessor:
         print(f'    ins_msgs length: {len(self.ins_msgs)}')
         print('  bag read done \n')
 
-        print('  starting timeseries alignment')
+        print('starting timeseries alignment')
         start = time.time()
         pairs = self.match_pairs(self.radalt_msgs, self.ins_msgs)
-        print(f'    took {time.time() - start:.04f}s')
+        print(f'  took {time.time() - start:.04f}s')
 
         # Create DEM using altimeter-pose pairs
-        print("  developing digital elevation model...\n")
+        print("developing digital elevation model...\n")
         for pair in pairs:
             self.add_ground_point(self.ins_msgs[pair[0]], self.radalt_msgs[pair[1]])
             self.pairs.append(pair)
@@ -277,10 +418,21 @@ class BagProcessor:
         for i in range(len(self.input_bags)):
             self.bag_index = i
             self.process_bag()
-        print('training GP regressor for surface interpolation')
+
+
         start = time.time()
-        self.GP_train()
+        if self.load_gp:
+            self.load_trained_gp()
+        elif self.tune_gp:
+            print('training GP regressor for surface interpolation...')
+            self.tune_GP_hyperparameters()
+        else:
+            print('training GP regressor for surface interpolation...')
+            print('  no hyperparameter search')
+            # self.GP_train()
+            self.train_svgp()
         print(f'  took {time.time() - start:.04f}s')
+        self.GP_save()
 
         print('plotting...')
         self.plot_GP_surface()
@@ -289,18 +441,21 @@ class BagProcessor:
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Fix image timestamps in a ROS2 bag file using INS messages.")
+    parser = argparse.ArgumentParser(description="Use radar altimetry and INS poses to make a Digital Elevation Map (DEM).")
     # parser.add_argument("input_bag", help="Path to the input ROS2 bag file")
     parser.add_argument('--input_bags', nargs='+', help='List of bag filepaths')
     parser.add_argument("--ds_dir",  help="Path to the directory to save images/ and poses.json to")
     parser.add_argument("--radalt_topic", help="Radar Altimeter topic name (e.g., /radalt/data)")
     parser.add_argument("--ins_topic", help="INS topic name (e.g., /ins/data)")
+    parser.add_argument("--downsampling", type=int, help="rate to downsample data streams by (1 gives no downsampling))")
+    parser.add_argument("--tune_gp", action="store_true", help="If set, perform GP hyperparameter tuning before training")
+    parser.add_argument("--load_gp", action="store_true", help="Load previously saved GP model instead of training")
 
     args = parser.parse_args()
 
     rclpy.init()
 
-    processor = BagProcessor(args.input_bags, args.ds_dir, args.radalt_topic, args.ins_topic)
+    processor = BagProcessor(args.input_bags, args.ds_dir, args.radalt_topic, args.ins_topic, args.tune_gp, args.load_gp, ds_rate=args.downsampling)
     processor.process_bags()
 
     rclpy.shutdown()
