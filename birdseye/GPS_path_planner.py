@@ -34,10 +34,9 @@ EPS = 2
 MIN_SAMPLES = 3
 
 DJI_MAX_POINTS = 95
-DJI_MIN_DISTANCE = 350      # 3.5m...
-#DJI_MIN_DISTANCE = 3500    # millimeters -> 3.5m...
-# there is a more formal post (from DroneDeploy) which claims that the min is 
-# 5.0m, but we have done flights which contradict that figure (4pts @ 1m 
+DJI_MIN_DISTANCE = 3500  # millimeters -> 3.5m...
+# there is a more formal post (from DroneDeploy) which claims that the min is
+# 5.0m, but we have done flights which contradict that figure (4pts @ 1m
 # whifferdill ).
 
 SAVE = True
@@ -53,7 +52,7 @@ def _write_csv_file(path: str, rows: list[str]):
 def _write_file(path: str, data: str):
     """Write a string to a file.
     """
-    with open(path, "w+") as fp:
+    with open(path, "w") as fp:
         writer = fp.write(data)
 
 def generate_csv_from_plan(plan, d_hover, fpath):
@@ -70,11 +69,11 @@ def generate_csv_from_plan(plan, d_hover, fpath):
     _write_csv_file(fpath, lines)
 
 def _format_plan(
-    plan: list[list], 
+    plan: list[list],
     d_hover: int = 0.0
 ) -> list[dict]:
     """_format_plan(plan, d_hover) -> plan_out
-    
+
     Reformat the plan as a list of waypoints with path parameter customization.
 
     @param  plan (list[list])   Plan as a list of lat/lon.
@@ -126,9 +125,10 @@ def build_polygon(
 def preprocessWaypoints(waypoints, min_gap=DJI_MIN_DISTANCE):
     wpts = np.array(waypoints)
     dists = metrics.pairwise_distances(wpts)
-    #dists *= 1000  # convert to mm from m
-    dists *= 100    # convert to cm from m
+    dists *= 1000  # convert to mm from m
     dists = dists.astype(np.int32)
+    # plt.imshow(dists)
+    # plt.show()
 
     while dists[np.nonzero(dists)].min() < min_gap:
         d_tmp = np.nonzero(dists)
@@ -144,12 +144,11 @@ def preprocessWaypoints(waypoints, min_gap=DJI_MIN_DISTANCE):
         waypoints.append(new)
         wpts = np.array(waypoints)
         dists = metrics.pairwise_distances(wpts)
-        #dists *= 1000  # convert to mm from m
-        dists *= 100    # convert to cm from m
+        dists *= 1000  # convert to mm from m
         dists = dists.astype(np.int32)
-    #plt.imshow(dists)
-    #plt.show()
-    print(dists[np.nonzero(dists)].min())
+    # plt.imshow(dists)
+    # plt.show()
+    # print(dists[np.nonzero(dists)].min())
     # print(np.where(dists == 0))
     return dists, wpts
 
@@ -197,8 +196,8 @@ def build_dji_plan(
             try:
                 u = utm.from_latlon(float(line[0]), float(line[1]))
                 ll = '(' + ','.join(line[:2]) + ')'
-                print('lat/lon click location: ', ll)
-                print('    utm conversion: ', u)
+                # print('lat/lon click location: ', ll)
+                # print('    utm conversion: ', u)
                 tag = int(line[-1][-1])
                 UTMrep.append([u[0], u[1]])
                 # for _ in range(5):
@@ -281,8 +280,6 @@ def build_dji_plan(
 
     dists, waypoints = preprocessWaypoints(waypoints)
 
-    # NOTE: fast_tsp can only ingest distances that are a max of 96000 units
-    #       apart; thus, we are using cm rather than mm.
     if do_tsp:
         out = fast_tsp.find_tour(dists)
     else:
@@ -303,7 +300,7 @@ def build_dji_plan(
     print(f"Formatting flight plan...")
     plan_formatted = _format_plan(plan, int(d_hover * 1000))
     plan_kml = plan_2_kml(plan_formatted)
-    print("DONE.")
+    print("    DONE.")
     print(f"Generating flight plan at {fp_out}...")
     _write_file(fp_out, plan_kml)
     """
@@ -313,7 +310,7 @@ def build_dji_plan(
         fp_out
     )
     """
-    print("DONE.")
+    print("    DONE.")
 
     plt.tick_params(axis='x', which='both', bottom=False,
                 top=False, labelbottom=False)

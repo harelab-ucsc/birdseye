@@ -16,21 +16,30 @@ import cv2
 import os
 import json
 import yaml
+import copy
 from pyproj import Proj, Transformer
+import matplotlib.pyplot as plt
 
 #from rectify import rectify_image
 
+
 class BagProcessor:
-    def __init__(self, input_bag_path, output_bag_path, ds_dir, image_topic, ins_topic, intrinsics_path, rectify, sync):
+    def __init__(self, input_bag_path, ds_dir, output_bag_path, image_topic, ins_topic, intrinsics_path, rectify, sync):
         self.input_bag_path = input_bag_path
         self.output_bag_path = output_bag_path
         self.image_topic = image_topic
         self.ins_topic = ins_topic
         self.ds_dir = ds_dir
+        self.fps = 5
 
         self.deltas = []
         self.br = CvBridge()
         self.frames = []
+
+        fig, ax = plt.subplots()
+        self.fig = fig
+        self.ax = ax
+        self.ref = None
 
         self.intrinsics = self.load_intrinsics(intrinsics_path)
         self.K = np.array([[self.intrinsics["fx"], 0, self.intrinsics["cx"]],
@@ -45,9 +54,15 @@ class BagProcessor:
         self.sync = sync
 
         self.count = 0
+        self.strb = 0
 
         # Initialize UTM transformer
         self.transformer = Transformer.from_crs("EPSG:4326", "EPSG:32610", always_xy=True)  # Replace EPSG:32633 with appropriate UTM zone
+
+        self.image_msgs = []
+        self.ins_msgs = []
+        self.paired_flags = None
+
 
     def load_intrinsics(self, intrinsics_path):
         """Load camera intrinsics from a YAML file."""
@@ -55,27 +70,30 @@ class BagProcessor:
             print('loading intrinsics')
             return yaml.safe_load(file)
 
+
     def process_bag(self):
         # Initialize reader and writer
         reader = SequentialReader()
-        storage_options = StorageOptions(uri=self.input_bag_path, storage_id="mcap")
-        converter_options = ConverterOptions(input_serialization_format="cdr", output_serialization_format="cdr")
-        reader.open(storage_options, converter_options)
-        topics_and_types = reader.get_all_topics_and_types()
-
         writer = SequentialWriter()
+        try:
+            storage_options = StorageOptions(uri=self.input_bag_path, storage_id="mcap")
+            converter_options = ConverterOptions(input_serialization_format="cdr", output_serialization_format="cdr")
+            reader.open(storage_options, converter_options)
+        except RuntimeError:
+            storage_options = StorageOptions(uri=self.input_bag_path, storage_id="sqlite3")
+            converter_options = ConverterOptions(input_serialization_format="cdr", output_serialization_format="cdr")
+            reader.open(storage_options, converter_options)
         writer.open(StorageOptions(uri=self.output_bag_path, storage_id="mcap"), converter_options)
+
+        topics_and_types = reader.get_all_topics_and_types()
 
         topic_type_map = {t.name:t.type for t in topics_and_types}
         # Register all topics with the writer
         for topic in topics_and_types:
             writer.create_topic(topic)
 
-        image_msgs = []
-        ins_msgs = []
-
         # Ensure output directories exist
-        os.makedirs("images", exist_ok=True)
+        # os.makedirs("images", exist_ok=True)
 
         print('reading bag')
         # Read and process messages
@@ -85,29 +103,33 @@ class BagProcessor:
             msg = deserialize_message(data, message_type)
 
             if topic == self.image_topic:
-                image_msgs.append(msg)
+                self.image_msgs.append(msg)
             elif topic == self.ins_topic:
-                ins_msgs.append(msg)
+                self.ins_msgs.append(msg)
                 writer.write(topic, data, timestamp)
             else:
                 # Copy all other topics as-is
                 writer.write(topic, data, timestamp)
-        print(f'image_msgs length: {len(image_msgs)}')
-        print(f'ins_msgs length: {len(ins_msgs)} \n')
+        self.paired_flags = [0]*len(self.image_msgs)
+        print(f'image_msgs length: {len(self.image_msgs)}')
+        print(f'ins_msgs length: {len(self.ins_msgs)} \n')
         print('bag read done \n')
 
-        HDW_STATUS_STROBE_IN_EVENT = 0x00000020
-
         # Process INS messages and adjust image timestamps
-        for ins_msg in ins_msgs:
+        print('starting timeseries alignment')
+        HDW_STATUS_STROBE_IN_EVENT = 0x00000020
+        for ins_msg in self.ins_msgs:
+            self.count += 1
             if ins_msg.hdw_status & HDW_STATUS_STROBE_IN_EVENT == HDW_STATUS_STROBE_IN_EVENT:
-                self.count += 1
-                print(f'    found strobe triggered INS2 {self.count}: {ins_msg.header.stamp}')
+                self.strb += 1
+                print(f'  found strobe-triggered INS2 {self.strb} (INS msg {self.count})', end='\r')
                 ins_timestamp = ins_msg.header.stamp
                 ins_timestamp_int = int(ins_timestamp.sec * 1e9 + ins_timestamp.nanosec)
-                closest_image = self.find_closest_image(ins_timestamp, image_msgs)
+                closest_image = self.find_closest_image(ins_msg)
 
                 if closest_image:
+                    if self.strb == 1:
+                        self.ref = ins_timestamp_int/1e9
                     # Compute the time difference
                     old_time = closest_image.header.stamp.sec + closest_image.header.stamp.nanosec * 1e-9
                     new_time = ins_timestamp.sec + ins_timestamp.nanosec * 1e-9
@@ -121,88 +143,66 @@ class BagProcessor:
                         updated_image = closest_image
                     if self.rectify:
                         updated_image = self.rectify_image(updated_image)
+
                     timestamp_str = f"{ins_timestamp.sec}.{ins_timestamp.nanosec:09d}"
-                    self.save_image(updated_image, timestamp_str)
+                    # self.save_image(updated_image, timestamp_str)
 
                     # Append pose to JSON
-                    self.append_pose_to_json(ins_msg, updated_image, timestamp_str)
+                    # self.append_pose_to_json(ins_msg, updated_image, timestamp_str)
 
                     new_image = serialize_message(updated_image)
                     writer.write(self.image_topic, new_image, ins_timestamp_int)
+        print()
         deltas = np.array(self.deltas)
         mean = deltas.mean()
         std = deltas.std()
-        plt.hist(deltas, bins=150)
+        fig, ax = plt.subplots()
+        ax.hist(deltas, bins=150)
+        min = plt.ylim()[0]
+        max = plt.ylim()[1]
+        ax.vlines(mean, ymin=min, ymax=max, colors='r')
+        ax.vlines(mean-std, ymin=min, ymax=max, colors='k')
+        ax.vlines(mean+std, ymin=min, ymax=max, colors='k')
         plt.savefig(os.path.join(self.ds_dir,'hist.png'))
-        print(f'time correction mean: {mean} sec, std: {std} sec')
+        plt.show()
 
-        # Save JSON file
-        self.save_json()
-
-        # Close the bag writer
+        # self.save_json()
         writer.close()
-
-    def rotate_pose_180_y(self, pose):
-        """
-        Rotate a pose by 180 degrees around its Y-axis.
-        :param pose: A 4x4 transformation matrix (numpy array).
-        :return: Rotated pose (4x4 numpy array).
-        """
-        # Define 180-degree rotation around the Y-axis
-        rot_180_y = R.from_euler('y', 180, degrees=True).as_matrix()
-    
-        # Extract the original rotation and translation
-        original_rotation = pose[:3, :3]
-        original_translation = pose[:3, 3]
-
-        # Apply the 180-degree rotation
-        new_rotation = rot_180_y @ original_rotation
-
-        # Construct the new pose
-        new_pose = np.eye(4)
-        new_pose[:3, :3] = new_rotation
-        new_pose[:3, 3] = original_translation
-
-        return new_pose
-
-    def rotate_pose_90_z(self, pose):
-        """
-        Rotate a pose by 90 degrees around its z-axis.
-        :param pose: A 4x4 transformation matrix (numpy array).
-        :return: Rotated pose (4x4 numpy array).
-        """
-        # Define 90-degree rotation around the Z-axis
-        rot_90_z = R.from_euler('z', -90, degrees=True).as_matrix()
-    
-        # Extract the original rotation and translation
-        original_rotation = pose[:3, :3]
-        original_translation = pose[:3, 3]
-
-        # Apply the 180-degree rotation
-        new_rotation = rot_90_z @ original_rotation
-
-        # Construct the new pose
-        new_pose = np.eye(4)
-        new_pose[:3, :3] = new_rotation
-        new_pose[:3, 3] = original_translation
-
-        return new_pose
+        print(f'--> {sum(self.paired_flags)} images of {len(self.image_msgs)} matched')
+        print(f'--> time correction mean: {mean} sec, std: {std} sec')
 
 
-    def find_closest_image(self, target_timestamp, image_msgs):
+    def find_closest_image(self, target_timestamp):
         """Find the closest image message to the given timestamp."""
         closest_image = None
         min_diff = float("inf")
-        for image in image_msgs:
-            old_time = image.header.stamp.sec + image.header.stamp.nanosec * 1e-9
-            new_time = target_timestamp.sec + target_timestamp.nanosec * 1e-9
-            diff = abs(old_time - new_time)
-            if diff < min_diff:
-                # print('found closer image timestamp')
-                closest_image = image
-                min_diff = diff
-#        print(f'    found image matching timestamp: {target_timestamp}')
+        ind = None
+        tgt = self.get_timestamp(target_timestamp)
+        for i, image in enumerate(self.image_msgs):
+            img = self.get_timestamp(image)
+            diff = abs(img - tgt)
+            if diff < 1/self.fps:
+                if diff < min_diff and self.paired_flags[i] == 0:
+                    closest_image = image
+                    min_diff = diff
+                    ind = i
+                    val = img
+        if ind is not None:
+            self.paired_flags[ind] = 1 # remove image from list (only one pose for every image)
+            if self.ref is not None:
+                # self.ax.hlines(val, xmin=self.ref, xmax=val, color='xkcd:kelly green', linestyle='dotted')
+                self.ax.scatter(tgt, val, s=2, c='xkcd:kelly green')
+        else:
+            if self.ref is not None:
+                self.ax.scatter(tgt, tgt, s=10, c='k', alpha=0.2)
         return closest_image
+
+
+    def get_timestamp(self, msg):
+        ts = msg.header.stamp
+        ts = ts.sec + ts.nanosec*1e-9
+        return ts
+
 
     def update_image_timestamp(self, image_msg, new_timestamp):
         """Create a new Image message with an updated timestamp."""
@@ -217,6 +217,7 @@ class BagProcessor:
         new_image.step = image_msg.step
         return new_image
 
+
     def save_image(self, image_msg, timestamp_str):
         """Save the image message as a PNG file."""
         img_data = np.frombuffer(image_msg.data, dtype=np.uint8).reshape(image_msg.height, image_msg.width, -1)
@@ -226,8 +227,9 @@ class BagProcessor:
             os.makedirs(savename, exist_ok=True)
 
         savename = os.path.join(savename, f"{timestamp_str}.png")
-        print(f"  Saving Image To: {savename}")
+#        print(f"  Saving Image To: {savename}")
         cv2.imwrite(savename, img_data)
+
 
     def append_pose_to_json(self, ins_msg, image_msg, timestamp_str):
         """Append the pose data from INS message to the JSON."""
@@ -254,8 +256,7 @@ class BagProcessor:
         tf = np.array(self.intrinsics["T_cam_imu"])
         tf = np.array([[1,0,0,0],[0,-1,0,0],[0,0,-1,0],[0,0,0,1]])@tf  # imu is in ENU, ins is in NED -> tf transforms between these frames
         transform_matrix = transform_matrix@tf
-        #transform_matrix = self.rotate_pose_180_y(transform_matrix)
-        #transform_matrix = self.rotate_pose_90_z(transform_matrix)
+        transform_matrix = np.array([[1,0,0,0],[0,-1,0,0],[0,0,-1,0],[0,0,0,1]])@transform_matrix  # imu is in ENU, ins is in NED -> tf transforms between these frames
         transform_matrix = transform_matrix.tolist()
 
         pose = {
@@ -271,6 +272,7 @@ class BagProcessor:
         }
         self.frames.append(pose)
 
+
     def save_json(self):
         """Save all frames to a JSON file."""
         savename = os.path.join(self.ds_dir, "poses.json")
@@ -278,18 +280,20 @@ class BagProcessor:
             print(f'  Saving JSON To: {savename}')
             json.dump({"frames": self.frames}, json_file, indent=4)
 
+
     def rectify_image(self, raw_image):
         # Convert raw image message to OpenCV image using rgb8 encoding
-        cv_image = self.br.imgmsg_to_cv2(raw_image, desired_encoding='mono8')
+        cv_image = self.br.imgmsg_to_cv2(raw_image, desired_encoding='passthrough')
 
         # Rectify the image using the maps
         rectified_image = cv2.remap(cv_image, self.map1, self.map2, interpolation=cv2.INTER_LINEAR)
 
         # Convert the rectified image back to ROS Image message using rgb8 encoding
-        rectified_img_msg = self.br.cv2_to_imgmsg(rectified_image, encoding='mono8')
+        rectified_img_msg = self.br.cv2_to_imgmsg(rectified_image, encoding='passthrough')
         rectified_img_msg.header = raw_image.header
 
         return rectified_img_msg
+
 
 def main():
     parser = argparse.ArgumentParser(description="Fix image timestamps in a ROS2 bag file using INS messages.")
