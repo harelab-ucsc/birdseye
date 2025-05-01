@@ -1,5 +1,6 @@
 import os
 import glob2
+import cv2
 
 import matplotlib.pyplot as plt
 import tensorflow as tf
@@ -142,19 +143,21 @@ if __name__ == '__main__':
         fig, ax = plt.subplots(1,2, figsize=(18,8))
         plt.show(block=False)
         print()
-        for frame in frames:
+        for i, frame in enumerate(frames):
             print(f'predicting on {frame}')
             
             image = tf.io.decode_png(tf.io.read_file(frame), channels=3)
             ax[0].imshow(image.numpy())
             pred = predict_frame_heatmap(image, model)
             pred = tf.squeeze(pred).numpy()
+            # print(pred.max())
+            # ret, pred = cv2.threshold(pred, 0.01, 1, cv2.THRESH_BINARY)            
             ax[1].imshow(pred, cmap='hot')
 
             fig.canvas.draw_idle()
             plt.pause(0.2)
-            # p = os.path.expanduser('~')
-            # p = os.path.join(p, 'catch', 'tmp', f'3d_{str(self.frame_index).rjust(3,str(0))}.png')
-            # self.fig.savefig(p)
+            p = os.path.expanduser('~')
+            p = os.path.join(p, 'catch', 'tmp', f'2d_{str(i).rjust(3,str(0))}.png')
+            fig.savefig(p)
             ax[0].cla()
             ax[1].cla()
