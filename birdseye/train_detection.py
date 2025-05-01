@@ -10,15 +10,18 @@ import cv2
 import numpy as np
 import tensorflow as tf
 import scipy.ndimage as ndimage
-# from mask import Mask
-# from AMI_ContourClassFamily import Contour
 import glob2
 import copy
 import random
 import itertools
+import pickle
 # import pdb
 import matplotlib.pyplot as plt
 from sklearn.model_selection import train_test_split
+from sklearn.manifold import TSNE # Function to extract penultimate layer embeddings
+from tensorflow.keras import mixed_precision
+from tensorflow.keras.applications import EfficientNetB3, MobileNetV2, MobileNetV3Small, MobileNetV3Large, Xception
+
 # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ #
 # ~~~~ # data augmentation pipeline to add randomness/volume to dataset # ~~~~ #
 # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ #
@@ -375,10 +378,50 @@ def columnar_net(inputs, use_bias, ker_reg, ker_con, bias_reg, bias_con, act_reg
     out = out_block(add, [32, 16], ker, use_bias, ker_reg, ker_con, bias_reg, bias_con, act_reg)
     return out
 
-def generator(use_bias, ker_reg, ker_con, bias_reg, bias_con, act_reg, h=IMG_HEIGHT, w=IMG_WIDTH, c=IMAGE_CHANNELS, ker=3):
+# Define a custom detection head (binary classification: object present or not)
+def detection_head(inputs):
+    x = tf.keras.layers.GlobalAveragePooling2D()(inputs)  # Convert feature map to vector
+    x = tf.keras.layers.Dense(256, activation="relu")(x)  # Fully connected layer
+    x = tf.keras.layers.Dropout(0.5)(x)  # Regularization
+    outputs = tf.keras.layers.Dense(1, activation="sigmoid")(x)  # Binary detection (0 or 1)
+    return outputs
+
+
+def pretrained_backbone(inp, use_bias, ker_reg, ker_con, bias_reg, bias_con, act_reg, dropout, h=IMG_HEIGHT, w=IMG_WIDTH, c=IMAGE_CHANNELS, ker=3, trainable=False):
+    x = tf.keras.ops.cast(inp, "float32")
+    x = tf.keras.applications.mobilenet_v2.preprocess_input(x)
+    backbone = MobileNetV2(input_shape=(450, 720, 3), include_top=False, weights="imagenet")
+    # backbone = MobileNetV3Small(input_shape=(450, 720, 3), include_top=False, weights="imagenet")
+    # backbone = MobileNetV3Large(input_shape=(450, 720, 3), include_top=False, weights="imagenet")
+    # backbone = Xception(input_shape=(450, 720, 3), include_top=False, weights="imagenet")
+
+    # Freeze the backbone (optional for transfer learning)
+    backbone.trainable = False
+
+    if trainable:
+        unfreeze_fraction = 0.3
+        n_total = len(backbone.layers)
+        n_unfreeze = int(n_total * unfreeze_fraction)
+
+        # 3. Unfreeze top layers
+        for layer in backbone.layers[-n_unfreeze:]:
+            if not isinstance(layer, tf.keras.layers.BatchNormalization):
+                layer.trainable = True
+            else:
+                # Optionally keep BatchNorm frozen (recommended for stability)
+                layer.trainable = False
+
+    # Build the final model
+    x = backbone(x, training=False)  # Extract features without updating backbone weights
+    outputs = detection_head(x)  # Apply binary detection head
+
+    return outputs
+
+
+def generator(use_bias, ker_reg, ker_con, bias_reg, bias_con, act_reg, dropout, h=IMG_HEIGHT, w=IMG_WIDTH, c=IMAGE_CHANNELS, ker=3, trainable=False):
     inp = tf.keras.Input(shape=(h, w, c), name='inp_layer')
-    out = testing_net(inp, use_bias, ker_reg, ker_con, bias_reg, bias_con, act_reg, ker=ker)
-    # out = columnar_net(inp, use_bias, ker_reg, ker_con, bias_reg, bias_con, act_reg, ker=ker)
+    # out = testing_net(inp, use_bias, ker_reg, ker_con, bias_reg, bias_con, act_reg, dropout, ker=ker)
+    out = pretrained_backbone(inp, use_bias, ker_reg, ker_con, bias_reg, bias_con, act_reg, dropout, ker=ker, trainable=trainable)
     return tf.keras.Model(inputs=inp, outputs=out)
 
 
