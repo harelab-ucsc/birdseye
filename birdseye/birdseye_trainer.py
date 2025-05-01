@@ -81,30 +81,28 @@ class BirdsEyeTrainer:
 
 
     def build_model(self):
-        if self.config["tiled"]:
-            self.model = generator(
-                self.TILE_HEIGHT,
-                self.TILE_WIDTH,
-                self.IMG_CHANNELS,
-                unfreeze_frac=self.config.get("unfreeze_frac", 1.0),
-                trainable=self.config.get("finetune", False)
-            )
+        self.model = generator(
+            self.TILE_HEIGHT if self.config["tiled"] else self.IMG_HEIGHT,
+            self.TILE_WIDTH if self.config["tiled"] else self.IMG_WIDTH,
+            self.IMG_CHANNELS,
+            unfreeze_frac=self.config.get("unfreeze_frac", 1.0),
+            trainable=self.config.get("finetune", False),
+            use_heatmap=self.config.get("use_heatmaps", False)
+        )
+
+        if self.config.get("use_heatmaps", False):
+            loss_fn = tf.keras.losses.BinaryCrossentropy(from_logits=False)
+            metrics=[
+                tf.keras.metrics.BinaryCrossentropy(from_logits=self.config.get("logits", False), name='bce'),
+                tf.keras.metrics.MeanSquaredError(name='mse'),
+                tf.keras.metrics.MeanAbsoluteError(name='mae'),
+            ]
         else:
-            self.model = generator(
-                self.IMG_HEIGHT,
-                self.IMG_WIDTH,
-                self.IMG_CHANNELS,
-                unfreeze_frac=self.config.get("unfreeze_frac", 1.0),
-                trainable=self.config.get("finetune", False)
+            loss_fn = tf.keras.losses.BinaryFocalCrossentropy(
+                alpha=self.config.get("alpha", 0.25),
+                gamma=self.config.get("gamma", 2.0),
+                from_logits=self.config.get("logits", False)
             )
-        self.model.compile(
-            optimizer=tf.keras.optimizers.AdamW(learning_rate=self.config["lr"]),
-                # loss=tf.keras.losses.BinaryCrossentropy(
-                loss=tf.keras.losses.BinaryFocalCrossentropy(
-                    alpha=self.config.get("alpha", 0.25),
-                    gamma=self.config.get("gamma", 2.0),
-                    from_logits=self.config.get("logits", False)
-            ),
             metrics=[
                 tf.keras.metrics.BinaryCrossentropy(from_logits=self.config.get("logits", True), name='bce'),
                 tf.keras.metrics.BinaryAccuracy(threshold=self.config.get("thresh", 0.5), name='bin_acc'),
@@ -113,6 +111,11 @@ class BirdsEyeTrainer:
                 tf.keras.metrics.Recall(name='rec'),
                 tf.keras.metrics.AUC()
             ]
+            
+        self.model.compile(
+            optimizer=tf.keras.optimizers.AdamW(learning_rate=self.config["lr"]),
+                loss=loss_fn,
+            metrics=metrics
         )
 
         self.model.summary()
@@ -152,10 +155,38 @@ class BirdsEyeTrainer:
             pickle.dump(history, f)
 
 
+    def show_heatmap_prediction(model, dataset, num_samples=4):
+        for batch_images, batch_labels in dataset.take(1):
+            preds = model.predict(batch_images)
+            for i in range(min(num_samples, len(batch_images))):
+                image = batch_images[i].numpy().astype(np.uint8)
+                true_heatmap = batch_labels[i].numpy().squeeze()
+                pred_heatmap = preds[i].squeeze()
+
+                fig, axs = plt.subplots(1, 3, figsize=(12, 4))
+                axs[0].imshow(image)
+                axs[0].set_title("Tile")
+                axs[0].axis('off')
+
+                axs[1].imshow(true_heatmap, cmap='hot')
+                axs[1].set_title("Ground Truth Heatmap")
+                axs[1].axis('off')
+
+                axs[2].imshow(pred_heatmap, cmap='hot')
+                axs[2].set_title("Predicted Heatmap")
+                axs[2].axis('off')
+
+                plt.tight_layout()
+                plt.show()
+
+
     def run(self):
         self.setup_data()
         self.build_model()
         self.train()
+        if self.config.get("use_heatmaps", False):
+            self.show_heatmap_prediction(self.model, self.val_ds)
+
 
 
 if __name__ == '__main__':
@@ -186,15 +217,15 @@ if __name__ == '__main__':
     ]
 
     val_dirlists = [
-        ['pieranch_rect'],
+        ['pieranch_rect'],  # first pie ranch sample
         ['original_02_rect', 'original_03_rect'],
         ['casfs_original', 'casfs_eviltwin'],
     ]
 
-    finetune = False
-    finetune_source = '/home/harey/birdseye/models/birdseye_960_600_032.weights.h5' 
+    finetune = True
+    finetune_source = '/home/harey/birdseye/models/birdseye_224_224_007.weights.h5' 
 
-    tiled = False
+    tiled = True
 
     if tiled:
         IMG_HEIGHT = 224
@@ -230,10 +261,11 @@ if __name__ == '__main__':
         "buffer_size": BUFFER_SIZE,
         "balance_ratio": 0.05,
         "unfreeze_frac": 0.3,
+        "use_heatmaps": True,
         "finetune": finetune,
         "finetune_source": finetune_source,
         "lr": 1e-5,
-        "epochs": 50,
+        "epochs": 500,
         "alpha": 0.3,
         "gamma": 2.0,
         "thresh": 0.5,

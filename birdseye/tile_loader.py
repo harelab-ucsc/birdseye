@@ -63,6 +63,37 @@ class TileLoader:
         tiles = []
         label_list = []
 
+        def draw_gaussian(heatmap, px, py, sigma=5):
+            radius = int(3 * sigma)
+            size = 2 * radius + 1
+            x_coords = np.arange(0, size, 1, float)
+            y_coords = x_coords[:, np.newaxis]
+            x0 = y0 = radius
+            g = np.exp(-((x_coords - x0)**2 + (y_coords - y0)**2) / (2 * sigma**2))
+
+            x1, x2 = px - radius, px + radius + 1
+            y1, y2 = py - radius, py + radius + 1
+
+            g_x1, g_x2 = 0, size
+            g_y1, g_y2 = 0, size
+
+            if x1 < 0:
+                g_x1 = -x1
+                x1 = 0
+            if y1 < 0:
+                g_y1 = -y1
+                y1 = 0
+            if x2 > tw:
+                g_x2 = size - (x2 - tw)
+                x2 = tw
+            if y2 > th:
+                g_y2 = size - (y2 - th)
+                y2 = th
+
+            heatmap[y1:y2, x1:x2, 0] = np.maximum(
+                heatmap[y1:y2, x1:x2, 0], g[g_y1:g_y2, g_x1:g_x2]
+            )
+
         try:
             for y in range(buffer, h - buffer - th + 1, th):
                 for x in range(buffer, w - buffer - tw + 1, tw):
@@ -76,10 +107,11 @@ class TileLoader:
                             for lx, ly, cls_str in labels:
                                 if x <= lx < x+tw and y <= ly < y+th:
                                     px, py = int(lx - x), int(ly - y)
-                                    heatmap[py, px, 0] = cls_str
+                                    draw_gaussian(heatmap, px, py)
                             label_list.append(heatmap)
                         else:
                             label_list.append(1.0)
+
                     elif self.include_negatives:
                         if random.random() < self.balance_ratio:
                             tiles.append(tile)
@@ -140,10 +172,16 @@ class TileLoader:
         return dataset
 
 
+    def add_noise(self, image):
+        noise = tf.random.normal(shape=tf.shape(image), mean=0.0, stddev=8.0, dtype=tf.float32)
+        image = image + noise
+        return tf.clip_by_value(image, 0.0, 255.0)
+
+
     def augment(self, image, label):
         image = tf.image.convert_image_dtype(image, tf.float32)
 
-        m = tf.random.uniform([5])
+        m = tf.random.uniform([7])
         n = tf.random.uniform([], minval=-1.0, maxval=1.0)
 
         if m[0] < 0.5:
@@ -155,11 +193,25 @@ class TileLoader:
             image = tf.image.random_saturation(image, 0.95, 1.05)
         if m[3] < 0.5:
             image = tf.image.flip_left_right(image)
+            if self.use_heatmaps:
+                label = tf.image.flip_left_right(label)
         if m[4] < 0.5:
             image = tf.image.flip_up_down(image)
+            if self.use_heatmaps:
+                label = tf.image.flip_up_down(label)
+        # if m[5] < 0.5:
+        #     image = self.random_zoom(image)
+        if m[6] < 0.5:
+            image = self.add_noise(image)
 
         image = tf.image.convert_image_dtype(image, tf.uint8)
-        return image, tf.expand_dims(label, -1)
+
+        if self.use_heatmaps:
+            tf.ensure_shape(label, [self.tile_height, self.tile_width, 1])
+        else:
+            label = tf.expand_dims(label, -1)
+
+        return image, label
 
 
     def build_dataset(self, file_list, label_file, batch_size, buffer_size=64, repeat=True, augment=False):
@@ -169,7 +221,14 @@ class TileLoader:
         if augment:
             ds = ds.map(self.augment, num_parallel_calls=tf.data.AUTOTUNE)
         else:
-            ds = ds.map(lambda x, y: (x, tf.expand_dims(y, -1)), num_parallel_calls=tf.data.AUTOTUNE)
+            def format_label(x, y):
+                if self.use_heatmaps:
+                    tf.ensure_shape(y, [self.tile_height, self.tile_width, 1])
+                    return x, y
+                else:
+                    return x, tf.expand_dims(y, -1)
+
+            ds = ds.map(format_label, num_parallel_calls=tf.data.AUTOTUNE)
 
         if repeat:
             ds = ds.repeat()
