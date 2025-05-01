@@ -5,7 +5,10 @@
 Utilities for working with KML-formatted flight plans for the M300.
 Adapated from [csv2djipilot]{https://github.com/IPGP/csv2djipilot/tree/main}.
 
+@usage  from kml import plan_2_kml
+
 @author HARE Lab
+
 @date   17 Dec 2024
 @todo
     * Set header if not supplied.
@@ -54,14 +57,14 @@ def _read_csv_file(path: str) -> list[dict]:
 
 def plan_2_kml(
     plan: list[dict],
-    on_finish: str = "hover"
+    on_finish: str = "Hover"
 ) -> str:
     """plan_2_kml(plan, hover) -> kml_str
 
     Generate a string-ified KML from a flight plan, ready for writing to a file.
     
     @param  plan (list[dict])   Path to be converted.
-    @param  on_finish (str)     "hover" by default.
+    @param  on_finish (str)     "Hover" by default.
     """
     kml_str = """<?xml version="1.0" encoding="UTF-8"?>
 

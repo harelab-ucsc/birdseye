@@ -6,3 +6,5 @@
 models/*
 birdseye/__pycache__/*
 logs/*
+launch/__pycache__/*
+benchmark/build/*
