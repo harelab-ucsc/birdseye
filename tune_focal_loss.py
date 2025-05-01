@@ -44,3 +44,6 @@ if __name__ == "__main__":
     best_hps = tuner.get_best_hyperparameters(1)[0]
     print(f"Best alpha: {best_hps.get('alpha')}")
     print(f"Best gamma: {best_hps.get('gamma')}")
+
+    # Print a summary of all top trials
+    tuner.results_summary(num_trials=10)
