@@ -1,6 +1,6 @@
 import os
 import glob2
-
+import cv2
 import matplotlib.pyplot as plt
 import tensorflow as tf
 import numpy as np
@@ -71,10 +71,7 @@ class TileInference:
                 plt.show()
 
 
-import numpy as np
-import tensorflow as tf
-
-def predict_frame_heatmap(frame, model, tile_size=(224, 224), tile_overlap=0):
+def predict_frame_heatmap(frame, model, tile_size=(224, 224), tile_overlap=30):
     h, w = frame.shape[:2]
     th, tw = tile_size
     stride_y = th - tile_overlap
@@ -116,6 +113,24 @@ def predict_frame_heatmap(frame, model, tile_size=(224, 224), tile_overlap=0):
     return heatmap_full
 
 
+def postprocess_heatmap(heatmap, blur=True, thresh=0.5, min_area=10):
+    if blur:
+        heatmap = cv2.GaussianBlur(heatmap, (5, 5), sigmaX=1)
+
+    _, binary = cv2.threshold(heatmap, thresh, 1.0, cv2.THRESH_BINARY)
+    contours, _ = cv2.findContours((binary * 255).astype(np.uint8), cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+
+    detections = []
+    for cnt in contours:
+        if cv2.contourArea(cnt) > min_area:
+            M = cv2.moments(cnt)
+            if M["m00"] > 0:
+                cx = int(M["m10"] / M["m00"])
+                cy = int(M["m01"] / M["m00"])
+                detections.append((cx, cy))
+    return detections, binary
+
+
 if __name__ == '__main__':
     # # Example usage
     # infer = TileInference(model_weights="birds_eye_model.weights.h5", use_heatmaps=False)
@@ -124,32 +139,42 @@ if __name__ == '__main__':
     # infer.visualize_predictions("/path/to/image.png", label_file="labels.txt")
 
     frames_dirs = [
-        os.path.join(os.path.expanduser('~'), 'birdseye_CNN_data', '2025_04_16', 'pieranch_rect'),
+        # os.path.join(os.path.expanduser('~'), 'birdseye_CNN_data', '2025_04_16', 'pieranch_rect'),
+        os.path.join(os.path.expanduser('~'), 'parsed_flights', '2025_04_16', 'pieranch_rect'),
     ]
 
-    models_dir = os.path.join(os.path.expanduser('~'), 'birdseye', 'models')
+    # models_dir = os.path.join(os.path.expanduser('~'), 'birdseye', 'models')
+    models_dir = os.path.join(os.path.expanduser('~'), 'ros2_ws', 'src', 'birdseye', 'models')
     weight_file = 'birdseye_224_224_008.weights.h5'
 
     model = generator(224, 224, 3, use_heatmap=True)
     model.load_weights(os.path.join(models_dir, weight_file))
     model.compile()
 
-    # model = tf.keras.models.load_model(os.path.join(models_dir, weight_file))
     plt.ion()
+    plt.tight_layout()
+    plt.show(block=False)
+
     for _dir in frames_dirs:
         frames = sorted(glob2.glob(os.path.join(_dir, '*.png')))
-        plt.tight_layout()
+
         fig, ax = plt.subplots(1,2, figsize=(18,8))
-        plt.show(block=False)
         print()
         for frame in frames:
             print(f'predicting on {frame}')
-            
+
             image = tf.io.decode_png(tf.io.read_file(frame), channels=3)
             ax[0].imshow(image.numpy())
             pred = predict_frame_heatmap(image, model)
             pred = tf.squeeze(pred).numpy()
+            pred /= pred.max()
+
+            # ax[2].hist(pred.flatten())
+
+            det, pred = postprocess_heatmap(pred, thresh=0.25)
             ax[1].imshow(pred, cmap='hot')
+
+            # ax[2].hist(pred.flatten())
 
             fig.canvas.draw_idle()
             plt.pause(0.2)
@@ -158,3 +183,4 @@ if __name__ == '__main__':
             # self.fig.savefig(p)
             ax[0].cla()
             ax[1].cla()
+            # ax[2].cla()
