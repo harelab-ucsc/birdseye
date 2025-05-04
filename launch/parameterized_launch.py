@@ -44,7 +44,7 @@ def generate_launch_description():
 
     # Execute `ros2 topic hz /image_raw`
     topic_hz_process = ExecuteProcess(
-        cmd=['ros2', 'topic', 'hz', '/camera_driver_gv_example/vis/image_raw'],
+        cmd=['ros2', 'topic', 'hz', '/cam0/vis/image_raw'],
         output='screen'
     )
 

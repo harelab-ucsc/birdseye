@@ -259,7 +259,7 @@ if __name__ == '__main__':
         "edge_buffer": 81,
         "batch_size": BATCH_SIZE,
         "buffer_size": BUFFER_SIZE,
-        "balance_ratio": 0.05,
+        "balance_ratio": 0.2,
         "unfreeze_frac": 0.3,
         "use_heatmaps": True,
         "finetune": finetune,

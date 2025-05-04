@@ -148,7 +148,7 @@ def preprocessWaypoints(waypoints, min_gap=DJI_MIN_DISTANCE):
         dists = dists.astype(np.int32)
     # plt.imshow(dists)
     # plt.show()
-    print(dists[np.nonzero(dists)].min())
+    # print(dists[np.nonzero(dists)].min())
     # print(np.where(dists == 0))
     return dists, wpts
 
@@ -300,7 +300,7 @@ def build_dji_plan(
     print(f"Formatting flight plan...")
     plan_formatted = _format_plan(plan, int(d_hover * 1000))
     plan_kml = plan_2_kml(plan_formatted)
-    print("DONE.")
+    print("    DONE.")
     print(f"Generating flight plan at {fp_out}...")
     _write_file(fp_out, plan_kml)
     """
@@ -310,7 +310,7 @@ def build_dji_plan(
         fp_out
     )
     """
-    print("DONE.")
+    print("    DONE.")
 
     plt.tick_params(axis='x', which='both', bottom=False,
                 top=False, labelbottom=False)

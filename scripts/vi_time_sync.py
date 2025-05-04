@@ -24,7 +24,7 @@ import matplotlib.pyplot as plt
 
 
 class BagProcessor:
-    def __init__(self, input_bag_path, output_bag_path, ds_dir, image_topic, ins_topic, intrinsics_path, rectify, sync):
+    def __init__(self, input_bag_path, ds_dir, output_bag_path, image_topic, ins_topic, intrinsics_path, rectify, sync):
         self.input_bag_path = input_bag_path
         self.output_bag_path = output_bag_path
         self.image_topic = image_topic
@@ -93,7 +93,7 @@ class BagProcessor:
             writer.create_topic(topic)
 
         # Ensure output directories exist
-        os.makedirs("images", exist_ok=True)
+        # os.makedirs("images", exist_ok=True)
 
         print('reading bag')
         # Read and process messages
@@ -125,7 +125,7 @@ class BagProcessor:
                 print(f'  found strobe-triggered INS2 {self.strb} (INS msg {self.count})', end='\r')
                 ins_timestamp = ins_msg.header.stamp
                 ins_timestamp_int = int(ins_timestamp.sec * 1e9 + ins_timestamp.nanosec)
-                closest_image = self.find_closest_image(ins_timestamp)
+                closest_image = self.find_closest_image(ins_msg)
 
                 if closest_image:
                     if self.strb == 1:
@@ -144,16 +144,15 @@ class BagProcessor:
                     if self.rectify:
                         updated_image = self.rectify_image(updated_image)
 
-                    # TODO: updated_image = self.blur_check(updated_image)
-
                     timestamp_str = f"{ins_timestamp.sec}.{ins_timestamp.nanosec:09d}"
-                    self.save_image(updated_image, timestamp_str)
+                    # self.save_image(updated_image, timestamp_str)
 
                     # Append pose to JSON
-                    self.append_pose_to_json(ins_msg, updated_image, timestamp_str)
+                    # self.append_pose_to_json(ins_msg, updated_image, timestamp_str)
 
                     new_image = serialize_message(updated_image)
                     writer.write(self.image_topic, new_image, ins_timestamp_int)
+        print()
         deltas = np.array(self.deltas)
         mean = deltas.mean()
         std = deltas.std()
@@ -167,7 +166,7 @@ class BagProcessor:
         plt.savefig(os.path.join(self.ds_dir,'hist.png'))
         plt.show()
 
-        self.save_json()
+        # self.save_json()
         writer.close()
         print(f'--> {sum(self.paired_flags)} images of {len(self.image_msgs)} matched')
         print(f'--> time correction mean: {mean} sec, std: {std} sec')
@@ -178,9 +177,9 @@ class BagProcessor:
         closest_image = None
         min_diff = float("inf")
         ind = None
-        tgt = target_timestamp.sec + target_timestamp.nanosec * 1e-9
+        tgt = self.get_timestamp(target_timestamp)
         for i, image in enumerate(self.image_msgs):
-            img = image.header.stamp.sec + image.header.stamp.nanosec * 1e-9
+            img = self.get_timestamp(image)
             diff = abs(img - tgt)
             if diff < 1/self.fps:
                 if diff < min_diff and self.paired_flags[i] == 0:
@@ -197,61 +196,6 @@ class BagProcessor:
             if self.ref is not None:
                 self.ax.scatter(tgt, tgt, s=10, c='k', alpha=0.2)
         return closest_image
-
-
-    # def variance_of_laplacian(self, image):
-    # 	# compute the Laplacian of the image and then return the focus
-    # 	# measure, which is simply the variance of the Laplacian
-    # 	return cv2.Laplacian(image, cv2.CV_64F).var()
-    #
-
-    # def blur_check(self, image_msg, thresh=200):
-    #     print('    blur check')
-    #     header = image_msg.header
-    #     image = self.br.imgmsg_to_cv2(image_msg, desired_encoding='passthrough')
-    #     image = cv2.cvtColor(image, cv2.COLOR_BAYER_RG2RGB)
-    #     gray = cv2.cvtColor(image, cv2.COLOR_RGB2GRAY)
-    #     fm = self.variance_of_laplacian(gray)
-    #     if fm < thresh:
-    #         print(f'      variance of Laplacian is {fm}; deblurring')
-    #         image = self.deblur(image)
-    #     image = self.make_bayer(image)
-    #     image_msg = self.br.cv2_to_imgmsg(image, encoding='bayer_rg8')
-    #     image_msg.header = header
-    #     return image_msg
-    #
-    #
-    # def deblur(self, blurry_image):
-    #     # Define a kernel for motion blur
-    #     kernel_size = 15
-    #     kernel = np.zeros((kernel_size, kernel_size))
-    #     kernel[int((kernel_size - 1) / 2), :] = np.ones(kernel_size)
-    #     kernel /= kernel_size
-    #
-    #     # Apply the inverse filter
-    #     deblurred_image = cv2.filter2D(blurry_image, -1, kernel)
-    #
-    #     # kernel = kernel.T
-    #     # deblurred_image = cv2.filter2D(deblurred_image, -1, kernel)
-    #     return deblurred_image
-    #
-    #
-    # def make_bayer(self, rgb_image):
-    #     height, width, _ = rgb_image.shape
-    #     # Create an empty Bayer image (single channel)
-    #     bayer_image = np.zeros((height, width), dtype=np.uint8)
-    #
-    #     # Extract R, G, B channels
-    #     R = rgb_image[:, :, 0]
-    #     G = rgb_image[:, :, 1]
-    #     B = rgb_image[:, :, 2]
-    #
-    #     # Simulate Bayer RG pattern
-    #     bayer_image[0::2, 0::2] = R[0::2, 0::2]  # Red pixels
-    #     bayer_image[0::2, 1::2] = G[0::2, 1::2]  # Green pixels (next to Red)
-    #     bayer_image[1::2, 0::2] = G[1::2, 0::2]  # Green pixels (next to Blue)
-    #     bayer_image[1::2, 1::2] = B[1::2, 1::2]  # Blue pixels
-    #     return bayer_image
 
 
     def get_timestamp(self, msg):
@@ -339,13 +283,13 @@ class BagProcessor:
 
     def rectify_image(self, raw_image):
         # Convert raw image message to OpenCV image using rgb8 encoding
-        cv_image = self.br.imgmsg_to_cv2(raw_image, desired_encoding='mono8')
+        cv_image = self.br.imgmsg_to_cv2(raw_image, desired_encoding='passthrough')
 
         # Rectify the image using the maps
         rectified_image = cv2.remap(cv_image, self.map1, self.map2, interpolation=cv2.INTER_LINEAR)
 
         # Convert the rectified image back to ROS Image message using rgb8 encoding
-        rectified_img_msg = self.br.cv2_to_imgmsg(rectified_image, encoding='mono8')
+        rectified_img_msg = self.br.cv2_to_imgmsg(rectified_image, encoding='passthrough')
         rectified_img_msg.header = raw_image.header
 
         return rectified_img_msg

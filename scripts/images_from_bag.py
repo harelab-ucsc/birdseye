@@ -1,24 +1,19 @@
-#!/usr/bin/env python3.11
+#!/usr/bin/env python3
 import pdb
 import rclpy
 from rclpy.node import Node
 from rosbag2_py import SequentialReader, SequentialWriter, StorageOptions, ConverterOptions
 from sensor_msgs.msg import Image
-from inertial_sense_ros2.msg import DIDINS2
 import argparse
 import numpy as np
 from rosidl_runtime_py.utilities import get_message
 from rclpy.serialization import deserialize_message, serialize_message
-from scipy.spatial.transform import Rotation as R
 import matplotlib.pyplot as plt
 from cv_bridge import CvBridge
 import cv2
 import os
-import json
 import yaml
 import copy
-from pyproj import Proj, Transformer
-import matplotlib.pyplot as plt
 
 #from rectify import rectify_image
 
@@ -28,7 +23,7 @@ class BagProcessor:
         self.input_bag_path = input_bag_path
         self.image_topic = image_topic
         self.ds_dir = ds_dir
-
+        self.br = CvBridge()
         self.image_msgs = []
 
         print(self.input_bag_path)
@@ -63,24 +58,32 @@ class BagProcessor:
         # Read and process messages
         while reader.has_next():
             topic, data, timestamp = reader.read_next()
-            message_type = get_message(topic_type_map[topic])
-            msg = deserialize_message(data, message_type)
+            topic_type = topic_type_map[topic]
+            message_type = get_message(topic_type)
 
+
+            # This should now be a proper Image message
             if topic == self.image_topic:
-                self.image_msgs.append(msg)
+                msg = deserialize_message(data, message_type)
+                assert isinstance(msg, Image), f"Expected Image, got {type(msg)}"
+                image = self.br.imgmsg_to_cv2(msg, desired_encoding='passthrough')
+                image = cv2.cvtColor(image, cv2.COLOR_BAYER_RG2RGB)
+                self.image_msgs.append((image, msg.header))
 
         print(f'  image_msgs length: {len(self.image_msgs)}')
         print('bag read done \n')
 
-        for img in self.image_msgs:
-            timestamp_str = f"{img.header.stamp.sec}.{img.header.stamp.nanosec:09d}"
+        for i, (img, header) in enumerate(self.image_msgs):
+            timestamp_str = f"{header.stamp.sec}.{header.stamp.nanosec:09d}"
+            if timestamp_str == '0.000000000':
+                timestamp_str = str(i)
             # print(timestamp_str)
             self.save_image(img, timestamp_str)
 
 
-    def save_image(self, image_msg, timestamp_str):
+    def save_image(self, img, timestamp_str):
         """Save the image message as a PNG file."""
-        img_data = np.frombuffer(image_msg.data, dtype=np.uint8).reshape(image_msg.height, image_msg.width, -1)
+        # img_data = np.frombuffer(image_msg.data, dtype=np.uint8).reshape(image_msg.height, image_msg.width, -1)
         savename = os.path.join(self.ds_dir, 'images')
         if not os.path.isdir(savename):
             print(f'  Making Save Directory: {savename}')
@@ -88,7 +91,7 @@ class BagProcessor:
 
         savename = os.path.join(savename, f"{timestamp_str}.png")
 #        print(f"  Saving Image To: {savename}")
-        cv2.imwrite(savename, img_data)
+        cv2.imwrite(savename, img)
 
 
 def main():
