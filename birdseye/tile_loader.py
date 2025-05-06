@@ -63,7 +63,7 @@ class TileLoader:
         tiles = []
         label_list = []
 
-        def draw_gaussian(heatmap, px, py, sigma=5):
+        def draw_gaussian(heatmap, px, py, sigma=10):
             radius = int(3 * sigma)
             size = 2 * radius + 1
             x_coords = np.arange(0, size, 1, float)
@@ -134,6 +134,10 @@ class TileLoader:
             image = tf.io.decode_png(image, channels=3).numpy()
 
             labels = self.load_labels(self.label_file, image_path_str)
+
+            # if there is a spatially-denoised set of CNN detections, load them
+            if os.path.exists(os.path.join(os.path.split(image_filename)[0], 'results.txt'))
+                labels += self.load_labels('results.txt', image_path_str)
             tiles, classes = self.tile_image_and_label(image, labels)
 
             if len(tiles) == 0: # add spacer to filter away later

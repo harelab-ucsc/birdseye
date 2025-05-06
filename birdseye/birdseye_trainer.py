@@ -224,8 +224,8 @@ if __name__ == '__main__':
         ['casfs_original', 'casfs_eviltwin'],
     ]
 
-    finetune = False
-    finetune_source = '/home/harey/birdseye/models/birdseye_224_224_007.weights.h5' 
+    finetune = True
+    finetune_source = '/home/harey/birdseye/models/birdseye_224_224_013.weights.h5' 
 
     tiled = True
 
