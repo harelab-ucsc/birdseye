@@ -29,6 +29,7 @@ class BirdsEyeTrainer:
         )
         self.frame_loader = FrameLoader(
             image_size=(self.IMG_HEIGHT, self.IMG_WIDTH))
+        self.strategy = tf.distribute.MirroredStrategy()
 
 
     def build_file_lists(self):
@@ -81,48 +82,57 @@ class BirdsEyeTrainer:
 
 
     def build_model(self):
-        self.model = generator(
-            self.TILE_HEIGHT if self.config["tiled"] else self.IMG_HEIGHT,
-            self.TILE_WIDTH if self.config["tiled"] else self.IMG_WIDTH,
-            self.IMG_CHANNELS,
-            unfreeze_frac=self.config.get("unfreeze_frac", 1.0),
-            trainable=self.config.get("finetune", False),
-            use_heatmap=self.config.get("use_heatmaps", False)
-        )
-
-        if self.config.get("use_heatmaps", False):
-            loss_fn = tf.keras.losses.BinaryCrossentropy(self.config.get("logits", False))
-            metrics=[
-                tf.keras.metrics.BinaryCrossentropy(from_logits=self.config.get("logits", False), name='bce'),
-                tf.keras.metrics.MeanSquaredError(name='mse'),
-                tf.keras.metrics.MeanAbsoluteError(name='mae'),
-            ]
-        else:
-            loss_fn = tf.keras.losses.BinaryFocalCrossentropy(
-                alpha=self.config.get("alpha", 0.25),
-                gamma=self.config.get("gamma", 2.0),
-                from_logits=self.config.get("logits", False)
+        with self.strategy.scope():
+            self.model = generator(
+                self.TILE_HEIGHT if self.config["tiled"] else self.IMG_HEIGHT,
+                self.TILE_WIDTH if self.config["tiled"] else self.IMG_WIDTH,
+                self.IMG_CHANNELS,
+                unfreeze_frac=self.config.get("unfreeze_frac", 1.0),
+                trainable=self.config.get("finetune", False),
+                use_heatmap=self.config.get("use_heatmaps", False)
             )
-            metrics=[
-                tf.keras.metrics.BinaryCrossentropy(from_logits=self.config.get("logits", True), name='bce'),
-                tf.keras.metrics.BinaryAccuracy(threshold=self.config.get("thresh", 0.5), name='bin_acc'),
-                tf.keras.metrics.F1Score(threshold=self.config.get("thresh", 0.5), name='f1'),
-                tf.keras.metrics.Precision(name='prec'),
-                tf.keras.metrics.Recall(name='rec'),
-                tf.keras.metrics.AUC()
-            ]
-            
-        self.model.compile(
-            optimizer=tf.keras.optimizers.AdamW(learning_rate=self.config["lr"]),
-                loss=loss_fn,
-            metrics=metrics
-        )
 
-        self.model.summary()
+            if self.config.get("use_heatmaps", False):
+                def weighted_heatmap_loss(y_true, y_pred, weights):
+                    bce = tf.keras.losses.binary_crossentropy(y_true, y_pred)
+                    return tf.reduce_mean(bce * weights)
 
-        if self.config.get("finetune"):
-            print(f"\nLoading weights from: {self.config['finetune_source']}\n")
-            self.model.load_weights(self.config["finetune_source"])
+                def custom_loss(y_true, y_pred):
+                    y, w = y_true[..., 0:1], y_true[..., 1:2]
+                    return weighted_heatmap_loss(y, y_pred, w)
+
+                loss_fn = custom_loss                
+                metrics=[
+                    tf.keras.metrics.BinaryCrossentropy(from_logits=self.config.get("logits", False), name='bce'),
+                    tf.keras.metrics.MeanSquaredError(name='mse'),
+                    tf.keras.metrics.MeanAbsoluteError(name='mae'),
+                ]
+            else:
+                loss_fn = tf.keras.losses.BinaryFocalCrossentropy(
+                    alpha=self.config.get("alpha", 0.25),
+                    gamma=self.config.get("gamma", 2.0),
+                    from_logits=self.config.get("logits", False)
+                )
+                metrics=[
+                    tf.keras.metrics.BinaryCrossentropy(from_logits=self.config.get("logits", True), name='bce'),
+                    tf.keras.metrics.BinaryAccuracy(threshold=self.config.get("thresh", 0.5), name='bin_acc'),
+                    tf.keras.metrics.F1Score(threshold=self.config.get("thresh", 0.5), name='f1'),
+                    tf.keras.metrics.Precision(name='prec'),
+                    tf.keras.metrics.Recall(name='rec'),
+                    tf.keras.metrics.AUC()
+                ]
+                
+            self.model.compile(
+                optimizer=tf.keras.optimizers.AdamW(learning_rate=self.config["lr"]),
+                    loss=loss_fn,
+                metrics=metrics
+            )
+
+            self.model.summary()
+
+            if self.config.get("finetune"):
+                print(f"\nLoading weights from: {self.config['finetune_source']}\n")
+                self.model.load_weights(self.config["finetune_source"])
 
 
     def train(self):
@@ -190,7 +200,11 @@ class BirdsEyeTrainer:
 
 
 if __name__ == '__main__':
-    os.environ["CUDA_VISIBLE_DEVICES"] = "1"
+    # os.environ["CUDA_VISIBLE_DEVICES"] = "1"
+
+    gpus = tf.config.list_physical_devices('GPU')
+    for gpu in gpus:
+        tf.config.experimental.set_memory_growth(gpu, True)
 
     data_root = os.path.join(os.path.expanduser('~'), 'birdseye_CNN_data')
 
@@ -224,7 +238,7 @@ if __name__ == '__main__':
         ['casfs_original', 'casfs_eviltwin'],
     ]
 
-    finetune = True
+    finetune = False
     finetune_source = '/home/harey/birdseye/models/birdseye_224_224_013.weights.h5' 
 
     tiled = True

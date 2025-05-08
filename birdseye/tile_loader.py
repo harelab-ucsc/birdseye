@@ -28,7 +28,6 @@ class TileLoader:
 
 
     def load_labels(self, label_file, image_filename):
-        """Parse labels from a text file. Each line: idx, filepath, [x,y,class]"""
         labels = []
         tmp = os.path.join(os.path.split(image_filename)[0], label_file)
         load_name = glob2.glob(tmp)[0]
@@ -38,21 +37,55 @@ class TileLoader:
                     _, path, data = line.strip().split()
                     x_str, y_str, cls_str = data.split(',')
                     if os.path.basename(path) == os.path.basename(image_filename):
-                        labels.append((float(x_str), float(y_str), float(cls_str)))
+                        source = "cnn" if label_file == "results.txt" else "human"
+                        labels.append((float(x_str), float(y_str), float(cls_str), source))
         except Exception as e:
             print(f"      [Label Load Error] {e}")
         return labels
 
 
     def search_labels(self, x, y, labels):
-        tile_labels = []
         th, tw = self.tile_height, self.tile_width
+        return [
+            (lx, ly, cls_str, source)
+            for lx, ly, cls_str, source in labels
+            if x <= lx < x + tw and y <= ly < y + th
+        ]
 
-        for entry in labels:
-            lx, ly, cls_str = entry
-            if x <= lx < x+tw and y <= ly < y+th:
-                tile_labels.append(cls_str)
-        return tile_labels
+
+    def draw_gaussian(self, heatmap, weightmap, px, py, sigma=10, weight=1.0):
+        radius = int(3 * sigma)
+        size = 2 * radius + 1
+        x_coords = np.arange(0, size, 1, float)
+        y_coords = x_coords[:, np.newaxis]
+        x0 = y0 = radius
+        g = np.exp(-((x_coords - x0)**2 + (y_coords - y0)**2) / (2 * sigma**2))
+
+        x1, x2 = px - radius, px + radius + 1
+        y1, y2 = py - radius, py + radius + 1
+
+        g_x1, g_x2 = 0, size
+        g_y1, g_y2 = 0, size
+
+        if x1 < 0:
+            g_x1 = -x1
+            x1 = 0
+        if y1 < 0:
+            g_y1 = -y1
+            y1 = 0
+        if x2 > self.tile_width:
+            g_x2 = size - (x2 - self.tile_width)
+            x2 = self.tile_width
+        if y2 > self.tile_height:
+            g_y2 = size - (y2 - self.tile_height)
+            y2 = self.tile_height
+
+        heatmap[y1:y2, x1:x2, 0] = np.maximum(
+            heatmap[y1:y2, x1:x2, 0], g[g_y1:g_y2, g_x1:g_x2]
+        )
+        weightmap[y1:y2, x1:x2, 0] = np.maximum(
+            weightmap[y1:y2, x1:x2, 0], weight
+        )
 
 
     def tile_image_and_label(self, image_np, labels):
@@ -62,37 +95,6 @@ class TileLoader:
 
         tiles = []
         label_list = []
-
-        def draw_gaussian(heatmap, px, py, sigma=10):
-            radius = int(3 * sigma)
-            size = 2 * radius + 1
-            x_coords = np.arange(0, size, 1, float)
-            y_coords = x_coords[:, np.newaxis]
-            x0 = y0 = radius
-            g = np.exp(-((x_coords - x0)**2 + (y_coords - y0)**2) / (2 * sigma**2))
-
-            x1, x2 = px - radius, px + radius + 1
-            y1, y2 = py - radius, py + radius + 1
-
-            g_x1, g_x2 = 0, size
-            g_y1, g_y2 = 0, size
-
-            if x1 < 0:
-                g_x1 = -x1
-                x1 = 0
-            if y1 < 0:
-                g_y1 = -y1
-                y1 = 0
-            if x2 > tw:
-                g_x2 = size - (x2 - tw)
-                x2 = tw
-            if y2 > th:
-                g_y2 = size - (y2 - th)
-                y2 = th
-
-            heatmap[y1:y2, x1:x2, 0] = np.maximum(
-                heatmap[y1:y2, x1:x2, 0], g[g_y1:g_y2, g_x1:g_x2]
-            )
 
         try:
             for y in range(buffer, h - buffer - th + 1, th):
@@ -104,11 +106,14 @@ class TileLoader:
                         tiles.append(tile)
                         if self.use_heatmaps:
                             heatmap = np.zeros((th, tw, 1), dtype=np.float32)
-                            for lx, ly, cls_str in labels:
+                            weightmap = np.zeros((th, tw, 1), dtype=np.float32)
+                            for lx, ly, cls_str, source in tile_labels:
                                 if x <= lx < x+tw and y <= ly < y+th:
                                     px, py = int(lx - x), int(ly - y)
-                                    draw_gaussian(heatmap, px, py)
-                            label_list.append(heatmap)
+                                    sigma = 6 if source == "cnn" else 12
+                                    weight = 0.5 if source == "cnn" else 1.0
+                                    self.draw_gaussian(heatmap, weightmap, px, py, sigma, weight)
+                            label_list.append((heatmap, weightmap))
                         else:
                             label_list.append(1.0)
 
@@ -116,11 +121,10 @@ class TileLoader:
                         if random.random() < self.balance_ratio:
                             tiles.append(tile)
                             if self.use_heatmaps:
-                                label_list.append(np.zeros((th, tw, 1), dtype=np.float32))
+                                empty = np.zeros((th, tw, 1), dtype=np.float32)
+                                label_list.append((empty, empty))
                             else:
                                 label_list.append(0.0)
-                        else:
-                            continue
         except Exception as e:
             print(f'[Tiler Error] {e}')
         return tiles, label_list
@@ -136,7 +140,7 @@ class TileLoader:
             labels = self.load_labels(self.label_file, image_path_str)
 
             # if there is a spatially-denoised set of CNN detections, load them
-            if os.path.exists(os.path.join(os.path.split(image_filename)[0], 'results.txt'))
+            if os.path.exists(os.path.join(os.path.split(image_path_str)[0], 'results.txt')):
                 labels += self.load_labels('results.txt', image_path_str)
             tiles, classes = self.tile_image_and_label(image, labels)
 
@@ -257,6 +261,8 @@ def get_class_weights(file_list, tile_loader):
             image_path_str = str(image_path)
             image = tf.io.decode_png(tf.io.read_file(image_path_str), channels=3).numpy()
             labels = tile_loader.load_labels(tile_loader.label_file, image_path_str)
+            if os.path.exists(os.path.join(os.path.split(image_path_str)[0], 'results.txt')):
+                labels += tile_loader.load_labels('results.txt', image_path_str)
             tiles, label_list = tile_loader.tile_image_and_label(image, labels)
 
             for lbl in label_list:
