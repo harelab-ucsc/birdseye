@@ -4,8 +4,8 @@ from PIL import Image
 import imageio.v2 as imageio  # make sure imageio is installed
 
 
-def make_gif(frame_folder, gif_name):
-	file_list = glob2.glob(os.path.join(frame_folder, "2d_*.png"))
+def make_gif(frame_folder, gif_name, pattern="2d_*.png"):
+	file_list = glob2.glob(os.path.join(frame_folder, pattern))
 	file_list.sort()
 	print(f"Found {len(file_list)} frames.")
 
@@ -23,8 +23,8 @@ def make_gif(frame_folder, gif_name):
 	print(f"Saved GIF as {gif_name}.mp4")
 
 
-def make_mp4(frame_folder, video_name, fps=10):
-	file_list = glob2.glob(os.path.join(frame_folder, "2d_*.png"))
+def make_mp4(frame_folder, video_name, fps=5, pattern="2d_*.png"):
+	file_list = glob2.glob(os.path.join(frame_folder, pattern))
 	file_list.sort()
 	print(f"Found {len(file_list)} frames.")
 	save_path = os.path.join(frame_folder, f"{video_name}.mp4")
@@ -32,14 +32,14 @@ def make_mp4(frame_folder, video_name, fps=10):
 	    for image_path in file_list:
 	        img = imageio.imread(image_path)
 	        writer.append_data(img)
-	print(f"Saved video as {save_path}.mp4")
+	print(f"Saved video as {save_path}")
 
 if __name__ == "__main__":
 	mode = 'mp4'
 	filepath = os.path.expanduser('~')
-	filepath = os.path.join(filepath, 'catch', 'tmp2')
+	filepath = os.path.join(filepath, 'catch', 'tmp')
 	print(filepath)
 	if mode == 'mp4':
-		make_mp4(filepath, 'flight_video', fps=5)
+		make_mp4(filepath, 'flight_video_2d', fps=5)
 	elif mode == 'gif':
 		make_gif(filepath, 'flight_gif')

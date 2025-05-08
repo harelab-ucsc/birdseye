@@ -13,6 +13,7 @@ from sensor_msgs.msg import Imu, Image, NavSatFix
 from std_msgs.msg import String
 from SLICAnnotator import offlineSLICAnnotator
 import glob2
+from sklearn.cluster import DBSCAN
 from dbConnector import dbConnector
 from utilities import *
 from AMI_ContourClassFamily import Contour
@@ -22,8 +23,13 @@ import math
 import pdb
 import tensorflow as tf
 from tensorflow.keras.applications import MobileNetV2
+import fiona
+from fiona.crs import from_epsg
+from shapely.geometry import Point
 
 from SLICAnnotator import SLICAnnotator
+from tile_inference import predict_frame_heatmap, postprocess_heatmap
+from generator import generator
 
 memory = 25
 
@@ -108,7 +114,7 @@ class birdsEye():
         self.RTK_watchdog = None
         self.data = None
         self.frame_index = None
-        self.clear_flag = None
+        self.clear_flag = {}
 
         # camera specs
         self.map1 = None
@@ -162,7 +168,7 @@ class birdsEye():
         self._3DOuterBound = None
 
         if self.plot:
-            self.fig = plt.figure()
+            self.fig = plt.figure(figsize=(10, 10))
             self.ax = self.fig.add_subplot(111, projection='3d')
             plt.show(block=False)
 
@@ -181,20 +187,26 @@ class birdsEye():
 
         if self.detect:
             root = os.path.join(os.path.expanduser('~'),'ros2_ws/src/birdseye/models')
-            default = os.path.join(root, 'birdseye_960_600_009.weights.h5')
+            default = os.path.join(root, 'birdseye_224_224_013.weights.h5')  # deep
+            # default = os.path.join(root, 'birdseye_224_224_010.weights.h5')  # interp
+            # default = os.path.join(root, 'birdseye_224_224_011.weights.h5')  # interp
             tmp = kwargs.pop('model_path', None)
 
             if tmp is not None:
                  self.model_path = tmp
             else:
+                print(f'  loading default_model: {default}')
                 self.model_path = default
-            self.IMG_HEIGHT = int(self.model_path.split('_')[-2])
-            self.IMG_WIDTH = int(self.model_path.split('_')[-3])
+            self.TILE_HEIGHT = int(self.model_path.split('_')[-2])
+            self.TILE_WIDTH = int(self.model_path.split('_')[-3])
+            self.IMG_HEIGHT = 1200
+            self.IMG_WIDTH = 1920
             self.IMG_CHANNELS = 3
-            self.model = self.generator()
+            self.model = generator(224, 224, 3, use_heatmap=True)
             self.model.load_weights(self.model_path)
         self.clicks_2D = []  # list of framewise click pixel coordinates
         self.clicks_3D = []  # list of framewise click world coordinates
+        self.dets_3D = []
 
         if self.stats:
             self.gt_c_bproj = []
@@ -203,30 +215,6 @@ class birdsEye():
             self.bproj = []  # list of framewise (april_3D - clicks_3D)
             self.reproj = []  # list of framewise (clicks_2D - april_2D)
         # self.contour = Contour(res=(self.res[1], self.res[0]))
-
-
-    # Define a custom detection head (binary classification: object present or not)
-    def detection_head(self, inputs):
-        x = tf.keras.layers.GlobalAveragePooling2D()(inputs)  # Convert feature map to vector
-        x = tf.keras.layers.Dense(256, activation="relu")(x)  # Fully connected layer
-        x = tf.keras.layers.Dropout(0.5)(x)  # Regularization
-        outputs = tf.keras.layers.Dense(1, activation="sigmoid")(x)  # Binary detection (0 or 1)
-        return outputs
-
-
-    def pretrained_backbone(self, inp):
-        x = tf.keras.ops.cast(inp, "float32")
-        x = tf.keras.applications.mobilenet_v2.preprocess_input(x)
-        backbone = MobileNetV2(input_shape=(self.IMG_HEIGHT, self.IMG_WIDTH, self.IMG_CHANNELS), include_top=False, weights="imagenet")
-        x = backbone(x)  # Extract features without updating backbone weights
-        outputs = self.detection_head(x)  # Apply binary detection head
-        return outputs
-
-
-    def generator(self):
-        inp = tf.keras.Input(shape=(self.IMG_HEIGHT, self.IMG_WIDTH, self.IMG_CHANNELS), name='inp_layer')
-        out = self.pretrained_backbone(inp)
-        return tf.keras.Model(inputs=inp, outputs=out)
 
 
     def getParameters(self, device_key):
@@ -366,7 +354,7 @@ class birdsEye():
         # print('    inQuadCheck frame: \n', frame)
         val = []
         ring = lambda y: [ (x + 1) % y for x in range(y)]
-        det = lambda x,y: x[0]*y[1] - [x[1]*y[0]]
+        det = lambda x,y: x[0]*y[1] - x[1]*y[0]
         tmp1 = frame[ring(n)] - frame
 
         for v in pts:
@@ -444,6 +432,44 @@ class birdsEye():
         return ret, ret_raw
 
 
+    def heatmapper(self, img):
+        img = tf.convert_to_tensor(img)
+        img = tf.image.resize(img, size=(self.IMG_HEIGHT,self.IMG_WIDTH))
+
+        # self.ax2.imshow(img.numpy())
+        pred = predict_frame_heatmap(img, self.model)
+        pred = tf.squeeze(pred).numpy()
+        pred /= pred.max()
+        dets, bin_pred = postprocess_heatmap(pred, thresh=0.25)
+
+        return dets, pred, bin_pred
+
+
+    def dbscan_filter(self, points, eps=0.5, min_samples=3):
+        """
+        Filters 3D points using DBSCAN and returns clusters as a list of point lists.
+        Noise points (label == -1) are excluded.
+
+        Returns:
+            List of clusters, where each cluster is a list of 3D points.
+        """
+        if len(points) == 0:
+            return []
+
+        points_np = np.array(points)
+        clustering = DBSCAN(eps=eps, min_samples=min_samples).fit(points_np)
+        labels = clustering.labels_
+
+        clusters = []
+        for label in set(labels):
+            if label == -1:
+                continue  # Skip noise
+            cluster_points = points_np[labels == label].tolist()
+            clusters.append(cluster_points)
+
+        return clusters
+
+
     def get_stats(self, clicks, click_ind, april_2D, april_3D, clicks_2D, clicks_3D):
         april_reproj = np.array(self._3Dto2D(april_3D)) - np.array(april_2D)
         april_reproj = april_reproj.tolist()
@@ -489,7 +515,7 @@ class birdsEye():
                 pickle.dump(out_dict, f)
 
 
-    def annotator(self, outer, inner, rect, frame, ret):
+    def annotator(self, outer, inner, rect, frame):
         if self.RTK_watchdog:
             if len(outer) > 0:
                 if len(inner) > 0:
@@ -497,24 +523,22 @@ class birdsEye():
                     for pt in inner:
                         self.annotate(frame[-5], [pt[0], pt[1], 1.0])
                     if self.plot:
-                        cv2.putText(rect, 'Label:', (1300,80), \
-                            cv2.FONT_HERSHEY_SIMPLEX, 3, (0, 255, 255), 3)
-                        cv2.putText(rect, '1.0', (1750,80), \
+                        # cv2.putText(rect, 'Label:', (1300,80), \
+                            # cv2.FONT_HERSHEY_SIMPLEX, 3, (0, 255, 255), 3)
+                        cv2.putText(rect, '++++', (1600,80), \
                             cv2.FONT_HERSHEY_SIMPLEX, 3, (0, 255, 0), 3)
                 elif len(inner) == 0:
                     # print('    click detected in frame buffer region; "Test"')
                     # self.annotate(frame[-5], "Test")
                     if self.plot:
-                        cv2.putText(rect, 'Label:', (1300,80), \
-                            cv2.FONT_HERSHEY_SIMPLEX, 3, (0, 255, 255), 3)
-                        cv2.putText(rect, 'Test', (1600,80), \
+                        cv2.putText(rect, 'Pass', (1600,80), \
                             cv2.FONT_HERSHEY_SIMPLEX, 3, (0, 255, 255), 3)
             else:
                 # self.annotate(frame[-5], 0.0)
                 if self.plot:
-                    cv2.putText(rect, 'Label:', (1400,80), \
-                        cv2.FONT_HERSHEY_SIMPLEX, 3, (0, 255, 255), 3)
-                    cv2.putText(rect, '0.0', (1750,80), \
+                    # cv2.putText(rect, 'Label:', (1400,80), \
+                        # cv2.FONT_HERSHEY_SIMPLEX, 3, (0, 255, 255), 3)
+                    cv2.putText(rect, '----', (1600,80), \
                         cv2.FONT_HERSHEY_SIMPLEX, 3, (0, 0, 255), 3)
 
             if self.apriltags:
@@ -523,8 +547,8 @@ class birdsEye():
                 else:
                     self.annotate(frame[-5], 0.0, save_name=os.path.join(self.img_dir,'april_labels'))
 
-            if self.detect:
-                self.annotate(frame[-5], ret, save_name=os.path.join(self.img_dir,'results'))
+            # if self.detect:
+            #     self.annotate(frame[-5], ret, save_name=os.path.join(self.img_dir,'results'))
 
         else:
             print(f'    skipping annotation: bad RTK_STATUS, {frame[-5]}')
@@ -534,10 +558,11 @@ class birdsEye():
         if save_name is None:
             save_name = self.save_name
 
-        if self.clear_flag is None:
+        if not save_name in self.clear_flag:
+            print(f'  clearing {save_name}.txt')
             f = open(f"{save_name}.txt", "w")
             f.close()
-            self.clear_flag = True
+            self.clear_flag[save_name] = True
 
         f = open(f"{save_name}.txt", "a")
         line = f'{self.frame_index} {img_file} '
@@ -554,6 +579,26 @@ class birdsEye():
         f.write(line)
         f.close()
         print(f'    Annotation saved: {self.frame_index}, {save_name}.txt, {label}')
+
+
+    def export_shapefile(self, pt_list):
+        # Define schema
+        schema = {
+            'geometry': 'Point',
+            'properties': {'name': 'str', 'value': 'int'}
+        }
+
+        # Sample data
+        points = []
+        for i, pt in enumerate(pt_list):
+            tag =
+            points.append({'geometry': Point(pt[0], pt[1]), 'properties': {'name': tag, 'value': 10}})
+        ]
+
+        # Write to shapefile
+        with fiona.open('output_fiona.shp', 'w', driver='ESRI Shapefile', schema=schema, crs=from_epsg(4326)) as output:
+            for point in points:
+                output.write(point)
 
 
     def ned_to_enu_se3(self, pose_ned):
@@ -603,9 +648,9 @@ class birdsEye():
         _ = plotTransform(self.ax, T_WI, colors=['m','y','c'], labels=['INS x-axis','INS y-axis', 'INS z-axis'])
         _ = plotTransform(self.ax, self.T_WC)
 
-        self.ax.set_xlim(T_WI[0,3]-15, T_WI[0,3]+15)
+        self.ax.set_xlim(T_WI[0,3]-7.5, T_WI[0,3]+7.5)
         self.ax.set_xlabel('East (m)')
-        self.ax.set_ylim(T_WI[1,3]-15, T_WI[1,3]+15)
+        self.ax.set_ylim(T_WI[1,3]-7.5, T_WI[1,3]+7.5)
         self.ax.set_ylabel('North (m)')
         self.ax.set_zlim(T_WI[2,3]-20, T_WI[2,3]+1)
         self.ax.set_zlabel('Z (m)')
@@ -613,6 +658,7 @@ class birdsEye():
         self.ax.set_title(f'Time: {frame[-1]}')
         self.ax.set_box_aspect([1,1,1])
         self.ax.set_proj_type('ortho')
+        self.ax.view_init(elev=90, azim=180)  # Change these values to adjust the view
 
         self._3DFrameVertices = self._2Dto3D(self._2DFrameVertices)
         self.ax.scatter(np.array(self._3DFrameVertices)[:,0], \
@@ -671,7 +717,7 @@ class birdsEye():
         cv2.putText(img, f'Frame {frame_index+1}/{total_frames}', (40, 1000), font, 1.5, (255, 255, 255), 2)
 
 
-    def frameProcessPlotter(self, frame, rect, clicks_2D, april_3D):
+    def frameProcessPlotter(self, frame, rect, pred, dets, clicks_2D, april_3D):
         rect = cv2.rectangle(rect, \
              [int(i) for i in self._2DInnerBound[0]], \
              [int(i) for i in self._2DInnerBound[2]], \
@@ -687,18 +733,62 @@ class birdsEye():
             color = (0,0,255)
         else:
             color = (0,0,0)
+
+        if pred.max() <= 1.0:
+            pred = (pred * 255).astype(np.uint8)
+        else:
+            pred = pred.astype(np.uint8)
+
+        # overlay = cv2.cvtColor(pred, cv2.COLOR_GRAY2RGB)
+        pred = cv2.cvtColor(pred, cv2.COLOR_GRAY2RGB)
+
+        mask = np.all(pred == [255, 255, 255], axis=-1)  # shape (H, W), bool
+        overlay = np.zeros_like(pred)
+        overlay[mask] = (0,0,255)  # Green overlay where pred is 1
+
+        alpha = 0.4  # Transparency factor
+        tmp = rect.copy()
+
+        pred = cv2.addWeighted(tmp, 1.0, overlay, alpha, 0)
+
         for click in clicks_2D:
             cv2.circle(rect, [int(click[0]), int(click[1])], 15, color, 3)
+            cv2.circle(pred, [int(click[0]), int(click[1])], 15, color, 3)
 
         for apr in self._3Dto2D(april_3D):
             cv2.circle(rect, [int(apr[0]), int(apr[1])], 15, color, 3)
-
 
         bp = np.array(self.clicks_3D)
         bp = np.squeeze(bp)
         if self.apriltags:
             ap = np.array(self.april_3D)
             ap = np.squeeze(ap)
+        if self.detect:
+            if self.frame_index >= 10:
+                clustered_dets = self.dbscan_filter(self.dets_3D, eps=0.20, min_samples=10)
+                tmp = []
+                for i in clustered_dets:
+                    tmp += i
+                valid_pts = self._3Dto2D(tmp)
+                valid_pts, _, _ = self._2DBoxCheck(valid_pts)
+                for pt in valid_pts:
+                    self.annotate(frame[-5], [pt[0], pt[1], 1.0], save_name=os.path.join(self.img_dir,'results'))
+                dp = np.array(tmp)
+                dp = np.squeeze(dp)
+
+                if dp.size == 0:
+                    pass
+                elif dp.ndim == 1:
+                    print(dp)
+                    self.ax.scatter(dp[0], \
+                                    dp[1], \
+                                    dp[2],
+                                    c='g', alpha=0.1, s=5, label='Dets3D')
+                else:
+                    self.ax.scatter(dp[:, 0], \
+                                    dp[:, 1], \
+                                    dp[:, 2], \
+                                    c='g', alpha=0.1, s=5, label='Dets3D')
 
         if len(self.clicks_3D) > 1:
             self.ax.scatter(bp[:,0], \
@@ -710,7 +800,7 @@ class birdsEye():
             self.ax.scatter(bp[0], \
                             bp[1], \
                             bp[2], \
-                            c='b', alpha=0.1, s=32)
+                            c='b', alpha=0.1, s=32, label='ClickBackProj')
         else:
             pass  # nothing yet
 
@@ -725,11 +815,30 @@ class birdsEye():
                 self.ax.scatter(ap[0], \
                                 ap[1], \
                                 ap[2], \
-                                c='r', alpha=0.3, s=16)
+                                c='r', alpha=0.3, s=16, label='AprilBackProj')
             else:
                 pass  # nothing yet
 
         self.ax.legend()
+
+        self.fig.canvas.draw_idle()
+        plt.pause(0.01)
+        # p = os.path.expanduser('~')
+        # p = os.path.join(p, 'catch', 'tmp', f'3d_{str(self.frame_index).rjust(5,str(0))}.png')
+        # self.fig.savefig(p)
+        self.ax.cla()
+
+        # p = os.path.expanduser('~')
+        # p = os.path.join(p, 'catch', 'tmp', f'2d_{str(self.frame_index).rjust(5,str(0))}.png')
+        if self.detect:
+            # cv2.imshow("Pred", pred)
+            cv2.imshow("Pred", pred)
+            # cv2.imwrite(p, pred)
+
+        else:
+            cv2.imshow("Window", rect)
+            # cv2.imwrite(p, rect)
+        cv2.waitKey(200)
 
 
     def parseFlightDatabase(self):
@@ -749,13 +858,24 @@ class birdsEye():
         self._2DOuterBound = np.squeeze(self._2DOuterBound).tolist()
 
         if self.plot:
-            cv2.namedWindow("Window", cv2.WINDOW_NORMAL)
-            cv2.resizeWindow("Window", self.res[0], self.res[1])
+            if self.detect:
+                cv2.namedWindow("Pred", cv2.WINDOW_NORMAL)
+                cv2.resizeWindow("Pred", int(self.res[0]/2), int(self.res[1]/2))
+            else:
+                cv2.namedWindow("Window", cv2.WINDOW_NORMAL)
+                cv2.resizeWindow("Window", int(self.res[0]/2), int(self.res[1]/2))
 
         if self.manual:
             self.manualProcess(clks)
         else:
             self.autoProcess(clks)
+
+        clustered_dets = self.dbscan_filter(self.dets_3D, eps=0.20, min_samples=10)
+        tmp = []
+        for i in clustered_dets:
+            tmp += i
+
+
 
         print('\nRTK Service Stats:')
         print(f'    Status 3 (Fix): {self.rtk_tracker[0]} of {sum(self.rtk_tracker)} ({self.rtk_tracker[0]/sum(self.rtk_tracker)})')
@@ -793,6 +913,7 @@ class birdsEye():
             april_3D = None
             clicks_2D = None
             clicks_3D = None
+            dets = None
 
             if self.radalt > 3.0:
                 # changing to my filepath
@@ -810,8 +931,10 @@ class birdsEye():
                         self.april_3D += april_3D
 
                 if self.detect:
-                    ret, ret_raw = self.detector(rect)
-                    self.annotate(frame[-5], ret, save_name=os.path.join(self.img_dir,'results'))
+                    # ret, ret_raw = self.detector(rect)
+                    dets, pred = self.heatmapper(rect)
+
+                    # self.annotate(frame[-5], ret, save_name=os.path.join(self.img_dir,'results'))
 
                 clicks_2D = self._3Dto2D(clicks)
                 inner, i_ind, _ = self._2DBoxCheck(clicks_2D, box='inner')
@@ -825,11 +948,11 @@ class birdsEye():
                     self.get_stats(clicks, click_ind, april_2D, april_3D, clicks_2D, clicks_3D)
 
                 # annotation step
-                self.annotator(outer, inner, rect, frame, ret)
+                self.annotator(outer, inner, rect, frame)
 
                 # optional plotting step
                 if self.plot:
-                    self.frameProcessPlotter(frame, rect, clicks_2D, april_3D)
+                    self.frameProcessPlotter(frame, rect, pred, dets, clicks_2D, april_3D)
 
                     if self.detect:
                         bot = (0, 0, 255)
@@ -894,6 +1017,9 @@ class birdsEye():
             april_3D = None
             clicks_2D = None
             clicks_3D = None
+            pred = None
+            bin_pred = None
+            dets = None
 
             if self.radalt > 3.0:
                 # changing to my filepath
@@ -911,8 +1037,16 @@ class birdsEye():
                         self.april_3D += april_3D
 
                 if self.detect:
-                    ret, ret_raw = self.detector(rect)
-                    self.annotate(frame[-5], ret, save_name=os.path.join(self.img_dir,'results'))                        
+                    # ret, ret_raw = self.detector(rect)
+                    dets, pred, bin_pred = self.heatmapper(rect)
+                    # print('len(dets):, ', len(dets))
+                    if dets is not None:
+                        inner, i_ind, _ = self._2DBoxCheck(dets, box='inner')
+                        if len(inner) > 0:
+                            inner = self._2Dto3D(inner)
+                            self.dets_3D += inner
+                            # print('len(self.dets_3D):, ', len(self.dets_3D))
+                    # self.annotate(frame[-5], ret, save_name=os.path.join(self.img_dir,'results'))
 
                 clicks_2D = self._3Dto2D(clicks)
                 inner, i_ind, _ = self._2DBoxCheck(clicks_2D, box='inner')
@@ -926,35 +1060,12 @@ class birdsEye():
                     self.get_stats(clicks, click_ind, april_2D, april_3D, clicks_2D, clicks_3D)
 
                 # annotation step
-                self.annotator(outer, inner, rect, frame, ret)
+                self.annotator(outer, inner, rect, frame)
 
                 # optional plotting step
                 if self.plot:
-                    self.frameProcessPlotter(frame, rect, clicks_2D, april_3D)
-                    if self.detect:     
-                        bot = (0, 0, 255)
-                        vec = (0, 2.55, -2.55)
-                        tmp = int(ret_raw*100)
-                        c1 = (0, tmp*vec[1] + bot[1], tmp*vec[2] + bot[2])
-                        c2 = (0, ret*100*vec[1] + bot[1], ret*100*vec[2] + bot[2])
-                        cv2.putText(rect, f'CNN: ', (950,1190), \
-                            cv2.FONT_HERSHEY_SIMPLEX, 3, (0, 255, 255), 3)
-                        cv2.putText(rect, f' {ret_raw:.04f} -> ', (1150,1190), \
-                            cv2.FONT_HERSHEY_SIMPLEX, 3, c1, 3)
-                        cv2.putText(rect, f'{ret}', (1750,1190), \
-                            cv2.FONT_HERSHEY_SIMPLEX, 3, c2, 3)
-                    
-                    self.fig.canvas.draw_idle()
-                    plt.pause(0.01)
-                    p = os.path.expanduser('~')
-                    p = os.path.join(p, 'catch', 'tmp', f'2d_{str(self.frame_index).rjust(5,str(0))}.png')
-                    # self.fig.savefig(p)
-                    self.ax.cla()
-
-                    cv2.imshow("Window", rect)
-                    cv2.waitKey(200)
-                    cv2.imwrite(p, rect)
-
+                    self.frameProcessPlotter(frame, rect, bin_pred, dets, clicks_2D, april_3D)
+                    # self.frameProcessPlotter(frame, rect, pred, clicks_2D, april_3D)
 
 if __name__ == '__main__':
     import argparse
