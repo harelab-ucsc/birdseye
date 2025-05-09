@@ -3,11 +3,8 @@
 
 import tensorflow as tf
 from tensorflow.keras import layers, models, regularizers
-from tensorflow.keras.metrics import (
-    BinaryCrossentropy, BinaryAccuracy, Precision, Recall, AUC
-)
 
-def yolo_model(input_shape=(416, 416, 3), num_classes=2):
+def yolo_model(input_shape=(416, 416, 3), num_classes=2, anchors=5):
     base_model = tf.keras.applications.MobileNetV2(
         input_shape=input_shape,
         include_top=False,
@@ -18,12 +15,10 @@ def yolo_model(input_shape=(416, 416, 3), num_classes=2):
     x = base_model.output
     x = layers.Conv2D(256, (3, 3), padding='same', activation='relu')(x)
     x = layers.BatchNormalization()(x)
-    x = layers.GlobalAveragePooling2D()(x)
-    x = layers.Dense(128, activation='relu')(x)
-    output = layers.Dense(5 + num_classes, activation='sigmoid')(x)
+    x = layers.Conv2D(anchors * (5 + num_classes), (1, 1), padding='same')(x)
+    output = layers.Reshape((13, 13, anchors, 5 + num_classes))(x)
 
-    model = models.Model(inputs=base_model.input, outputs=output)
-    return model
+    return models.Model(inputs=base_model.input, outputs=output)
 
 # def yolo_model(input_shape=(416, 416, 3), num_classes=1, l2_reg=0.01, dropout_rate=0.5):
 #     # Base model

@@ -24,6 +24,33 @@ class YOLOFrameInference:
 
         self.loader = FrameLoader(image_size=self.input_shape[:2], num_classes=num_classes)
 
+    def predict_points(self, image_path, conf_threshold=0.3):
+        image_raw = tf.io.decode_png(tf.io.read_file(image_path), channels=3)
+        image_resized = tf.image.resize(image_raw, self.loader.image_size)
+        image_input = tf.expand_dims(image_resized, axis=0)
+
+        preds = self.model.predict(image_input, verbose=0)[0]
+
+        if preds.ndim != 3:
+            raise ValueError(f"Invalid prediction shape: {preds.shape} — expected (grid_h, grid_w, channels)")
+
+        grid_h, grid_w, _ = preds.shape
+        points = []
+
+        for y in range(grid_h):
+            for x in range(grid_w):
+                cell = preds[y, x]
+                obj_score = cell[4]
+                if obj_score < conf_threshold:
+                    continue
+
+                x_rel, y_rel = cell[0], cell[1]
+                px = int((x + x_rel) * (self.loader.image_size[1] / grid_w))
+                py = int((y + y_rel) * (self.loader.image_size[0] / grid_h))
+                points.append((px, py))
+
+        return points
+
     def predict_and_visualize(self, image_path, threshold=0.3):
         image_raw = tf.io.decode_png(tf.io.read_file(image_path), channels=3)
         image_resized = tf.image.resize(image_raw, self.loader.image_size)
@@ -32,7 +59,7 @@ class YOLOFrameInference:
         preds = self.model.predict(image_input, verbose=0)[0]
 
         if preds.ndim != 3:
-            raise ValueError(f" Invalid prediction shape: {preds.shape} — expected (grid_h, grid_w, channels)")
+            raise ValueError(f"Invalid prediction shape: {preds.shape} — expected (grid_h, grid_w, channels)")
 
         grid_h, grid_w = preds.shape[:2]
         vis = image_resized.numpy().astype(np.uint8).copy()
@@ -61,6 +88,7 @@ class YOLOFrameInference:
         plt.tight_layout()
         plt.show()
 
+
 if __name__ == '__main__':
     frames_dirs = [
         os.path.join(os.path.expanduser('~'), 'birdseye_CNN_data', '2025_04_16', 'pieranch_rect'),
@@ -74,8 +102,9 @@ if __name__ == '__main__':
     for _dir in frames_dirs:
         image_paths = sorted(glob2.glob(os.path.join(_dir, '*.png')))
         for image_path in image_paths[:10]:
-            print(f"🔍 Predicting {image_path}")
+            print(f"\U0001F50D Predicting {image_path}")
             infer.predict_and_visualize(image_path)
+
 
 
 # import os
@@ -166,7 +195,7 @@ if __name__ == '__main__':
 
 # if __name__ == '__main__':
 #     frames_dirs = [
-#         os.path.join(os.path.expanduser('~'), 'birdseye_CNN_data', '2025_04_16', 'pieranch_rect'),
+#         os.path.join(os.path.expanduser('~'), 'birdseye_CNN_data', '2025_02_05', 'haybarn_01_rect'),
 #     ]
 
 #     models_dir = os.path.join(os.path.expanduser('~'), 'birdseye', 'models')
@@ -176,7 +205,7 @@ if __name__ == '__main__':
 #     infer = YOLOFrameInference(model_weights=model_path, input_shape=(416, 416, 3), num_classes=2)
 
 #     for _dir in frames_dirs:
-#         image_paths = sorted(glob2.glob(os.path.join(_dir, '*.png')))
+#         image_paths = sorted(glob2.glob(os.path.join(_dir, '*.png'))
 #         for image_path in image_paths[:10]:  # limit to 10 for quick view
 #             print(f" Predicting {image_path}")
 #             infer.predict_and_visualize(image_path, label_file="labels.txt")
