@@ -1,11 +1,38 @@
 import os
 import glob2
+import random
+import pickle
+
 import numpy as np
 import matplotlib.pyplot as plt
+import scipy.ndimage as nd
 import tensorflow as tf
+
 from sklearn.utils.class_weight import compute_class_weight
 from collections import defaultdict
-import random
+
+
+# -- Elastic transformation helper --
+def elastic_transform(image, alpha=34, sigma=4):
+    random_state = np.random.RandomState(None)
+    shape = image.shape
+
+    dx = nd.gaussian_filter((random_state.rand(*shape[:2]) * 2 - 1), sigma) * alpha
+    dy = nd.gaussian_filter((random_state.rand(*shape[:2]) * 2 - 1), sigma) * alpha
+
+    x, y = np.meshgrid(np.arange(shape[1]), np.arange(shape[0]))
+    indices = np.reshape(y + dy, (-1, 1)), np.reshape(x + dx, (-1, 1))
+
+    def _warp(img):
+        if img.ndim == 2:
+            return nd.map_coordinates(img, indices, order=1, mode='reflect').reshape(shape[:2])
+        else:
+            return np.stack([
+                nd.map_coordinates(img[..., c], indices, order=1, mode='reflect')
+                for c in range(img.shape[-1])
+            ], axis=-1)
+
+    return _warp(image).astype(np.float32)
 
 
 class TileLoader:
@@ -168,7 +195,7 @@ class TileLoader:
 
         tiles.set_shape([None, self.tile_height, self.tile_width, 3])
         if self.use_heatmaps:
-            labels.set_shape([None, None, None, 1])
+            labels.set_shape([None, self.tile_height, self.tile_width, 2])  # <- must be 2 channels
         else:
             labels.set_shape([None])
 
@@ -189,9 +216,11 @@ class TileLoader:
     def augment(self, image, label):
         image = tf.image.convert_image_dtype(image, tf.float32)
 
+        # --- Random transform selection mask ---
         m = tf.random.uniform([7])
         n = tf.random.uniform([], minval=-1.0, maxval=1.0)
 
+        # --- Color transforms ---
         if m[0] < 0.5:
             image = tf.image.adjust_brightness(image, n * m[0] / 2)
         if m[1] < 0.5:
@@ -199,23 +228,49 @@ class TileLoader:
         if m[2] < 0.5:
             image = tf.image.random_hue(image, 0.02)
             image = tf.image.random_saturation(image, 0.95, 1.05)
+
+        # --- Geometric transforms ---
         if m[3] < 0.5:
             image = tf.image.flip_left_right(image)
             if self.use_heatmaps:
                 label = tf.image.flip_left_right(label)
+
         if m[4] < 0.5:
             image = tf.image.flip_up_down(image)
             if self.use_heatmaps:
                 label = tf.image.flip_up_down(label)
-        # if m[5] < 0.5:
-        #     image = self.random_zoom(image)
+
+        # --- Elastic deformation (only apply when heatmaps used) ---
+        def apply_elastic(image_np, label_np):
+            return elastic_transform(image_np), elastic_transform(label_np)
+
+        if self.use_heatmaps and m[5] < 0.3:
+            image, label = tf.numpy_function(
+                func=apply_elastic,
+                inp=[image, label],
+                Tout=[tf.float32, tf.float32]
+            )
+            image.set_shape([self.tile_height, self.tile_width, 3])
+            label.set_shape([self.tile_height, self.tile_width, 2])
+
+        # --- Rotation (0, 90, 180, 270) ---
+        k = tf.random.uniform([], minval=0, maxval=4, dtype=tf.int32)
+        image = tf.image.rot90(image, k)
+        if self.use_heatmaps:
+            label = tf.image.rot90(label, k)
+
+        # --- Additive Gaussian noise ---
         if m[6] < 0.5:
             image = self.add_noise(image)
 
+        # --- Postprocess ---
         image = tf.image.convert_image_dtype(image, tf.uint8)
 
         if self.use_heatmaps:
-            tf.ensure_shape(label, [self.tile_height, self.tile_width, 1])
+            heatmap = label[..., 0:1]
+            weightmap = label[..., 1:2]
+            label = tf.concat([heatmap, weightmap], axis=-1)
+            tf.ensure_shape(label, [self.tile_height, self.tile_width, 2])  # <- must be 2 channels
         else:
             label = tf.expand_dims(label, -1)
 
@@ -231,7 +286,7 @@ class TileLoader:
         else:
             def format_label(x, y):
                 if self.use_heatmaps:
-                    tf.ensure_shape(y, [self.tile_height, self.tile_width, 1])
+                    tf.ensure_shape(y, [self.tile_height, self.tile_width, 2])
                     return x, y
                 else:
                     return x, tf.expand_dims(y, -1)
@@ -246,12 +301,57 @@ class TileLoader:
 
 # ========== Class Weights Helper ========== #
 
-def get_class_weights(file_list, tile_loader):
+def get_cache_key(file_list, tile_loader):
     """
-    Computes class weights accounting for:
-    - all tiled frames (positive or negative)
-    - balance_ratio governing negative sampling
+    Returns a hashable cache key that accounts for:
+    - list of image files
+    - label file name
+    - tile loader config
+    - timestamps of any results.txt files (CNN detections)
     """
+    result_file_times = []
+    for img_path in file_list:
+        dir_path = os.path.dirname(img_path)
+        cnn_path = os.path.join(dir_path, "results.txt")
+        if os.path.exists(cnn_path):
+            result_file_times.append(os.path.getmtime(cnn_path))
+
+    summary = {
+        "files": sorted(file_list),
+        "label_file": tile_loader.label_file,
+        "use_heatmaps": tile_loader.use_heatmaps,
+        "tile_size": (tile_loader.tile_height, tile_loader.tile_width),
+        "buffer": tile_loader.edge_buffer,
+        "results_txt_times": sorted(result_file_times)
+    }
+
+    import json, hashlib
+    summary_str = json.dumps(summary, sort_keys=True)
+    return hashlib.md5(summary_str.encode()).hexdigest()
+
+
+def get_class_weights(file_list, tile_loader, cache_dir=None, bypass_cache=False):
+    if cache_dir is None or bypass_cache:
+        use_cache = False
+    else:
+        use_cache = True
+        os.makedirs(cache_dir, exist_ok=True)
+
+    cache_key = get_cache_key(file_list, tile_loader)
+    cache_path = os.path.join(cache_dir, f"{cache_key}.pkl") if use_cache else None
+
+    if use_cache and os.path.exists(cache_path):
+        try:
+            with open(cache_path, "rb") as f:
+                print(f"⚡ Loaded cached class weights from: {cache_path}")
+                return pickle.load(f)
+        except Exception as e:
+            print(f"⚠️ Failed to load cached weights at {cache_path}: {e}")
+            print("🧹 Deleting corrupted cache and recomputing...")
+            os.remove(cache_path)
+    else:
+        print('No cached weights found... computing...')
+
     total_pos = 0
     total_neg = 0
 
@@ -267,7 +367,8 @@ def get_class_weights(file_list, tile_loader):
 
             for lbl in label_list:
                 if tile_loader.use_heatmaps:
-                    if np.any(lbl > 0):
+                    heatmap, _ = lbl  # unpack tuple
+                    if np.any(heatmap > 0):
                         total_pos += 1
                     else:
                         total_neg += 1
@@ -283,7 +384,13 @@ def get_class_weights(file_list, tile_loader):
     print(f"\n📏 Final class sample counts: pos={total_pos}, neg={total_neg}\n")
     y_true = [0] * total_neg + [1] * total_pos
     weights = compute_class_weight('balanced', classes=np.unique(y_true), y=y_true)
-    return {int(cl): float(w) for cl, w in zip(np.unique(y_true), weights)}
+    result = {int(cl): float(w) for cl, w in zip(np.unique(y_true), weights)}
+
+    with open(cache_path, "wb") as f:
+        pickle.dump(result, f)
+        print(f"💾 Cached class weights to: {cache_path}")
+
+    return result
 
 
 def visualize_tiles(dataset, heatmap=False, num_tiles=16):
@@ -295,19 +402,32 @@ def visualize_tiles(dataset, heatmap=False, num_tiles=16):
         try:
             img = tf.cast(images, tf.uint8).numpy()
 
-            plt.figure(figsize=(4, 4))
-            plt.subplot(1, 2, 1)
+            plt.figure(figsize=(12, 4))
+
+            # Show RGB tile
+            plt.subplot(1, 3, 1)
             plt.imshow(img)
             plt.title("Tile")
             plt.axis('off')
 
-            plt.subplot(1, 2, 2)
             if heatmap:
-                label = tf.squeeze(labels).numpy()
-                plt.imshow(label, cmap='hot')
-                plt.title("Heatmap")
+                heatmap_arr, weightmap_arr = tf.unstack(labels, axis=-1)
+                heatmap_arr = heatmap_arr.numpy()
+                weightmap_arr = weightmap_arr.numpy()
+
+                plt.subplot(1, 3, 2)
+                plt.imshow(heatmap_arr, cmap='hot', vmin=0.0, vmax=1.0)
+                plt.title("Label Heatmap")
+                plt.axis('off')
+
+                plt.subplot(1, 3, 3)
+                plt.imshow(weightmap_arr, cmap='Blues', vmin=0.0, vmax=1.0)
+                plt.title("Weight Map")
+                plt.axis('off')
+
             else:
                 label_val = labels.numpy() if tf.rank(labels) == 0 else labels.numpy()[0]
+                plt.subplot(1, 3, 2)
                 plt.text(0.5, 0.5, f"Class: {int(label_val)}", ha='center', va='center', fontsize=16)
                 plt.title("Label")
                 plt.axis('off')
@@ -315,5 +435,6 @@ def visualize_tiles(dataset, heatmap=False, num_tiles=16):
             plt.tight_layout()
             plt.show()
             count += 1
+
         except Exception as e:
             print(f"Skipped tile due to error: {e}")

@@ -1,10 +1,7 @@
 import os
 import glob2
 import cv2
-<<<<<<< HEAD
 
-=======
->>>>>>> 0267e3771c0b543732803e17211967e58843c56a
 import matplotlib.pyplot as plt
 import tensorflow as tf
 import numpy as np

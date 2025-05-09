@@ -9,6 +9,38 @@ from generator import generator  # assumes you have a generator() model builder 
 import pickle
 
 
+class HeatmapLogger(tf.keras.callbacks.Callback):
+    def __init__(self, model, val_ds, log_dir, log_freq=5, num_samples=4):
+        super().__init__()
+        self.model = model
+        self.val_ds = val_ds
+        self.writer = tf.summary.create_file_writer(log_dir)
+        self.log_freq = log_freq
+        self.num_samples = num_samples
+
+    def on_epoch_end(self, epoch, logs=None):
+        if epoch % self.log_freq != 0:
+            return
+
+        val_batch = next(iter(self.val_ds.take(1)))
+        images, labels = val_batch
+        preds = self.model.predict(images)
+
+        with self.writer.as_default():
+            for i in range(min(self.num_samples, images.shape[0])):
+                img = tf.cast(images[i], tf.uint8)
+                true = tf.squeeze(labels[i][..., 0:1])
+                pred = tf.squeeze(preds[i])
+
+                # Normalize for display
+                true = tf.clip_by_value(true, 0.0, 1.0)
+                pred = tf.clip_by_value(pred, 0.0, 1.0)
+
+                tf.summary.image(f"input/image_{i}", tf.expand_dims(img, 0), step=epoch)
+                tf.summary.image(f"label/true_heatmap_{i}", tf.expand_dims(tf.expand_dims(true, -1), 0), step=epoch)
+                tf.summary.image(f"prediction/pred_heatmap_{i}", tf.expand_dims(tf.expand_dims(pred, -1), 0), step=epoch)
+
+
 class BirdsEyeTrainer:
     def __init__(self, config):
         self.config = config
@@ -49,8 +81,18 @@ class BirdsEyeTrainer:
         
         print('\n\nComputing class weights... \n\n')
         if self.config["tiled"]:
-            self.class_weights = tile_weights(self.train_files, self.tile_loader)
-            tmp = tile_weights(self.val_files, self.tile_loader)
+            self.class_weights = tile_weights(
+                self.train_files,
+                self.tile_loader,
+                cache_dir=self.config["train_cache_dir"],
+                bypass_cache=self.config.get("bypass_cache", False)
+            )
+            tmp = tile_weights(
+                self.val_files,
+                self.tile_loader,
+                cache_dir=self.config["val_cache_dir"],
+                bypass_cache=self.config.get("bypass_cache", False)
+            )
         else:
             self.class_weights = frame_weights(self.train_files, self.frame_loader)
             tmp = frame_weights(self.val_files, self.frame_loader)
@@ -71,6 +113,10 @@ class BirdsEyeTrainer:
             augment=True
         )
 
+        for x, y in self.train_ds.take(1):
+            print("Tile shape:", x.shape)
+            print("Label shape:", y.shape)        
+
         self.val_ds = loader.build_dataset(
             file_list=self.val_files,
             label_file=self.config["label_file"],
@@ -79,6 +125,14 @@ class BirdsEyeTrainer:
             repeat=False,
             augment=False
         )
+
+        train_count = sum(1 for _ in self.train_ds)
+        val_count = sum(1 for _ in self.val_ds)
+
+        print(f"📦 Loaded {train_count} training samples and {val_count} validation samples.")
+
+        if train_count == 0 or val_count == 0:
+            print("⚠️ Warning: Empty dataset(s) detected. Check labels or tile settings.")
 
 
     def build_model(self):
@@ -141,17 +195,24 @@ class BirdsEyeTrainer:
             tf.keras.callbacks.TensorBoard(log_dir="logs", histogram_freq=1, write_graph=True, write_images=True),
             tf.keras.callbacks.ReduceLROnPlateau(monitor=self.config["monitor"], factor=0.5, patience=3, min_lr=0),
             tf.keras.callbacks.EarlyStopping(monitor=self.config["monitor"], patience=15),
-            tf.keras.callbacks.ModelCheckpoint(
-                filepath=self.config["filename"] + ".weights.h5",
-                save_weights_only=True,
-                save_best_only=True,
-                monitor=self.config["monitor"],
-                verbose=2
-            )
+            tf.keras.callbacks.ModelCheckpoint(filepath=self.config["filename"] + ".weights.h5", save_weights_only=True, save_best_only=True, monitor=self.config["monitor"], verbose=2),
         ]
+
+        if self.config.get("log_images", False):
+            callbacks.append(HeatmapLogger(
+                self.model,
+                self.val_ds,
+                log_dir=os.path.join("logs", "images"),
+                log_freq=self.config.get("log_images_every", 5)
+            ))
 
         tmp = self.config["filename"]
         print(f"\n\nBeginning training of model {tmp}...\n\n")
+
+        # Save run config
+        with open(tmp + "_config.json", "w") as f:
+            json.dump(self.config, f, indent=2)
+
         history = self.model.fit(
             self.train_ds,
             validation_data=self.val_ds,
@@ -161,6 +222,12 @@ class BirdsEyeTrainer:
             verbose=1,
             steps_per_epoch=self.config.get("steps_per_epoch")
         )
+        metrics = self.model.evaluate(self.val_ds, verbose=1, return_dict=True)
+
+        with open(self.config["filename"] + "_metrics.json", "w") as f:
+            json.dump(metrics, f, indent=2)
+        print(f"\n📊 Final Validation Metrics:\n{json.dumps(metrics, indent=2)}\n")
+
         with open(self.config["filename"]+'_history.pkl', 'wb') as f:
             pickle.dump(history, f)
 
@@ -287,7 +354,10 @@ if __name__ == '__main__':
         "thresh": 0.5,
         "logits": False,
         "monitor": "val_loss",
-        "filename": filename
+        "filename": filename,
+        "train_cache_dir": os.path.expanduser("~/.cache/birdseye/class_weights"),
+        "val_cache_dir": os.path.expanduser("~/.cache/birdseye/val_weights"),
+        "bypass_cache": False,
     }
 
     trainer = BirdsEyeTrainer(config)
