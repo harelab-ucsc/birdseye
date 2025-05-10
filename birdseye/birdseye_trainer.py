@@ -1,12 +1,30 @@
 import os
 import glob2
+import pickle
+import json
 import tensorflow as tf
+import tensorflow.keras.backend as K
 from tile_loader import TileLoader
 from tile_loader import get_class_weights as tile_weights
 from frame_loader import FrameLoader
 from frame_loader import get_class_weights as frame_weights
 from generator import generator  # assumes you have a generator() model builder defined
-import pickle
+
+
+class SlicedMetric(tf.keras.metrics.Metric):
+    def __init__(self, base_metric, name=None):
+        super().__init__(name=name or base_metric.name, dtype=base_metric.dtype)
+        self.base_metric = base_metric
+
+    def update_state(self, y_true, y_pred, sample_weight=None):
+        y_true_sliced = y_true[..., 0:1]
+        return self.base_metric.update_state(y_true_sliced, y_pred, sample_weight)
+
+    def result(self):
+        return self.base_metric.result()
+
+    def reset_state(self):
+        return self.base_metric.reset_state()
 
 
 class HeatmapLogger(tf.keras.callbacks.Callback):
@@ -56,8 +74,9 @@ class BirdsEyeTrainer:
             tile_size=config.get("tile_size", (224, 224)),
             edge_buffer=config.get("edge_buffer", 81),
             use_heatmaps=config.get("use_heatmaps", False),
-            include_negatives=True,
-            balance_ratio=config.get("balance_ratio", 1.0)
+            include_negatives=self.config.get("include_negatives", True),
+            balance_ratio=config.get("balance_ratio", 1.0),
+            negative_mode=self.config.get("negative_mode", "random"),
         )
         self.frame_loader = FrameLoader(
             image_size=(self.IMG_HEIGHT, self.IMG_WIDTH))
@@ -96,7 +115,7 @@ class BirdsEyeTrainer:
         else:
             self.class_weights = frame_weights(self.train_files, self.frame_loader)
             tmp = frame_weights(self.val_files, self.frame_loader)
-        print(f'Training weights:\n{self.class_weights}\n')
+        print(f'\n\nTraining weights:\n{self.class_weights}\n')
         print(f'Validation stats:\n{tmp}\n\n')
 
 
@@ -113,10 +132,6 @@ class BirdsEyeTrainer:
             augment=True
         )
 
-        for x, y in self.train_ds.take(1):
-            print("Tile shape:", x.shape)
-            print("Label shape:", y.shape)        
-
         self.val_ds = loader.build_dataset(
             file_list=self.val_files,
             label_file=self.config["label_file"],
@@ -126,15 +141,7 @@ class BirdsEyeTrainer:
             augment=False
         )
 
-        train_count = sum(1 for _ in self.train_ds)
-        val_count = sum(1 for _ in self.val_ds)
-
-        print(f"📦 Loaded {train_count} training samples and {val_count} validation samples.")
-
-        if train_count == 0 or val_count == 0:
-            print("⚠️ Warning: Empty dataset(s) detected. Check labels or tile settings.")
-
-
+        
     def build_model(self):
         with self.strategy.scope():
             self.model = generator(
@@ -147,19 +154,36 @@ class BirdsEyeTrainer:
             )
 
             if self.config.get("use_heatmaps", False):
-                def weighted_heatmap_loss(y_true, y_pred, weights):
-                    bce = tf.keras.losses.binary_crossentropy(y_true, y_pred)
-                    return tf.reduce_mean(bce * weights)
+                def weighted_heatmap_loss(from_logits=True):
+                    def loss_fn(y_true, y_pred):
+                        y = y_true[..., 0]  # Ground truth heatmap
+                        w = y_true[..., 1]  # Pixelwise weight mask
 
-                def custom_loss(y_true, y_pred):
-                    y, w = y_true[..., 0:1], y_true[..., 1:2]
-                    return weighted_heatmap_loss(y, y_pred, w)
+                        # Define per-pixel BCE
+                        bce_fn = tf.keras.losses.BinaryCrossentropy(from_logits=from_logits, reduction="none")
+                        bce = bce_fn(y, y_pred)  # [B, H, W]
 
-                loss_fn = custom_loss                
+                        # Apply pixelwise weights
+                        weighted = bce * w
+
+                        # Normalize by total weight sum
+                        return tf.reduce_sum(weighted) / (tf.reduce_sum(w) + 1e-6)
+
+                    return loss_fn
+
+                def safe_heatmap_loss(from_logits=True):
+                    def loss_fn(y_true, y_pred):
+                        y = y_true[..., 0]  # Ensure valid target
+                        bce = tf.keras.losses.BinaryCrossentropy(from_logits=from_logits, reduction="sum_over_batch_size")  
+                        return bce(y, tf.squeeze(y_pred, axis=-1))
+
+                    return loss_fn
+
+                loss_fn = safe_heatmap_loss(from_logits=self.config.get("logits", False))                
                 metrics=[
-                    tf.keras.metrics.BinaryCrossentropy(from_logits=self.config.get("logits", False), name='bce'),
-                    tf.keras.metrics.MeanSquaredError(name='mse'),
-                    tf.keras.metrics.MeanAbsoluteError(name='mae'),
+                    SlicedMetric(tf.keras.metrics.BinaryCrossentropy(from_logits=self.config.get("logits", False), name='bce')),
+                    SlicedMetric(tf.keras.metrics.MeanSquaredError(name='mse')),
+                    SlicedMetric(tf.keras.metrics.MeanAbsoluteError(name='mae')),
                 ]
             else:
                 loss_fn = tf.keras.losses.BinaryFocalCrossentropy(
@@ -267,11 +291,11 @@ class BirdsEyeTrainer:
 
 
 if __name__ == '__main__':
-    # os.environ["CUDA_VISIBLE_DEVICES"] = "1"
+    os.environ["CUDA_VISIBLE_DEVICES"] = "1"
 
-    gpus = tf.config.list_physical_devices('GPU')
-    for gpu in gpus:
-        tf.config.experimental.set_memory_growth(gpu, True)
+    # gpus = tf.config.list_physical_devices('GPU')
+    # for gpu in gpus:
+    #     tf.config.experimental.set_memory_growth(gpu, True)
 
     data_root = os.path.join(os.path.expanduser('~'), 'birdseye_CNN_data')
 
@@ -358,6 +382,7 @@ if __name__ == '__main__':
         "train_cache_dir": os.path.expanduser("~/.cache/birdseye/class_weights"),
         "val_cache_dir": os.path.expanduser("~/.cache/birdseye/val_weights"),
         "bypass_cache": False,
+        "negative_mode": "random",  # options: 'random', 'once_per_image', 'none'
     }
 
     trainer = BirdsEyeTrainer(config)

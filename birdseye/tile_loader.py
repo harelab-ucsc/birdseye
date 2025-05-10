@@ -15,24 +15,25 @@ from collections import defaultdict
 # -- Elastic transformation helper --
 def elastic_transform(image, alpha=34, sigma=4):
     random_state = np.random.RandomState(None)
-    shape = image.shape
+    h, w = image.shape[:2]
 
-    dx = nd.gaussian_filter((random_state.rand(*shape[:2]) * 2 - 1), sigma) * alpha
-    dy = nd.gaussian_filter((random_state.rand(*shape[:2]) * 2 - 1), sigma) * alpha
+    dx = nd.gaussian_filter((random_state.rand(h, w) * 2 - 1), sigma) * alpha
+    dy = nd.gaussian_filter((random_state.rand(h, w) * 2 - 1), sigma) * alpha
 
-    x, y = np.meshgrid(np.arange(shape[1]), np.arange(shape[0]))
+    x, y = np.meshgrid(np.arange(w), np.arange(h))
     indices = np.reshape(y + dy, (-1, 1)), np.reshape(x + dx, (-1, 1))
 
-    def _warp(img):
-        if img.ndim == 2:
-            return nd.map_coordinates(img, indices, order=1, mode='reflect').reshape(shape[:2])
-        else:
-            return np.stack([
-                nd.map_coordinates(img[..., c], indices, order=1, mode='reflect')
-                for c in range(img.shape[-1])
-            ], axis=-1)
+    if image.ndim == 2:
+        warped = nd.map_coordinates(image, indices, order=1, mode='reflect')
+        return warped.reshape((h, w)).astype(np.float32)
 
-    return _warp(image).astype(np.float32)
+    elif image.ndim == 3:
+        channels = []
+        for c in range(image.shape[-1]):
+            warped = nd.map_coordinates(image[..., c], indices, order=1, mode='reflect')
+            warped = warped.reshape((h, w))
+            channels.append(warped)
+        return np.stack(channels, axis=-1).astype(np.float32)
 
 
 class TileLoader:
@@ -43,7 +44,8 @@ class TileLoader:
         edge_buffer=81, 
         use_heatmaps=False, 
         include_negatives=True, 
-        balance_ratio=1.0
+        balance_ratio=1.0,
+        negative_mode="random"
         ):
 
         self.tile_height, self.tile_width = tile_size
@@ -52,6 +54,7 @@ class TileLoader:
         self.use_heatmaps = use_heatmaps
         self.include_negatives = include_negatives
         self.balance_ratio = balance_ratio  # ratio of negatives to retain
+        self.negative_mode = negative_mode  # options: 'random', 'once_per_image', 'none'
 
 
     def load_labels(self, label_file, image_filename):
@@ -140,12 +143,22 @@ class TileLoader:
                                     sigma = 6 if source == "cnn" else 12
                                     weight = 0.5 if source == "cnn" else 1.0
                                     self.draw_gaussian(heatmap, weightmap, px, py, sigma, weight)
+                            weightmap = np.clip(weightmap, 1e-2, 1.0)
                             label_list.append((heatmap, weightmap))
                         else:
                             label_list.append(1.0)
 
                     elif self.include_negatives:
-                        if random.random() < self.balance_ratio:
+                        keep = False
+
+                        if self.negative_mode == "random":
+                            keep = random.random() < self.balance_ratio
+                        elif self.negative_mode == "once_per_image":
+                            keep = (len(label_list) == 0)  # keep the first empty tile only
+                        elif self.negative_mode == "none":
+                            keep = False
+
+                        if keep:
                             tiles.append(tile)
                             if self.use_heatmaps:
                                 empty = np.zeros((th, tw, 1), dtype=np.float32)
@@ -172,19 +185,25 @@ class TileLoader:
             tiles, classes = self.tile_image_and_label(image, labels)
 
             if len(tiles) == 0: # add spacer to filter away later
-                return (
-                    np.zeros((0, self.tile_height, self.tile_width, 3), dtype=np.uint8),
-                    np.zeros((0, self.tile_height, self.tile_width, 1), dtype=np.float32) if self.use_heatmaps
-                    else np.zeros((0,), dtype=np.float32)
-                )
+                if self.use_heatmaps:
+                    return (
+                        np.zeros((0, self.tile_height, self.tile_width, 3), dtype=np.uint8),
+                        np.zeros((0, self.tile_height, self.tile_width, 2), dtype=np.float32)
+                    )
+                else:
+                    return (
+                        np.zeros((0, self.tile_height, self.tile_width, 3), dtype=np.uint8),
+                        np.zeros((0,), dtype=np.float32)
+                    )
 
             tiles = np.array(tiles, dtype=np.uint8)
 
             if self.use_heatmaps:
-                labels = np.array(classes, dtype=np.float32)
+                # classes is a list of (heatmap, weightmap) pairs, each [H, W, 1]
+                combined = [np.concatenate([h, w], axis=-1) for h, w in classes]  # each becomes [H, W, 2]
+                labels = np.stack(combined, axis=0).astype(np.float32) 
             else:
                 labels = np.array(classes, dtype=np.float32).reshape(-1)
-
             return tiles, labels
 
         tiles, labels = tf.py_function(
@@ -240,37 +259,37 @@ class TileLoader:
             if self.use_heatmaps:
                 label = tf.image.flip_up_down(label)
 
-        # --- Elastic deformation (only apply when heatmaps used) ---
-        def apply_elastic(image_np, label_np):
-            return elastic_transform(image_np), elastic_transform(label_np)
+        # # --- Elastic deformation (only apply when heatmaps used) ---
+        # def apply_elastic(image_np, label_np):
+        #     return elastic_transform(image_np), elastic_transform(label_np)
 
-        if self.use_heatmaps and m[5] < 0.3:
-            image, label = tf.numpy_function(
-                func=apply_elastic,
-                inp=[image, label],
-                Tout=[tf.float32, tf.float32]
-            )
-            image.set_shape([self.tile_height, self.tile_width, 3])
-            label.set_shape([self.tile_height, self.tile_width, 2])
+        # if self.use_heatmaps and m[5] < 0.3:
+        #     image, label = tf.numpy_function(
+        #         func=apply_elastic,
+        #         inp=[image, label],
+        #         Tout=[tf.float32, tf.float32]
+        #     )
+        #     image.set_shape([self.tile_height, self.tile_width, 3])
+        #     label.set_shape([self.tile_height, self.tile_width, 2])
 
-        # --- Rotation (0, 90, 180, 270) ---
-        k = tf.random.uniform([], minval=0, maxval=4, dtype=tf.int32)
-        image = tf.image.rot90(image, k)
-        if self.use_heatmaps:
-            label = tf.image.rot90(label, k)
+        # # --- Rotation (0, 90, 180, 270) ---
+        # k = tf.random.uniform([], minval=0, maxval=4, dtype=tf.int32)
+        # image = tf.image.rot90(image, k)
+        # if self.use_heatmaps:
+        #     label = tf.image.rot90(label, k)
 
-        # --- Additive Gaussian noise ---
-        if m[6] < 0.5:
-            image = self.add_noise(image)
+        # # --- Additive Gaussian noise ---
+        # if m[6] < 0.5:
+        #     image = self.add_noise(image)
 
         # --- Postprocess ---
-        image = tf.image.convert_image_dtype(image, tf.uint8)
-
+        image = tf.cast(image, tf.uint8)  # ✅ safe and shape-preserving
         if self.use_heatmaps:
             heatmap = label[..., 0:1]
             weightmap = label[..., 1:2]
             label = tf.concat([heatmap, weightmap], axis=-1)
             tf.ensure_shape(label, [self.tile_height, self.tile_width, 2])  # <- must be 2 channels
+            # label = tf.clip_by_value(label, 0.0, 1.0)
         else:
             label = tf.expand_dims(label, -1)
 
@@ -283,20 +302,13 @@ class TileLoader:
 
         if augment:
             ds = ds.map(self.augment, num_parallel_calls=tf.data.AUTOTUNE)
-        else:
-            def format_label(x, y):
-                if self.use_heatmaps:
-                    tf.ensure_shape(y, [self.tile_height, self.tile_width, 2])
-                    return x, y
-                else:
-                    return x, tf.expand_dims(y, -1)
-
-            ds = ds.map(format_label, num_parallel_calls=tf.data.AUTOTUNE)
 
         if repeat:
             ds = ds.repeat()
 
-        ds = ds.shuffle(buffer_size).batch(batch_size).prefetch(tf.data.AUTOTUNE)
+        ds = ds.shuffle(buffer_size)
+        ds = ds.batch(batch_size)  # 👈 this is now guaranteed to work correctly
+        ds = ds.prefetch(tf.data.AUTOTUNE)
         return ds
 
 # ========== Class Weights Helper ========== #
