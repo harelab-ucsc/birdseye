@@ -140,10 +140,10 @@ class TileLoader:
                             for lx, ly, cls_str, source in tile_labels:
                                 if x <= lx < x+tw and y <= ly < y+th:
                                     px, py = int(lx - x), int(ly - y)
-                                    sigma = 6 if source == "cnn" else 12
+                                    sigma = 3 if source == "cnn" else 10
                                     weight = 0.5 if source == "cnn" else 1.0
                                     self.draw_gaussian(heatmap, weightmap, px, py, sigma, weight)
-                            weightmap = np.clip(weightmap, 1e-2, 1.0)
+                            # weightmap = np.clip(weightmap, 1e-2, 1.0)
                             label_list.append((heatmap, weightmap))
                         else:
                             label_list.append(1.0)

@@ -143,74 +143,78 @@ class BirdsEyeTrainer:
 
         
     def build_model(self):
-        with self.strategy.scope():
-            self.model = generator(
-                self.TILE_HEIGHT if self.config["tiled"] else self.IMG_HEIGHT,
-                self.TILE_WIDTH if self.config["tiled"] else self.IMG_WIDTH,
-                self.IMG_CHANNELS,
-                unfreeze_frac=self.config.get("unfreeze_frac", 1.0),
-                trainable=self.config.get("finetune", False),
-                use_heatmap=self.config.get("use_heatmaps", False)
+        # with self.strategy.scope():
+        self.model = generator(
+            self.TILE_HEIGHT if self.config["tiled"] else self.IMG_HEIGHT,
+            self.TILE_WIDTH if self.config["tiled"] else self.IMG_WIDTH,
+            self.IMG_CHANNELS,
+            unfreeze_frac=self.config.get("unfreeze_frac", 1.0),
+            trainable=self.config.get("finetune", False),
+            use_heatmap=self.config.get("use_heatmaps", False)
+        )
+
+        if self.config.get("use_heatmaps", False):
+            def weighted_heatmap_loss(from_logits=False):
+                def loss_fn(y_true, y_pred):
+                    y = y_true[..., 0]  # Ground truth heatmap
+                    w = y_true[..., 1]  # Pixelwise weight mask
+                    # tf.debugging.assert_all_finite(tf.reduce_sum(w), "Weightmap contains NaNs or Infs")
+                    # tf.debugging.assert_positive(tf.reduce_sum(w), message="Sum of weights is zero — likely all negatives")
+
+                    y_pred = tf.squeeze(y_pred, axis=-1)
+
+                    if from_logits:
+                        bce = tf.nn.sigmoid_cross_entropy_with_logits(labels=y, logits=y_pred)
+                    else:
+                        bce = tf.keras.backend.binary_crossentropy(y, y_pred)  # [B, H, W]
+
+                    # Apply pixelwise weights
+                    weighted = bce * w
+
+                    return tf.reduce_sum(weighted) / (tf.reduce_sum(w) + 1e-6)
+
+                return loss_fn
+
+            def safe_heatmap_loss(from_logits=True):
+                def loss_fn(y_true, y_pred):
+                    y = y_true[..., 0]  # Ensure valid target
+                    bce = tf.keras.losses.BinaryCrossentropy(from_logits=from_logits, reduction="sum_over_batch_size")  
+                    return bce(y, tf.squeeze(y_pred, axis=-1))
+
+                return loss_fn
+
+            loss_fn = weighted_heatmap_loss(from_logits=self.config.get("logits", False))                
+            metrics=[
+                SlicedMetric(tf.keras.metrics.BinaryCrossentropy(from_logits=self.config.get("logits", False), name='bce')),
+                SlicedMetric(tf.keras.metrics.MeanSquaredError(name='mse')),
+                SlicedMetric(tf.keras.metrics.MeanAbsoluteError(name='mae')),
+            ]
+        else:
+            loss_fn = tf.keras.losses.BinaryFocalCrossentropy(
+                alpha=self.config.get("alpha", 0.25),
+                gamma=self.config.get("gamma", 2.0),
+                from_logits=self.config.get("logits", False)
             )
+            metrics=[
+                tf.keras.metrics.BinaryCrossentropy(from_logits=self.config.get("logits", True), name='bce'),
+                tf.keras.metrics.BinaryAccuracy(threshold=self.config.get("thresh", 0.5), name='bin_acc'),
+                tf.keras.metrics.F1Score(threshold=self.config.get("thresh", 0.5), name='f1'),
+                tf.keras.metrics.Precision(name='prec'),
+                tf.keras.metrics.Recall(name='rec'),
+                tf.keras.metrics.AUC()
+            ]
+            
+        self.model.compile(
+            optimizer=tf.keras.optimizers.AdamW(learning_rate=self.config["lr"]),
+                loss=loss_fn,
+            metrics=metrics
+        )
 
-            if self.config.get("use_heatmaps", False):
-                def weighted_heatmap_loss(from_logits=True):
-                    def loss_fn(y_true, y_pred):
-                        y = y_true[..., 0]  # Ground truth heatmap
-                        w = y_true[..., 1]  # Pixelwise weight mask
+        self.model.summary()
 
-                        # Define per-pixel BCE
-                        bce_fn = tf.keras.losses.BinaryCrossentropy(from_logits=from_logits, reduction="none")
-                        bce = bce_fn(y, y_pred)  # [B, H, W]
-
-                        # Apply pixelwise weights
-                        weighted = bce * w
-
-                        # Normalize by total weight sum
-                        return tf.reduce_sum(weighted) / (tf.reduce_sum(w) + 1e-6)
-
-                    return loss_fn
-
-                def safe_heatmap_loss(from_logits=True):
-                    def loss_fn(y_true, y_pred):
-                        y = y_true[..., 0]  # Ensure valid target
-                        bce = tf.keras.losses.BinaryCrossentropy(from_logits=from_logits, reduction="sum_over_batch_size")  
-                        return bce(y, tf.squeeze(y_pred, axis=-1))
-
-                    return loss_fn
-
-                loss_fn = safe_heatmap_loss(from_logits=self.config.get("logits", False))                
-                metrics=[
-                    SlicedMetric(tf.keras.metrics.BinaryCrossentropy(from_logits=self.config.get("logits", False), name='bce')),
-                    SlicedMetric(tf.keras.metrics.MeanSquaredError(name='mse')),
-                    SlicedMetric(tf.keras.metrics.MeanAbsoluteError(name='mae')),
-                ]
-            else:
-                loss_fn = tf.keras.losses.BinaryFocalCrossentropy(
-                    alpha=self.config.get("alpha", 0.25),
-                    gamma=self.config.get("gamma", 2.0),
-                    from_logits=self.config.get("logits", False)
-                )
-                metrics=[
-                    tf.keras.metrics.BinaryCrossentropy(from_logits=self.config.get("logits", True), name='bce'),
-                    tf.keras.metrics.BinaryAccuracy(threshold=self.config.get("thresh", 0.5), name='bin_acc'),
-                    tf.keras.metrics.F1Score(threshold=self.config.get("thresh", 0.5), name='f1'),
-                    tf.keras.metrics.Precision(name='prec'),
-                    tf.keras.metrics.Recall(name='rec'),
-                    tf.keras.metrics.AUC()
-                ]
-                
-            self.model.compile(
-                optimizer=tf.keras.optimizers.AdamW(learning_rate=self.config["lr"]),
-                    loss=loss_fn,
-                metrics=metrics
-            )
-
-            self.model.summary()
-
-            if self.config.get("finetune"):
-                print(f"\nLoading weights from: {self.config['finetune_source']}\n")
-                self.model.load_weights(self.config["finetune_source"])
+        if self.config.get("finetune"):
+            print(f"\nLoading weights from: {self.config['finetune_source']}\n")
+            self.model.load_weights(self.config["finetune_source"])
 
 
     def train(self):
@@ -329,8 +333,9 @@ if __name__ == '__main__':
         ['casfs_original', 'casfs_eviltwin'],
     ]
 
-    finetune = False
-    finetune_source = '/home/harey/birdseye/models/birdseye_224_224_013.weights.h5' 
+    finetune = True
+    finetune_source = '/home/harey/birdseye/models/birdseye_224_224_019.weights.h5' 
+    # finetune_source = '/home/harey/birdseye/models/birdseye_224_224_013.weights.h5' 
 
     tiled = True
 

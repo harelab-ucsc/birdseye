@@ -72,11 +72,11 @@ class TileInference:
                 plt.show()
 
 
-def predict_frame_heatmap(frame, model, tile_size=(224, 224), tile_overlap=30):
+def predict_frame_heatmap(frame, model, tile_size=(224, 224), tile_overlap=(30,40)):
     h, w = frame.shape[:2]
     th, tw = tile_size
-    stride_y = th - tile_overlap
-    stride_x = tw - tile_overlap
+    stride_y = th - tile_overlap[0]
+    stride_x = tw - tile_overlap[1]
 
     heatmap_full = np.zeros((h, w), dtype=np.float32)
     weight_mask = np.zeros((h, w), dtype=np.float32)
@@ -140,13 +140,15 @@ if __name__ == '__main__':
     # infer.visualize_predictions("/path/to/image.png", label_file="labels.txt")
 
     frames_dirs = [
-        # os.path.join(os.path.expanduser('~'), 'birdseye_CNN_data', '2025_04_16', 'pieranch_rect'),
-        os.path.join(os.path.expanduser('~'), 'parsed_flights', '2025_04_16', 'pieranch_rect'),
+        os.path.join(os.path.expanduser('~'), 'birdseye_CNN_data', '2025_04_16', 'pieranch_rect'),
+        # os.path.join(os.path.expanduser('~'), 'parsed_flights', '2025_04_16', 'pieranch_rect'),
     ]
 
-    # models_dir = os.path.join(os.path.expanduser('~'), 'birdseye', 'models')
-    models_dir = os.path.join(os.path.expanduser('~'), 'ros2_ws', 'src', 'birdseye', 'models')
-    weight_file = 'birdseye_224_224_008.weights.h5'
+    # models_dir = os.path.join(os.path.expanduser('~'), 'ros2_ws', 'src', 'birdseye', 'models')
+    models_dir = os.path.join(os.path.expanduser('~'), 'birdseye', 'models')
+    # weight_file = 'birdseye_224_224_016.weights.h5'
+    # weight_file = 'birdseye_224_224_013.weights.h5'
+    weight_file = 'birdseye_224_224_019.weights.h5'
 
     model = generator(224, 224, 3, use_heatmap=True)
     model.load_weights(os.path.join(models_dir, weight_file))
@@ -168,9 +170,9 @@ if __name__ == '__main__':
             ax[0].imshow(image.numpy())
             pred = predict_frame_heatmap(image, model)
             pred = tf.squeeze(pred).numpy()
-            pred /= pred.max()
+            # pred /= pred.max()
 
-            det, pred = postprocess_heatmap(pred, thresh=0.25)
+            det, pred = postprocess_heatmap(pred, thresh=0.3)
             ax[1].imshow(pred, cmap='hot')
 
             fig.canvas.draw_idle()
