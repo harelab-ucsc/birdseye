@@ -7,10 +7,11 @@ from tile_loader_yolo import TileLoader, get_tile_level_class_weights
 from yolo_generator import yolo_model
 
 def yolo_objectness_loss(y_true, y_pred):
+    # Both shapes: (batch, 13, 13, 5, 5 + num_classes)
     obj_true = y_true[..., 4]
     obj_pred = y_pred[..., 4]
-    loss_obj = tf.keras.losses.binary_crossentropy(obj_true, obj_pred)
-    return tf.reduce_mean(loss_obj)
+    bce = tf.keras.losses.binary_crossentropy(obj_true, obj_pred)
+    return tf.reduce_mean(bce)
 
 class BirdsEyeTrainer:
     def __init__(self, config):
@@ -20,8 +21,8 @@ class BirdsEyeTrainer:
         self.val_ds = None
         self.class_weights = None
 
-        self.IMG_HEIGHT = 416
-        self.IMG_WIDTH = 416
+        self.IMG_HEIGHT = config.get("img_height", 416)
+        self.IMG_WIDTH = config.get("img_width", 416)
         self.IMG_CHANNELS = config.get("img_channels", 3)
         self.TILE_HEIGHT, self.TILE_WIDTH = config.get("tile_size", (224, 224))
 
@@ -35,7 +36,7 @@ class BirdsEyeTrainer:
 
         self.frame_loader = FrameLoader(
             image_size=(self.IMG_HEIGHT, self.IMG_WIDTH),
-            num_classes=config.get("num_classes", 1)
+            num_classes=config.get("num_classes", 2)
         )
 
     def build_file_lists(self):
@@ -146,7 +147,7 @@ class BirdsEyeTrainer:
         callbacks = [
             tf.keras.callbacks.TensorBoard(log_dir="logs", histogram_freq=1, write_graph=True, write_images=True),
             tf.keras.callbacks.ReduceLROnPlateau(monitor=self.config["monitor"], factor=0.5, patience=3, min_lr=0),
-            tf.keras.callbacks.EarlyStopping(monitor=self.config["monitor"], patience=15),
+            tf.keras.callbacks.EarlyStopping(monitor=self.config["monitor"], patience=50),
             tf.keras.callbacks.ModelCheckpoint(
                 filepath=self.config["filename"] + ".weights.h5",
                 save_weights_only=True,
