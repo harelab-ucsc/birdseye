@@ -11,27 +11,37 @@ import tflite_runtime.interpreter as tflite
 from rclpy.node import Node
 from sensor_msgs.msg import Imu, Image, NavSatFix
 from std_msgs.msg import String
-from SLICAnnotator import offlineSLICAnnotator
+
 import glob2
 from sklearn.cluster import DBSCAN
-from dbConnector import dbConnector
-from utilities import *
-from AMI_ContourClassFamily import Contour
 from pupil_apriltags import Detector
 import time
 import math
 import pdb
 import tensorflow as tf
-from tensorflow.keras.applications import MobileNetV2
+
 import fiona
 from fiona.crs import from_epsg
 from shapely.geometry import Point
 
-from SLICAnnotator import SLICAnnotator
+from sklearn.neighbors import NearestNeighbors
+from collections import Counter
+
+from dbConnector import dbConnector
+from utilities import *
+from SLICAnnotator import SLICAnnotator, offlineSLICAnnotator
 from tile_inference import predict_frame_heatmap, postprocess_heatmap
 from generator import generator
 
 memory = 25
+# GUI button click tracking - define outside the class
+button_regions = {
+    "prev": ((30, 1132), (180, 1190)),
+    "next": ((200, 1132), (350, 1190)),
+    "edit": ((370, 1132), (520, 1190)),
+    "quit": ((540, 1132), (690, 1190))
+}
+button_clicked = None
 
 
 def projection_stats(april_2D, april_3D, clicks_2D, clicks_3D):
@@ -69,14 +79,70 @@ def projection_stats(april_2D, april_3D, clicks_2D, clicks_3D):
     return bproj, reproj
 
 
-# GUI button click tracking - define outside the class
-button_regions = {
-    "prev": ((30, 1132), (180, 1190)),
-    "next": ((200, 1132), (350, 1190)),
-    "edit": ((370, 1132), (520, 1190)),
-    "quit": ((540, 1132), (690, 1190))
-}
-button_clicked = None
+def dbscan_predict(clustering, fit_data, new_data, eps):
+    """
+    Approximate DBSCAN prediction on new_data given fitted clustering on fit_data.
+    """
+    core_samples_mask = np.zeros_like(clustering.labels_, dtype=bool)
+    core_samples_mask[clustering.core_sample_indices_] = True
+    core_points = fit_data[core_samples_mask]
+    core_labels = clustering.labels_[core_samples_mask]
+
+    nn = NearestNeighbors(radius=eps)
+    nn.fit(core_points)
+    neighbors = nn.radius_neighbors(new_data, return_distance=False)
+
+    predicted_labels = []
+    for indices in neighbors:
+        if len(indices) == 0:
+            predicted_labels.append(-1)
+        else:
+            neighbor_labels = core_labels[indices]
+            majority_label = Counter(neighbor_labels).most_common(1)[0][0]
+            predicted_labels.append(majority_label)
+    return np.array(predicted_labels)
+
+
+def diff(ref, test, mode, eps=0.2, min_samples=10):
+    """
+    ref, list: reference pointcloud
+    test, list: test pointcloud
+    mode, string: one of {'s2s', 's2d', 'd2s', 'd2d'}
+    """
+    if mode == 's2s':
+        # sparse to sparse
+        costs = np.array([[np.linalg.norm(x-y) for y in test] for x in ref])
+        rows, cols = scipy.optimize.linear_sum_assignment(costs)
+        dists = costs[rows, cols]
+        mask = dists <= eps
+        hits = dists[mask].shape[0]
+        print(f'{hits} hits, {hits/len(test)} hit ratio')
+        print(f'  --> {len(test-hits)} misses, {(len(test)-hits)/len(test)} miss ratio')
+
+    else:
+        if len(ref) == 0:
+            print('len(ref) is zero.')
+            return 0.0
+        if len(test) == 0:
+            print('len(test) is zero.')
+            return 0.0
+
+        ref = np.array(ref)
+        test = np.array(test)
+
+        if mode == 's2d':
+            print(ref.shape, test.shape, test[:,:2].shape)
+            clustering = DBSCAN(eps=eps, min_samples=min_samples).fit(test)
+            ref_labels = dbscan_predict(clustering, test, ref, eps)
+            hits = np.sum(ref_labels != -1)
+            print(f'{hits} ref points matched to clusters, hit ratio: {hits/len(ref)}')
+
+        elif mode == 'd2s' or mode == 'd2d':
+            clustering = DBSCAN(eps=eps, min_samples=min_samples).fit(ref)
+            test_labels = dbscan_predict(clustering, ref, test, eps)
+            hits = np.sum(test_labels != -1)
+            print(f'{hits} test points matched to clusters, hit ratio: {hits/len(test)}')
+
 
 def mouse_click(event, x, y, flags, param):
     global button_clicked
@@ -581,24 +647,33 @@ class birdsEye():
         print(f'    Annotation saved: {self.frame_index}, {save_name}.txt, {label}')
 
 
-    def export_shapefile(self, pt_list):
-        # Define schema
+    def export_shapefile(self, pt_list, filename='output_fiona.shp'):
+        """
+        Exports a list of 3D points to a shapefile.
+
+        Args:
+            pt_list: List of 3D points, each a list or tuple of [x, y, z].
+            filename: Name of the output shapefile.
+        """
+        if len(pt_list) == 0:
+            print("No points to export.")
+            return
+
         schema = {
             'geometry': 'Point',
-            'properties': {'name': 'str', 'value': 'int'}
+            'properties': {'id': 'int', 'elev': 'float'}
         }
 
-        # Sample data
-        points = []
-        for i, pt in enumerate(pt_list):
-            tag =
-            points.append({'geometry': Point(pt[0], pt[1]), 'properties': {'name': tag, 'value': 10}})
-        ]
-
-        # Write to shapefile
-        with fiona.open('output_fiona.shp', 'w', driver='ESRI Shapefile', schema=schema, crs=from_epsg(4326)) as output:
-            for point in points:
-                output.write(point)
+        with fiona.open(filename, 'w', driver='ESRI Shapefile', schema=schema, crs=from_epsg(4326)) as shp:
+            for i, pt in enumerate(pt_list):
+                try:
+                    lon, lat = utm.to_latlon(pt[0], pt[1], 10, northern=True)  # You may need to adjust zone
+                    shp.write({
+                        'geometry': Point(lon, lat).__geo_interface__,
+                        'properties': {'id': i, 'elev': pt[2]}
+                    })
+                except Exception as e:
+                    print(f"Failed to write point {pt}: {e}")
 
 
     def ned_to_enu_se3(self, pose_ned):
@@ -765,15 +840,8 @@ class birdsEye():
             ap = np.squeeze(ap)
         if self.detect:
             if self.frame_index >= 10:
-                clustered_dets = self.dbscan_filter(self.dets_3D, eps=0.20, min_samples=10)
-                tmp = []
-                for i in clustered_dets:
-                    tmp += i
-                valid_pts = self._3Dto2D(tmp)
-                valid_pts, _, _ = self._2DBoxCheck(valid_pts)
-                for pt in valid_pts:
-                    self.annotate(frame[-5], [pt[0], pt[1], 1.0], save_name=os.path.join(self.img_dir,'results'))
-                dp = np.array(tmp)
+
+                dp = np.array(dets)
                 dp = np.squeeze(dp)
 
                 if dp.size == 0:
@@ -874,7 +942,9 @@ class birdsEye():
         tmp = []
         for i in clustered_dets:
             tmp += i
-
+        # self.export_shapefile(tmp)
+        pdb.set_trace()
+        diff(self.clicks_3D, self.dets_3D, 's2d')
 
 
         print('\nRTK Service Stats:')
@@ -939,7 +1009,8 @@ class birdsEye():
                 clicks_2D = self._3Dto2D(clicks)
                 inner, i_ind, _ = self._2DBoxCheck(clicks_2D, box='inner')
                 outer, o_ind, _ = self._2DBoxCheck(clicks_2D, box='outer')
-                clicks_2D, click_ind, clicks_3D = self._2DBoxCheck(clicks_2D, stats=self.stats)
+                # clicks_2D, click_ind, clicks_3D = self._2DBoxCheck(clicks_2D, stats=self.stats)
+                clicks_2D, click_ind, clicks_3D = self._2DBoxCheck(clicks_2D, stats=True)
                 if clicks_3D is not None:
                     self.clicks_3D += clicks_3D
 
@@ -954,18 +1025,18 @@ class birdsEye():
                 if self.plot:
                     self.frameProcessPlotter(frame, rect, pred, dets, clicks_2D, april_3D)
 
-                    if self.detect:
-                        bot = (0, 0, 255)
-                        vec = (0, 2.55, -2.55)
-                        tmp = int(ret_raw*100)
-                        c1 = (0, tmp*vec[1] + bot[1], tmp*vec[2] + bot[2])
-                        c2 = (0, ret*100*vec[1] + bot[1], ret*100*vec[2] + bot[2])
-                        cv2.putText(rect, f'CNN: ', (950,1190), \
-                            cv2.FONT_HERSHEY_SIMPLEX, 3, (0, 255, 255), 3)
-                        cv2.putText(rect, f' {ret_raw:.04f} -> ', (1150,1190), \
-                            cv2.FONT_HERSHEY_SIMPLEX, 3, c1, 3)
-                        cv2.putText(rect, f'{ret}', (1750,1190), \
-                            cv2.FONT_HERSHEY_SIMPLEX, 3, c2, 3)
+                    # if self.detect:
+                        # bot = (0, 0, 255)
+                        # vec = (0, 2.55, -2.55)
+                        # tmp = int(ret_raw*100)
+                        # c1 = (0, tmp*vec[1] + bot[1], tmp*vec[2] + bot[2])
+                        # c2 = (0, ret*100*vec[1] + bot[1], ret*100*vec[2] + bot[2])
+                        # cv2.putText(rect, f'CNN: ', (950,1190), \
+                        #     cv2.FONT_HERSHEY_SIMPLEX, 3, (0, 255, 255), 3)
+                        # cv2.putText(rect, f' {ret_raw:.04f} -> ', (1150,1190), \
+                        #     cv2.FONT_HERSHEY_SIMPLEX, 3, c1, 3)
+                        # cv2.putText(rect, f'{ret}', (1750,1190), \
+                        #     cv2.FONT_HERSHEY_SIMPLEX, 3, c2, 3)
 
                     self.fig.canvas.draw_idle()
                     plt.pause(0.01)
@@ -1037,21 +1108,27 @@ class birdsEye():
                         self.april_3D += april_3D
 
                 if self.detect:
-                    # ret, ret_raw = self.detector(rect)
                     dets, pred, bin_pred = self.heatmapper(rect)
-                    # print('len(dets):, ', len(dets))
                     if dets is not None:
                         inner, i_ind, _ = self._2DBoxCheck(dets, box='inner')
                         if len(inner) > 0:
                             inner = self._2Dto3D(inner)
                             self.dets_3D += inner
-                            # print('len(self.dets_3D):, ', len(self.dets_3D))
-                    # self.annotate(frame[-5], ret, save_name=os.path.join(self.img_dir,'results'))
+
+                            clustered_dets = self.dbscan_filter(self.dets_3D, eps=0.20, min_samples=10)
+                            tmp_dets = []
+                            for i in clustered_dets:
+                                tmp_dets += i
+                            valid_pts = self._3Dto2D(tmp_dets)
+                            valid_pts, _, _ = self._2DBoxCheck(valid_pts)
+                            for pt in valid_pts:
+                                self.annotate(frame[-5], [pt[0], pt[1], 1.0], save_name=os.path.join(self.img_dir,'results'))
 
                 clicks_2D = self._3Dto2D(clicks)
                 inner, i_ind, _ = self._2DBoxCheck(clicks_2D, box='inner')
                 outer, o_ind, _ = self._2DBoxCheck(clicks_2D, box='outer')
-                clicks_2D, click_ind, clicks_3D = self._2DBoxCheck(clicks_2D, stats=self.stats)
+                # clicks_2D, click_ind, clicks_3D = self._2DBoxCheck(clicks_2D, stats=self.stats)
+                clicks_2D, click_ind, clicks_3D = self._2DBoxCheck(clicks_2D, stats=True)
                 if clicks_3D is not None:
                     self.clicks_3D += clicks_3D
 
@@ -1064,8 +1141,8 @@ class birdsEye():
 
                 # optional plotting step
                 if self.plot:
-                    self.frameProcessPlotter(frame, rect, bin_pred, dets, clicks_2D, april_3D)
-                    # self.frameProcessPlotter(frame, rect, pred, clicks_2D, april_3D)
+                    self.frameProcessPlotter(frame, rect, bin_pred, tmp_dets, clicks_2D, april_3D)
+
 
 if __name__ == '__main__':
     import argparse

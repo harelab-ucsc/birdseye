@@ -151,7 +151,7 @@ class subscriberNode(rclpy.node.Node):
                 # self.get_logger().info(f'{line}')
                 u = utm.from_latlon(float(line[0]), float(line[1]))  # returns easting, northing, zone number, zone letter
                 tag = int(line[-1][-1])
-                data.append([u[0], u[1], float(line[2]), float(line[3]), tag])
+                data.append([u[0], u[1], u[2], u[3], float(line[2]), float(line[3]), tag])
         self.dbc.insertClicks(f"clicks_{self.db_name}", data)
         self.get_logger().info('...Done reading clicks CSV file.\n')
 

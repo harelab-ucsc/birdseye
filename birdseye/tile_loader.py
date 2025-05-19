@@ -108,7 +108,7 @@ class TileLoader:
                         tiles.append(tile)
                         if self.use_heatmaps:
                             heatmap = np.zeros((th, tw, 1), dtype=np.float32)
-                            for lx, ly, cls_str in labels:
+                            for lx, ly, cls_str in tile_labels:
                                 if x <= lx < x+tw and y <= ly < y+th:
                                     px, py = int(lx - x), int(ly - y)
                                     draw_gaussian(heatmap, px, py)
