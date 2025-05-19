@@ -131,7 +131,6 @@ def diff(ref, test, mode, eps=0.2, min_samples=10):
         test = np.array(test)
 
         if mode == 's2d':
-            print(ref.shape, test.shape, test[:,:2].shape)
             clustering = DBSCAN(eps=eps, min_samples=min_samples).fit(test)
             ref_labels = dbscan_predict(clustering, test, ref, eps)
             hits = np.sum(ref_labels != -1)
@@ -943,7 +942,6 @@ class birdsEye():
         for i in clustered_dets:
             tmp += i
         # self.export_shapefile(tmp)
-        pdb.set_trace()
         diff(self.clicks_3D, self.dets_3D, 's2d')
 
 

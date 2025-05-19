@@ -15,6 +15,209 @@ from mask import Mask
 import matplotlib.pyplot as plt
 
 import pdb
+import os
+import cv2
+
+
+class ImageAnnotator:
+    def __init__(self, image_folder, output_file="manual.txt", existing_file=None):
+        self.image_folder = image_folder
+        self.output_file = os.path.join(image_folder, output_file)
+        if os.path.exists(self.output_file):
+            f = open(self.output_file, "w")
+            f.close()
+        if existing_file is not None:
+            self.existing_file = os.path.join(image_folder, existing_file)
+        self.valid_classes = {ord('1'): 1.0, ord('2'): 2.0, ord('3'): 3.0}
+        self.current_class = 1.0
+        self.class_color_map = {
+            1.0: (0, 0, 255),
+            2.0: (0, 255, 0),
+            3.0: (255, 0, 0)
+        }
+        self.annotations = []  # [(x, y, class, is_existing)]
+        self.existing_annotations = {}  # frame_index -> [(x, y, class)]
+        self.image_paths = sorted(glob2.glob(os.path.join(image_folder, "*.png")))
+        self.drawing = False
+        self.drag_start = None
+        self.drag_end = None
+        self.img_backup = None
+        self.edit_mode = False
+        self.hud_visible = True
+        self.window_width, self.window_height = 1920, 1200  # Resize the frame to your preferred resolution
+        cv2.namedWindow("Annotator", cv2.WINDOW_NORMAL)
+        cv2.resizeWindow("Annotator", self.window_width, self.window_height)
+
+        if self.existing_file:
+            self.load_existing_annotations()
+
+    def load_existing_annotations(self):
+        try:
+            with open(self.existing_file, "r") as f:
+                for line in f:
+                    parts = line.strip().split()
+                    if len(parts) < 3:
+                        print('malformed line read: ', parts)
+                        continue
+                    try:
+                        frame_index = int(parts[0])
+                        x, y, cls = map(float, parts[2].split(","))
+                        self.existing_annotations.setdefault(frame_index, []).append((x, y, cls))
+                    except ValueError as e:
+                        print(e)
+                        continue
+        except FileNotFoundError:
+            pass
+
+    def save_annotations(self, frame_index, img_path):
+        # Remove old entries for this frame
+        existing = []
+        if os.path.exists(self.output_file):
+            with open(self.output_file, 'r') as f:
+                existing = [
+                    line for line in f.readlines()
+                    if not line.startswith(f"{frame_index} ")
+                ]
+
+        with open(self.output_file, 'w') as f:
+            f.writelines(existing)
+            for x, y, cls, _ in self.annotations:
+                f.write(f"{frame_index} {img_path} {x},{y},{cls}\n")
+
+    def mouse_callback(self, event, x, y, flags, param):
+        if event == cv2.EVENT_LBUTTONDOWN:
+            self.drawing = True
+            self.drag_start = (x, y)
+        elif event == cv2.EVENT_MOUSEMOVE and self.drawing:
+            self.drag_end = (x, y)
+        elif event == cv2.EVENT_LBUTTONUP:
+            self.drawing = False
+            self.drag_end = (x, y)
+            if self.drag_start and self.drag_end:
+                rect = (*map(min, self.drag_start, self.drag_end), *map(max, self.drag_start, self.drag_end))
+                removed = self.remove_annotations_in_rect(rect)
+                if removed:
+                    print(f"Removed {removed} annotations")
+                    self.redraw(param)
+                else:
+                    if self.edit_mode:
+                        self.edit_annotation(x, y)
+                        self.redraw(param)
+                    else:
+                        self.add_annotation(x, y, param)
+
+    def add_annotation(self, x, y, img):
+        self.annotations.append((x, y, self.current_class, False))
+        class_color = self.class_color_map.get(self.current_class, (255, 255, 255))
+        cv2.circle(img, (x, y), 4, class_color, -1)
+
+    def edit_annotation(self, x, y, radius=10):
+        for i, (px, py, cls, is_existing) in enumerate(self.annotations):
+            if (px - x) ** 2 + (py - y) ** 2 <= radius ** 2:
+                self.annotations[i] = (px, py, self.current_class, is_existing)
+                print(f"Edited class at ({px:.1f}, {py:.1f}) to {self.current_class}")
+                break
+
+    def remove_annotations_in_rect(self, rect):
+        x0, y0, x1, y1 = rect
+        before = len(self.annotations)
+        self.annotations = [
+            (x, y, c, e) for (x, y, c, e) in self.annotations
+            if not (x0 <= x <= x1 and y0 <= y <= y1)
+        ]
+        return before - len(self.annotations)
+
+    def redraw(self, img):
+        img[:] = self.img_backup.copy()
+        for x, y, _, is_existing in self.annotations:
+            color = (255, 255, 0) if is_existing else (0, 255, 0)
+            cv2.circle(img, (int(x), int(y)), 4, color, -1)
+
+    def annotate_image(self, img_path, frame_index):
+        self.annotations = []
+        img = cv2.imread(img_path)
+        self.img_backup = img.copy()
+
+        for x, y, cls in self.existing_annotations.get(frame_index, []):
+            self.annotations.append((x, y, cls, True))
+            class_color = self.class_color_map.get(cls, (255, 255, 255))
+            cv2.circle(img, (int(x), int(y)), 4, class_color, -1)
+            cv2.circle(img, (int(x), int(y)), 8, (255, 255, 0), 2)
+
+        cv2.setMouseCallback("Annotator", lambda e, x, y, f, p=None: self.mouse_callback(e, x, y, f, img))
+        print(f"\nFrame {frame_index}: {img_path}")
+
+        while True:
+            tmp = img.copy()
+
+            if self.drawing and self.drag_start and self.drag_end:
+                cv2.rectangle(tmp, self.drag_start, self.drag_end, (0, 0, 255), 1)
+
+            if self.hud_visible:
+                class_color = self.class_color_map.get(self.current_class, (255, 255, 255))
+                hud_lines = [
+                    ("Class: %.1f" % self.current_class, class_color),
+                    ("Edit Mode: " + ("ON" if self.edit_mode else "OFF"), (255, 255, 120)),
+                    ("Keys: 1/2/3=class, e+click=edit, s=save, q=quit, h=toggle HUD", (180, 180, 180))
+                ]
+                overlay = tmp.copy()
+                cv2.rectangle(overlay, (10, 10), (1600, 55), (0, 0, 0), -1)
+                cv2.addWeighted(overlay, 0.5, tmp, 0.5, 0, tmp)
+                for i, (text, color) in enumerate(hud_lines):
+                    cv2.putText(tmp, text, (15 + i * 260, 43),
+                                cv2.FONT_HERSHEY_SIMPLEX, 1, color, 2, cv2.LINE_AA)
+
+            cv2.imshow("Annotator", tmp)
+            key = cv2.waitKey(1) & 0xFF
+
+            if key in self.valid_classes:
+                self.current_class = self.valid_classes[key]
+                print(f" - Class switched to {self.current_class}")
+            elif key == ord('e'):
+                self.edit_mode = not self.edit_mode
+                print(" - Edit mode " + ("ON" if self.edit_mode else "OFF"))
+            elif key == ord('h'):
+                self.hud_visible = not self.hud_visible
+                print(" - HUD toggled", "ON" if self.hud_visible else "OFF")
+            elif key == ord('s'):
+                self.save_annotations(frame_index, img_path)
+                print(f" - Annotations saved to {self.output_file}")
+            elif key == ord('d'):
+                self.save_annotations(frame_index, img_path)
+                return "next"
+            elif key == ord('a'):
+                self.save_annotations(frame_index, img_path)
+                return "prev"
+            elif key == ord('q'):
+                cv2.destroyAllWindows()
+                self.save_annotations(frame_index, img_path)
+                return False
+
+    def run(self):
+        i = 0
+        while 0 <= i < len(self.image_paths):
+            print(f"\nFrame {i}: {self.image_paths[i]}")
+            print(" - Click to add, drag to remove")
+            print(" - Hold 'e' and click to change class of existing point")
+            print(" - Keys 1/2/3 to set class, 's' to save, 'q' to quit, 'a'/'d' to move")
+
+            result = self.annotate_image(self.image_paths[i], i)
+
+            if result == "next":
+                i += 1
+            elif result == "prev":
+                i -= 1
+            elif result is False:  # User quit
+                break
+
+# === RUN EXAMPLE ===
+if __name__ == "__main__":
+    annotator = ImageAnnotator(
+        image_folder="/home/mwmaster/parsed_flights/2025_05_02/jacobs_01_rect/",
+        output_file="manual.txt",
+        existing_file="labels.txt"  # <- optional
+    )
+    annotator.run()
 
 
 class SLICAnnotator:
@@ -315,22 +518,22 @@ class SLICTranslator(SLICAnnotator):
         for i in range(len(self.images)):
             self.frameProcess()
 
-if __name__ == '__main__':
-    parser = argparse.ArgumentParser()
-    parser.add_argument('-d', '--dirname', type=str, required=True,
-        help='required directory name, path to parent directory of images to annotate')
-    parser.add_argument('-f', '--format', nargs='?', const=1, type=str, default='png',
-        help='image file format; allowed args are "png" and "jpg". Default: png.')
-    args = vars(parser.parse_args())
-    print()
-    images = glob2.glob(args["dirname"] + "*." + args["format"])
-    images.sort()
-    print(f'{len(images)} {args["format"]} images found in {args["dirname"]}')
-
-    save_name = os.path.join(args["dirname"], args["dirname"].split(os.sep)[-2])
-    print(f'annotations will be saved to: {save_name} \n')
-    # obj = SLICAnnotator(images=images, save_name=save_name)
-    # obj.frameProcess()
-
-    obj = SLICTranslator(images=images, save_name=save_name)
-    obj.translate_dataset()
+# if __name__ == '__main__':
+#     parser = argparse.ArgumentParser()
+#     parser.add_argument('-d', '--dirname', type=str, required=True,
+#         help='required directory name, path to parent directory of images to annotate')
+#     parser.add_argument('-f', '--format', nargs='?', const=1, type=str, default='png',
+#         help='image file format; allowed args are "png" and "jpg". Default: png.')
+#     args = vars(parser.parse_args())
+#     print()
+#     images = glob2.glob(args["dirname"] + "*." + args["format"])
+#     images.sort()
+#     print(f'{len(images)} {args["format"]} images found in {args["dirname"]}')
+#
+#     save_name = os.path.join(args["dirname"], args["dirname"].split(os.sep)[-2])
+#     print(f'annotations will be saved to: {save_name} \n')
+#     # obj = SLICAnnotator(images=images, save_name=save_name)
+#     # obj.frameProcess()
+#
+#     obj = SLICTranslator(images=images, save_name=save_name)
+#     obj.translate_dataset()
