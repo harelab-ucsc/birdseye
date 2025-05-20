@@ -103,6 +103,7 @@ class BirdsEyeTrainer:
             self.class_weights = tile_weights(
                 self.train_files,
                 self.tile_loader,
+                semisupervised = self.config["semisupervised"],
                 cache_dir=self.config["train_cache_dir"],
                 bypass_cache=self.config.get("bypass_cache", False)
             )
@@ -333,7 +334,8 @@ if __name__ == '__main__':
         ['casfs_original', 'casfs_eviltwin'],
     ]
 
-    finetune = True
+    semisup = False
+    finetune = False
     finetune_source = '/home/harey/birdseye/models/birdseye_224_224_019.weights.h5' 
     # finetune_source = '/home/harey/birdseye/models/birdseye_224_224_013.weights.h5' 
 
@@ -388,6 +390,7 @@ if __name__ == '__main__':
         "val_cache_dir": os.path.expanduser("~/.cache/birdseye/val_weights"),
         "bypass_cache": False,
         "negative_mode": "random",  # options: 'random', 'once_per_image', 'none'
+        "semisupervised": semisup,
     }
 
     trainer = BirdsEyeTrainer(config)

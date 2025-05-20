@@ -27,9 +27,11 @@ def heatmap_head_deep(inputs):
     return x
 
 def heatmap_head_hybrid(inputs, h, w):
-    x = tf.keras.layers.Conv2DTranspose(128, 3, strides=2,  padding='same', activation='relu')(inputs)
-    x = tf.keras.layers.Conv2DTranspose(64, 3, strides=2,  padding='same', activation='relu')(x)
-    x = tf.keras.layers.Conv2D(1, 1, strides=2,  padding='same', activation='sigmoid')(x)  # Output: heatmap
+    x = tf.keras.layers.Conv2DTranspose(512, 3, strides=2,  padding='same', activation='relu')(inputs)
+    x = tf.keras.layers.Conv2DTranspose(256, 3, strides=2,  padding='same', activation='relu')(x)
+    x = tf.keras.layers.Conv2D(128, 3, padding='same', activation='relu')(x)
+    x = tf.keras.layers.Conv2D(64, 3, padding='same', activation='relu')(x)
+    x = tf.keras.layers.Conv2D(1, 1, padding='same', activation='sigmoid')(x)  # Output: heatmap
     x = tf.keras.layers.Resizing(h, w, interpolation='bilinear')(x)  # ensure full resolution
     return x
 
@@ -74,7 +76,7 @@ def generator(h, w, c, unfreeze_frac=0.3, trainable=False, use_heatmap=False):
     features = pretrained_backbone(inp, h=h, w=w, c=c, unfreeze_frac=unfreeze_frac, trainable=trainable)
 
     if use_heatmap:
-        out = heatmap_head_deep(features)
+        out = heatmap_head_hybrid(features)
     else:
         out = detection_head(features)
 

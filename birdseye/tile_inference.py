@@ -148,7 +148,7 @@ if __name__ == '__main__':
     models_dir = os.path.join(os.path.expanduser('~'), 'birdseye', 'models')
     # weight_file = 'birdseye_224_224_016.weights.h5'
     # weight_file = 'birdseye_224_224_013.weights.h5'
-    weight_file = 'birdseye_224_224_019.weights.h5'
+    weight_file = 'birdseye_224_224_022.weights.h5'
 
     model = generator(224, 224, 3, use_heatmap=True)
     model.load_weights(os.path.join(models_dir, weight_file))
@@ -170,9 +170,9 @@ if __name__ == '__main__':
             ax[0].imshow(image.numpy())
             pred = predict_frame_heatmap(image, model)
             pred = tf.squeeze(pred).numpy()
-            # pred /= pred.max()
+            pred /= pred.max()
 
-            det, pred = postprocess_heatmap(pred, thresh=0.3)
+            # det, pred = postprocess_heatmap(pred, thresh=0.3)
             ax[1].imshow(pred, cmap='hot')
 
             fig.canvas.draw_idle()

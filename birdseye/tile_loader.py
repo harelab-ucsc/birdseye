@@ -136,7 +136,7 @@ class TileLoader:
                         tiles.append(tile)
                         if self.use_heatmaps:
                             heatmap = np.zeros((th, tw, 1), dtype=np.float32)
-                            weightmap = np.zeros((th, tw, 1), dtype=np.float32)
+                            weightmap = np.ones((th, tw, 1), dtype=np.float32)
                             for lx, ly, cls_str, source in tile_labels:
                                 if x <= lx < x+tw and y <= ly < y+th:
                                     px, py = int(lx - x), int(ly - y)
@@ -161,8 +161,9 @@ class TileLoader:
                         if keep:
                             tiles.append(tile)
                             if self.use_heatmaps:
-                                empty = np.zeros((th, tw, 1), dtype=np.float32)
-                                label_list.append((empty, empty))
+                                empty_heat = np.zeros((th, tw, 1), dtype=np.float32)
+                                empty_weight = np.ones((th, tw, 1), dtype=np.float32)
+                                label_list.append((empty_heat, empty_weight))
                             else:
                                 label_list.append(0.0)
         except Exception as e:
@@ -179,9 +180,9 @@ class TileLoader:
 
             labels = self.load_labels(self.label_file, image_path_str)
 
-            # if there is a spatially-denoised set of CNN detections, load them
-            if os.path.exists(os.path.join(os.path.split(image_path_str)[0], 'results.txt')):
-                labels += self.load_labels('results.txt', image_path_str)
+            # # if there is a spatially-denoised set of CNN detections, load them
+            # if os.path.exists(os.path.join(os.path.split(image_path_str)[0], 'results.txt')):
+            #     labels += self.load_labels('results.txt', image_path_str)
             tiles, classes = self.tile_image_and_label(image, labels)
 
             if len(tiles) == 0: # add spacer to filter away later
@@ -313,7 +314,7 @@ class TileLoader:
 
 # ========== Class Weights Helper ========== #
 
-def get_cache_key(file_list, tile_loader):
+def get_cache_key(file_list, tile_loader, semisupervised):
     """
     Returns a hashable cache key that accounts for:
     - list of image files
@@ -322,10 +323,12 @@ def get_cache_key(file_list, tile_loader):
     - timestamps of any results.txt files (CNN detections)
     """
     result_file_times = []
+    cnn_path = None
     for img_path in file_list:
         dir_path = os.path.dirname(img_path)
-        cnn_path = os.path.join(dir_path, "results.txt")
-        if os.path.exists(cnn_path):
+        if semisupervised:
+            cnn_path = os.path.join(dir_path, "results.txt")
+        if cnn_path is not None and os.path.exists(cnn_path):
             result_file_times.append(os.path.getmtime(cnn_path))
 
     summary = {
@@ -342,14 +345,14 @@ def get_cache_key(file_list, tile_loader):
     return hashlib.md5(summary_str.encode()).hexdigest()
 
 
-def get_class_weights(file_list, tile_loader, cache_dir=None, bypass_cache=False):
+def get_class_weights(file_list, tile_loader, semisupervised=False, cache_dir=None, bypass_cache=False):
     if cache_dir is None or bypass_cache:
         use_cache = False
     else:
         use_cache = True
         os.makedirs(cache_dir, exist_ok=True)
 
-    cache_key = get_cache_key(file_list, tile_loader)
+    cache_key = get_cache_key(file_list, tile_loader, semisupervised)
     cache_path = os.path.join(cache_dir, f"{cache_key}.pkl") if use_cache else None
 
     if use_cache and os.path.exists(cache_path):
