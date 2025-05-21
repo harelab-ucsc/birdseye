@@ -12,8 +12,8 @@ from yolo_generator import yolo_model
 
 class YOLOFrameInference:
     def __init__(self, model_weights, num_classes=2):
-        # Load model once to infer true shape
-        dummy = yolo_model(input_shape=(1920, 1200, 3), num_classes=num_classes)
+        # Inferred input shape from weights
+        dummy = yolo_model(input_shape=(416, 416, 3), num_classes=num_classes)
         dummy.load_weights(model_weights)
         self.input_shape = dummy.input_shape[1:]
         print(f"Inferred model input shape: {self.input_shape}")
@@ -24,31 +24,26 @@ class YOLOFrameInference:
 
         self.loader = FrameLoader(image_size=self.input_shape[:2], num_classes=num_classes)
 
-    def predict_points(self, image_path, conf_threshold=0.3):
+    def predict_points(self, image_path, conf_threshold=0.05):
         image_raw = tf.io.decode_png(tf.io.read_file(image_path), channels=3)
         image_resized = tf.image.resize(image_raw, self.loader.image_size)
         image_input = tf.expand_dims(image_resized, axis=0)
 
         preds = self.model.predict(image_input, verbose=0)[0]
+        grid_h, grid_w, num_anchors, _ = preds.shape
 
-        if preds.ndim != 3:
-            raise ValueError(f"Invalid prediction shape: {preds.shape} — expected (grid_h, grid_w, channels)")
-
-        grid_h, grid_w, _ = preds.shape
         points = []
-
         for y in range(grid_h):
             for x in range(grid_w):
-                cell = preds[y, x]
-                obj_score = cell[4]
-                if obj_score < conf_threshold:
-                    continue
-
-                x_rel, y_rel = cell[0], cell[1]
-                px = int((x + x_rel) * (self.loader.image_size[1] / grid_w))
-                py = int((y + y_rel) * (self.loader.image_size[0] / grid_h))
-                points.append((px, py))
-
+                for a in range(num_anchors):
+                    cell = preds[y, x, a]
+                    obj_score = cell[4]
+                    if obj_score < conf_threshold:
+                        continue
+                    x_rel, y_rel = cell[0], cell[1]
+                    px = int((x + x_rel) * (self.loader.image_size[1] / grid_w))
+                    py = int((y + y_rel) * (self.loader.image_size[0] / grid_h))
+                    points.append((px, py))
         return points
 
     def predict_and_visualize(self, image_path, threshold=0.3):
@@ -57,29 +52,26 @@ class YOLOFrameInference:
         image_input = tf.expand_dims(image_resized, axis=0)
 
         preds = self.model.predict(image_input, verbose=0)[0]
-
-        if preds.ndim != 3:
-            raise ValueError(f"Invalid prediction shape: {preds.shape} — expected (grid_h, grid_w, channels)")
-
-        grid_h, grid_w = preds.shape[:2]
+        grid_h, grid_w, num_anchors, _ = preds.shape
         vis = image_resized.numpy().astype(np.uint8).copy()
 
         count = 0
         for y in range(grid_h):
             for x in range(grid_w):
-                cell = preds[y, x]
-                obj_score = cell[4]
-                if obj_score < threshold:
-                    continue
+                for a in range(num_anchors):
+                    cell = preds[y, x, a]
+                    obj_score = cell[4]
+                    if obj_score < threshold:
+                        continue
 
-                x_rel, y_rel = cell[0], cell[1]
-                px = int((x + x_rel) * (self.loader.image_size[1] / grid_w))
-                py = int((y + y_rel) * (self.loader.image_size[0] / grid_h))
+                    x_rel, y_rel = cell[0], cell[1]
+                    px = int((x + x_rel) * (self.loader.image_size[1] / grid_w))
+                    py = int((y + y_rel) * (self.loader.image_size[0] / grid_h))
 
-                cv2.circle(vis, (px, py), 5, (0, 255, 0), -1)
-                cv2.putText(vis, f"{obj_score:.2f}", (px + 5, py - 5),
-                            cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 1)
-                count += 1
+                    cv2.circle(vis, (px, py), 5, (0, 255, 0), -1)
+                    cv2.putText(vis, f"{obj_score:.2f}", (px + 5, py - 5),
+                                cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 1)
+                    count += 1
 
         print(f"{count} detections in {os.path.basename(image_path)}")
         plt.figure(figsize=(8, 6))
@@ -88,13 +80,12 @@ class YOLOFrameInference:
         plt.tight_layout()
         plt.show()
 
-
 if __name__ == '__main__':
     frames_dirs = [
         os.path.join(os.path.expanduser('~'), 'birdseye_CNN_data', '2025_04_16', 'pieranch_rect'),
     ]
     models_dir = os.path.join(os.path.expanduser('~'), 'birdseye', 'models')
-    weight_file = 'birdseye_1920_1200_013_yolo.weights.h5'
+    weight_file = 'birdseye_416_416_004_yolo.weights.h5'
     model_path = os.path.join(models_dir, weight_file)
 
     infer = YOLOFrameInference(model_weights=model_path, num_classes=2)
@@ -102,9 +93,8 @@ if __name__ == '__main__':
     for _dir in frames_dirs:
         image_paths = sorted(glob2.glob(os.path.join(_dir, '*.png')))
         for image_path in image_paths[:10]:
-            print(f"\U0001F50D Predicting {image_path}")
+            print(f" Predicting {image_path}")
             infer.predict_and_visualize(image_path)
-
 
 
 # import os

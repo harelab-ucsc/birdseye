@@ -6,12 +6,38 @@ from frame_loader_yolo import FrameLoader
 from tile_loader_yolo import TileLoader, get_tile_level_class_weights
 from yolo_generator import yolo_model
 
-def yolo_objectness_loss(y_true, y_pred):
-    # Both shapes: (batch, 13, 13, 5, 5 + num_classes)
+def yolo_point_loss(y_true, y_pred):
+    """
+    Point-based YOLO loss with sigmoid applied to objectness predictions.
+    Expects y_pred[..., 4] to be logits.
+    """
+    # Extract masks and values
+    obj_mask = tf.expand_dims(y_true[..., 4], axis=-1)  # (B, S, S, B, 1)
     obj_true = y_true[..., 4]
-    obj_pred = y_pred[..., 4]
-    bce = tf.keras.losses.binary_crossentropy(obj_true, obj_pred)
-    return tf.reduce_mean(bce)
+
+    # Apply sigmoid to convert logits to probabilities
+    obj_pred = tf.sigmoid(y_pred[..., 4])
+
+    # Compute no-object mask
+    noobj_mask = 1.0 - obj_true
+
+    # Count of positives
+    num_pos = tf.reduce_sum(obj_true) + 1e-6
+
+    # (1) Localization loss (only for positives)
+    xy_loss = tf.reduce_sum(obj_mask * tf.square(y_true[..., 0:2] - y_pred[..., 0:2])) / num_pos
+
+    # (2) Objectness binary cross-entropy
+    bce = -(obj_true * tf.math.log(obj_pred + 1e-7) +
+            (1.0 - obj_true) * tf.math.log(1.0 - obj_pred + 1e-7))
+
+    obj_loss = tf.reduce_sum(obj_true * bce) / num_pos
+    noobj_loss = tf.reduce_sum(noobj_mask * bce) / (tf.reduce_sum(noobj_mask) + 1e-6)
+
+    # (3) Combine
+    total_loss = 5.0 * xy_loss + 1.0 * obj_loss + 0.5 * noobj_loss
+    return total_loss
+
 
 class BirdsEyeTrainer:
     def __init__(self, config):
@@ -111,7 +137,7 @@ class BirdsEyeTrainer:
         )
 
         if mode == "yolo":
-            loss_fn = yolo_objectness_loss
+            loss_fn = yolo_point_loss
             metrics = [
                 tf.keras.metrics.BinaryAccuracy(threshold=0.3, name="obj_acc"),
                 tf.keras.metrics.AUC(name="obj_auc")
