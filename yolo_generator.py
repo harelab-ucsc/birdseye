@@ -2,9 +2,9 @@
 "MobileNetV2 as the backbone"
 
 import tensorflow as tf
-from tensorflow.keras import layers, models
+from tensorflow.keras import layers, models, regularizers
 
-def yolo_model(input_shape=(416, 416, 3), num_classes=2, anchors=5):
+def yolo_model(input_shape=(416, 416, 3), num_classes=2, l2_reg=0.01, dropout_rate=0.5):
     base_model = tf.keras.applications.MobileNetV2(
         input_shape=input_shape,
         include_top=False,
@@ -12,14 +12,21 @@ def yolo_model(input_shape=(416, 416, 3), num_classes=2, anchors=5):
     )
     base_model.trainable = True
 
-    x = base_model.output  # Typically (13, 13, 1280)
-    x = layers.Conv2D(256, (3, 3), padding='same', activation='relu')(x)
+    x = base_model.output
+    x = layers.Conv2D(256, (3, 3), padding='same', activation='relu', kernel_regularizer=regularizers.l2(l2_reg))(x)
     x = layers.BatchNormalization()(x)
-    x = layers.Conv2D(anchors * (5 + num_classes), (1, 1), padding='same')(x)
+    x = layers.Dropout(dropout_rate)(x)
+
+    anchors = 5
+    x = layers.Conv2D(
+        filters=anchors * (5 + num_classes),
+        kernel_size=1,
+        padding='same',
+        activation=None  # No activation: output raw logits
+    )(x)
     x = layers.Reshape((13, 13, anchors, 5 + num_classes))(x)
 
     return models.Model(inputs=base_model.input, outputs=x)
-
 
 # def yolo_model(input_shape=(416, 416, 3), num_classes=1, l2_reg=0.01, dropout_rate=0.5):
 #     # Base model

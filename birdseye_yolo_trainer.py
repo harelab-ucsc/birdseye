@@ -8,34 +8,30 @@ from yolo_generator import yolo_model
 
 def yolo_point_loss(y_true, y_pred):
     """
-    Point-based YOLO loss with sigmoid applied to objectness predictions.
-    Expects y_pred[..., 4] to be logits.
+    Minimal YOLO-style loss: only supervises xy and objectness.
+    Assumes y_pred[..., 4] is a raw logit (no sigmoid in model).
     """
-    # Extract masks and values
-    obj_mask = tf.expand_dims(y_true[..., 4], axis=-1)  # (B, S, S, B, 1)
-    obj_true = y_true[..., 4]
+    # Extract ground truth and predictions
+    xy_true = tf.cast(y_true[..., 0:2], tf.float32)
+    obj_true = tf.cast(y_true[..., 4], tf.float32)
 
-    # Apply sigmoid to convert logits to probabilities
-    obj_pred = tf.sigmoid(y_pred[..., 4])
+    xy_pred = tf.cast(y_pred[..., 0:2], tf.float32)
+    obj_logit = tf.cast(y_pred[..., 4], tf.float32)
 
-    # Compute no-object mask
-    noobj_mask = 1.0 - obj_true
+    obj_mask = obj_true
+    num_pos = tf.reduce_sum(obj_mask) + 1e-6
 
-    # Count of positives
-    num_pos = tf.reduce_sum(obj_true) + 1e-6
+    # 1. XY loss (mean squared error for positives only)
+    xy_loss = tf.reduce_sum(obj_mask[..., tf.newaxis] * tf.square(xy_true - xy_pred)) / num_pos
 
-    # (1) Localization loss (only for positives)
-    xy_loss = tf.reduce_sum(obj_mask * tf.square(y_true[..., 0:2] - y_pred[..., 0:2])) / num_pos
+    # 2. Objectness loss (sigmoid BCE from logits)
+    obj_loss_raw = tf.nn.sigmoid_cross_entropy_with_logits(labels=obj_true, logits=obj_logit)
+    obj_loss = tf.reduce_sum(obj_loss_raw) / tf.cast(tf.size(obj_loss_raw), tf.float32)
 
-    # (2) Objectness binary cross-entropy
-    bce = -(obj_true * tf.math.log(obj_pred + 1e-7) +
-            (1.0 - obj_true) * tf.math.log(1.0 - obj_pred + 1e-7))
+    # Combine
+    total_loss = 5.0 * xy_loss + 1.0 * obj_loss
 
-    obj_loss = tf.reduce_sum(obj_true * bce) / num_pos
-    noobj_loss = tf.reduce_sum(noobj_mask * bce) / (tf.reduce_sum(noobj_mask) + 1e-6)
-
-    # (3) Combine
-    total_loss = 5.0 * xy_loss + 1.0 * obj_loss + 0.5 * noobj_loss
+    tf.debugging.assert_all_finite(total_loss, "Loss became NaN or Inf!")
     return total_loss
 
 

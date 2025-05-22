@@ -7,9 +7,11 @@ import tensorflow as tf
 from tensorflow.keras import layers, models, regularizers
 
 class FrameLoader:
-    def __init__(self, image_size=(416, 416), num_classes=2):
+    def __init__(self, image_size=(416, 416), num_classes=2, grid_size=13, anchors=5):
         self.image_size = image_size
         self.num_classes = num_classes
+        self.grid_size = grid_size
+        self.anchors = anchors
 
     def load_labels(self, label_file, image_filename):
         labels = []
@@ -26,35 +28,29 @@ class FrameLoader:
             print(f"      [Label Load Error] {e}")
         return labels
 
-    def encode_labels_to_grid(self, labels, image_shape=(416, 416), grid_size=13, anchors=5):
-        target = np.zeros((grid_size, grid_size, anchors, 5 + self.num_classes), dtype=np.float32)
-        img_h, img_w = image_shape
-        cell_w = img_w / grid_size
-        cell_h = img_h / grid_size
+    def encode_labels_to_grid(self, labels):
+        target = np.zeros((self.grid_size, self.grid_size, self.anchors, 5 + self.num_classes), dtype=np.float32)
+        img_h, img_w = self.image_size
+        cell_w = img_w / self.grid_size
+        cell_h = img_h / self.grid_size
 
         for x, y, cls in labels:
             gx = int(x / cell_w)
             gy = int(y / cell_h)
-            if gx >= grid_size or gy >= grid_size:
+            if gx >= self.grid_size or gy >= self.grid_size:
                 continue
 
-            anchor_idx = None
-            for a in range(anchors):
+            for a in range(self.anchors):
                 if target[gy, gx, a, 4] == 0:
-                    anchor_idx = a
+                    x_rel = (x % cell_w) / cell_w
+                    y_rel = (y % cell_h) / cell_h
+                    box_w = 0.1
+                    box_h = 0.1
+                    
+                    target[gy, gx, a, 0:4] = [x_rel, y_rel, box_w, box_h]
+                    target[gy, gx, a, 4] = 1.0
+                    target[gy, gx, a, 5 + cls] = 1.0
                     break
-
-            if anchor_idx is None:
-                continue
-
-            x_rel = (x % cell_w) / cell_w
-            y_rel = (y % cell_h) / cell_h
-            box_w = 0.1
-            box_h = 0.1
-
-            target[gy, gx, anchor_idx, 0:4] = [x_rel, y_rel, box_w, box_h]
-            target[gy, gx, anchor_idx, 4] = 1.0
-            target[gy, gx, anchor_idx, 5 + int(cls)] = 1.0
 
         return target
 
@@ -66,7 +62,7 @@ class FrameLoader:
             image = tf.image.resize(image, self.image_size).numpy().astype(np.uint8)
 
             labels = self.load_labels(label_file, image_path_str)
-            target = self.encode_labels_to_grid(labels, image_shape=self.image_size, grid_size=13, anchors=5)
+            target = self.encode_labels_to_grid(labels)
             return image, target
 
         image, label = tf.py_function(
@@ -75,7 +71,7 @@ class FrameLoader:
             [tf.uint8, tf.float32]
         )
         image.set_shape([self.image_size[0], self.image_size[1], 3])
-        label.set_shape([13, 13, 5, 5 + self.num_classes])
+        label.set_shape([self.grid_size, self.grid_size, self.anchors, 5 + self.num_classes])
         return image, label
 
     def build_dataset(self, file_list, label_file, batch_size, buffer_size=64, repeat=True, augment=False):
@@ -87,30 +83,6 @@ class FrameLoader:
 
         ds = ds.shuffle(buffer_size).batch(batch_size).prefetch(tf.data.AUTOTUNE)
         return ds
-
-def yolo_model(input_shape=(416, 416, 3), num_classes=2, l2_reg=0.01, dropout_rate=0.5):
-    base_model = tf.keras.applications.MobileNetV2(
-        input_shape=input_shape,
-        include_top=False,
-        weights='imagenet'
-    )
-    base_model.trainable = True
-
-    x = base_model.output
-    x = layers.Conv2D(256, (3, 3), padding='same', activation='relu', kernel_regularizer=regularizers.l2(l2_reg))(x)
-    x = layers.BatchNormalization()(x)
-    x = layers.Dropout(dropout_rate)(x)
-
-    anchors = 5
-    x = layers.Conv2D(
-        filters=anchors * (5 + num_classes),
-        kernel_size=1,
-        padding='same',
-        activation='sigmoid'
-    )(x)
-    x = layers.Reshape((13, 13, anchors, 5 + num_classes))(x)
-
-    return models.Model(inputs=base_model.input, outputs=x)
 
 
 # import os

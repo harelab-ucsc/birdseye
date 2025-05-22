@@ -85,7 +85,7 @@ if __name__ == '__main__':
         os.path.join(os.path.expanduser('~'), 'birdseye_CNN_data', '2025_04_16', 'pieranch_rect'),
     ]
     models_dir = os.path.join(os.path.expanduser('~'), 'birdseye', 'models')
-    weight_file = 'birdseye_416_416_004_yolo.weights.h5'
+    weight_file = 'birdseye_416_416_005_yolo.weights.h5'
     model_path = os.path.join(models_dir, weight_file)
 
     infer = YOLOFrameInference(model_weights=model_path, num_classes=2)
