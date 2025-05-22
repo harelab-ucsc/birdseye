@@ -148,7 +148,7 @@ if __name__ == '__main__':
     models_dir = os.path.join(os.path.expanduser('~'), 'birdseye', 'models')
     # weight_file = 'birdseye_224_224_016.weights.h5'
     # weight_file = 'birdseye_224_224_013.weights.h5'
-    weight_file = 'birdseye_224_224_022.weights.h5'
+    weight_file = 'birdseye_224_224_023.weights.h5'
 
     model = generator(224, 224, 3, use_heatmap=True)
     model.load_weights(os.path.join(models_dir, weight_file))

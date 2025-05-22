@@ -184,7 +184,8 @@ class BirdsEyeTrainer:
 
                 return loss_fn
 
-            loss_fn = weighted_heatmap_loss(from_logits=self.config.get("logits", False))                
+            # loss_fn = weighted_heatmap_loss(from_logits=self.config.get("logits", False))                
+            loss_fn = safe_heatmap_loss(from_logits=self.config.get("logits", False))                
             metrics=[
                 SlicedMetric(tf.keras.metrics.BinaryCrossentropy(from_logits=self.config.get("logits", False), name='bce')),
                 SlicedMetric(tf.keras.metrics.MeanSquaredError(name='mse')),
@@ -290,8 +291,8 @@ class BirdsEyeTrainer:
         self.setup_data()
         self.build_model()
         self.train()
-        # if self.config.get("use_heatmaps", False):
-        #     self.show_heatmap_prediction(self.model, self.val_ds)
+        if self.config.get("use_heatmaps", False):
+            self.show_heatmap_prediction(self.model, self.val_ds)
 
 
 
@@ -307,7 +308,7 @@ if __name__ == '__main__':
     label_file = 'labels.txt'
 
     train_dates = [
-        '2025_03_25', 
+        # '2025_03_25', 
         '2025_04_04',
         '2025_04_09',
         '2025_04_23',
@@ -321,7 +322,7 @@ if __name__ == '__main__':
     ]
 
     train_dirlists = [
-        ['haybarn_original_01_01_rect', 'haybarn_eviltwin_01_01_rect'],
+        # ['haybarn_original_01_01_rect', 'haybarn_eviltwin_01_01_rect'],
         ['original_01_rect', 'original_02_rect', 'eviltwin_01_rect', 'eviltwin_02_rect', 'eviltwin_03_rect'],
         ['original_01_rect', 'original_02_rect', 'eviltwin_01_rect', 'eviltwin_02_rect'],
         ['rosemary_rect'],  # first jacobs farm sample
@@ -335,7 +336,7 @@ if __name__ == '__main__':
     ]
 
     semisup = False
-    finetune = False
+    finetune = True
     finetune_source = '/home/harey/birdseye/models/birdseye_224_224_019.weights.h5' 
     # finetune_source = '/home/harey/birdseye/models/birdseye_224_224_013.weights.h5' 
 

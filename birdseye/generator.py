@@ -76,7 +76,8 @@ def generator(h, w, c, unfreeze_frac=0.3, trainable=False, use_heatmap=False):
     features = pretrained_backbone(inp, h=h, w=w, c=c, unfreeze_frac=unfreeze_frac, trainable=trainable)
 
     if use_heatmap:
-        out = heatmap_head_hybrid(features)
+        out = heatmap_head_deep(features)
+        # out = heatmap_head_hybrid(features, h, w)
     else:
         out = detection_head(features)
 
