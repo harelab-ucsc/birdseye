@@ -1,3 +1,4 @@
+
 import os
 os.environ["CUDA_VISIBLE_DEVICES"] = "1"
 import glob2
@@ -5,35 +6,6 @@ import tensorflow as tf
 from frame_loader_yolo import FrameLoader
 from tile_loader_yolo import TileLoader, get_tile_level_class_weights
 from yolo_generator import yolo_model
-
-def yolo_point_loss(y_true, y_pred):
-    """
-    Minimal YOLO-style loss: only supervises xy and objectness.
-    Assumes y_pred[..., 4] is a raw logit (no sigmoid in model).
-    """
-    # Extract ground truth and predictions
-    xy_true = tf.cast(y_true[..., 0:2], tf.float32)
-    obj_true = tf.cast(y_true[..., 4], tf.float32)
-
-    xy_pred = tf.cast(y_pred[..., 0:2], tf.float32)
-    obj_logit = tf.cast(y_pred[..., 4], tf.float32)
-
-    obj_mask = obj_true
-    num_pos = tf.reduce_sum(obj_mask) + 1e-6
-
-    # 1. XY loss (mean squared error for positives only)
-    xy_loss = tf.reduce_sum(obj_mask[..., tf.newaxis] * tf.square(xy_true - xy_pred)) / num_pos
-
-    # 2. Objectness loss (sigmoid BCE from logits)
-    obj_loss_raw = tf.nn.sigmoid_cross_entropy_with_logits(labels=obj_true, logits=obj_logit)
-    obj_loss = tf.reduce_sum(obj_loss_raw) / tf.cast(tf.size(obj_loss_raw), tf.float32)
-
-    # Combine
-    total_loss = 5.0 * xy_loss + 1.0 * obj_loss
-
-    tf.debugging.assert_all_finite(total_loss, "Loss became NaN or Inf!")
-    return total_loss
-
 
 class BirdsEyeTrainer:
     def __init__(self, config):
@@ -43,8 +15,8 @@ class BirdsEyeTrainer:
         self.val_ds = None
         self.class_weights = None
 
-        self.IMG_HEIGHT = config.get("img_height", 416)
-        self.IMG_WIDTH = config.get("img_width", 416)
+        self.IMG_HEIGHT = config.get("img_height", 1200)
+        self.IMG_WIDTH = config.get("img_width", 1920)
         self.IMG_CHANNELS = config.get("img_channels", 3)
         self.TILE_HEIGHT, self.TILE_WIDTH = config.get("tile_size", (224, 224))
 
@@ -58,7 +30,7 @@ class BirdsEyeTrainer:
 
         self.frame_loader = FrameLoader(
             image_size=(self.IMG_HEIGHT, self.IMG_WIDTH),
-            num_classes=config.get("num_classes", 2)
+            num_classes=config.get("num_classes", 1)
         )
 
     def build_file_lists(self):
@@ -115,9 +87,12 @@ class BirdsEyeTrainer:
             repeat=False,
             augment=False
         )
+        # Calculate steps_per_epoch after the dataset is built
         self.config["steps_per_epoch"] = len(self.train_files) // self.config["batch_size"]
 
     def build_model(self):
+        from loss_func import yolo_point_loss  # make sure this path is correct
+
         mode = self.config.get("mode")
 
         if mode == "tile":
@@ -129,14 +104,17 @@ class BirdsEyeTrainer:
 
         self.model = yolo_model(
             input_shape=input_shape,
-            num_classes=self.config["num_classes"]
+            num_classes=1  # assuming binary: hole or no hole
         )
 
+        # Select loss + metrics
         if mode == "yolo":
-            loss_fn = yolo_point_loss
+            loss_fn = yolo_point_loss()
             metrics = [
+                tf.keras.metrics.BinaryCrossentropy(name="obj_bce"),
                 tf.keras.metrics.BinaryAccuracy(threshold=0.3, name="obj_acc"),
-                tf.keras.metrics.AUC(name="obj_auc")
+                tf.keras.metrics.AUC(name="obj_auc", curve="ROC"),
+                tf.keras.metrics.AUC(name="pr_auc", curve="PR")
             ]
         else:
             loss_fn = tf.keras.losses.BinaryFocalCrossentropy(
@@ -145,7 +123,7 @@ class BirdsEyeTrainer:
                 from_logits=False
             )
             metrics = [
-                tf.keras.metrics.BinaryCrossentropy(from_logits=False, name="bce"),
+                tf.keras.metrics.BinaryCrossentropy(name="bce"),
                 tf.keras.metrics.BinaryAccuracy(threshold=0.5, name="bin_acc"),
                 tf.keras.metrics.Precision(thresholds=0.5, name="prec"),
                 tf.keras.metrics.Recall(thresholds=0.5, name="rec"),
@@ -165,11 +143,66 @@ class BirdsEyeTrainer:
             print(f"\n Loading weights from: {self.config['finetune_source']}\n")
             self.model.load_weights(self.config["finetune_source"])
 
+    
+    # def build_model(self):
+    #     mode = self.config.get("mode")
+
+    #     if mode == "tile":
+    #         input_shape = (self.TILE_HEIGHT, self.TILE_WIDTH, self.IMG_CHANNELS)
+    #     else:
+    #         input_shape = (self.IMG_HEIGHT, self.IMG_WIDTH, self.IMG_CHANNELS)
+
+    #     print(f" Building model for mode: {mode.upper()}...")
+
+    #     self.model = yolo_model(
+    #         input_shape=input_shape,
+    #         num_classes=self.config["num_classes"]
+    #     )
+
+    #     # Choose loss and metrics based on mode
+    #     if mode == "yolo":
+    #         loss_fn = tf.keras.losses.BinaryCrossentropy(from_logits=False)
+    #         metrics = [
+    #             tf.keras.metrics.BinaryCrossentropy(from_logits=False, name="bce"),
+    #             tf.keras.metrics.BinaryAccuracy(threshold=0.3, name="bin_acc"),
+    #             tf.keras.metrics.Precision(thresholds=0.3, name="prec"),
+    #             tf.keras.metrics.Recall(thresholds=0.3, name="rec"),
+    #             tf.keras.metrics.AUC(name="roc_auc"),
+    #             tf.keras.metrics.AUC(curve="PR", name="pr_auc")
+    #         ]
+    #     else:
+    #         loss_fn = tf.keras.losses.BinaryFocalCrossentropy(
+    #             alpha=self.config.get("alpha", 0.25),
+    #             gamma=self.config.get("gamma", 2.0),
+    #             from_logits=False
+    #         )
+    #         metrics = [
+    #             tf.keras.metrics.BinaryCrossentropy(from_logits=False, name="bce"),
+    #             tf.keras.metrics.BinaryAccuracy(threshold=0.5, name="bin_acc"),
+    #             tf.keras.metrics.Precision(thresholds=0.5, name="prec"),
+    #             tf.keras.metrics.Recall(thresholds=0.5, name="rec"),
+    #             tf.keras.metrics.AUC(name="roc_auc"),
+    #             tf.keras.metrics.AUC(curve="PR", name="pr_auc")
+    #         ]
+
+    #     self.model.compile(
+    #         optimizer=tf.keras.optimizers.AdamW(learning_rate=self.config["lr"]),
+    #         loss=loss_fn,
+    #         metrics=metrics
+    #     )
+
+    #     self.model.summary()
+
+    #     if self.config.get("finetune"):
+    #         print(f"\n Loading weights from: {self.config['finetune_source']}\n")
+    #         self.model.load_weights(self.config["finetune_source"])
+
+
     def train(self):
         callbacks = [
             tf.keras.callbacks.TensorBoard(log_dir="logs", histogram_freq=1, write_graph=True, write_images=True),
             tf.keras.callbacks.ReduceLROnPlateau(monitor=self.config["monitor"], factor=0.5, patience=3, min_lr=0),
-            tf.keras.callbacks.EarlyStopping(monitor=self.config["monitor"], patience=50),
+            tf.keras.callbacks.EarlyStopping(monitor=self.config["monitor"], patience=15),
             tf.keras.callbacks.ModelCheckpoint(
                 filepath=self.config["filename"] + ".weights.h5",
                 save_weights_only=True,
@@ -201,7 +234,6 @@ if __name__ == '__main__':
     trainer = BirdsEyeTrainer(config)
     trainer.run()
 
-
 # import os
 # os.environ["CUDA_VISIBLE_DEVICES"] = "1"
 # import glob2
@@ -209,6 +241,35 @@ if __name__ == '__main__':
 # from frame_loader_yolo import FrameLoader
 # from tile_loader_yolo import TileLoader, get_tile_level_class_weights
 # from yolo_generator import yolo_model
+
+# def yolo_point_loss(y_true, y_pred):
+#     """
+#     Minimal YOLO-style loss: only supervises xy and objectness.
+#     Assumes y_pred[..., 4] is a raw logit (no sigmoid in model).
+#     """
+#     # Extract ground truth and predictions
+#     xy_true = tf.cast(y_true[..., 0:2], tf.float32)
+#     obj_true = tf.cast(y_true[..., 4], tf.float32)
+
+#     xy_pred = tf.cast(y_pred[..., 0:2], tf.float32)
+#     obj_logit = tf.cast(y_pred[..., 4], tf.float32)
+
+#     obj_mask = obj_true
+#     num_pos = tf.reduce_sum(obj_mask) + 1e-6
+
+#     # 1. XY loss (mean squared error for positives only)
+#     xy_loss = tf.reduce_sum(obj_mask[..., tf.newaxis] * tf.square(xy_true - xy_pred)) / num_pos
+
+#     # 2. Objectness loss (sigmoid BCE from logits)
+#     obj_loss_raw = tf.nn.sigmoid_cross_entropy_with_logits(labels=obj_true, logits=obj_logit)
+#     obj_loss = tf.reduce_sum(obj_loss_raw) / tf.cast(tf.size(obj_loss_raw), tf.float32)
+
+#     # Combine
+#     total_loss = 5.0 * xy_loss + 1.0 * obj_loss
+
+#     tf.debugging.assert_all_finite(total_loss, "Loss became NaN or Inf!")
+#     return total_loss
+
 
 # class BirdsEyeTrainer:
 #     def __init__(self, config):
@@ -218,8 +279,8 @@ if __name__ == '__main__':
 #         self.val_ds = None
 #         self.class_weights = None
 
-#         self.IMG_HEIGHT = config.get("img_height", 1200)
-#         self.IMG_WIDTH = config.get("img_width", 1920)
+#         self.IMG_HEIGHT = config.get("img_height", 416)
+#         self.IMG_WIDTH = config.get("img_width", 416)
 #         self.IMG_CHANNELS = config.get("img_channels", 3)
 #         self.TILE_HEIGHT, self.TILE_WIDTH = config.get("tile_size", (224, 224))
 
@@ -233,7 +294,7 @@ if __name__ == '__main__':
 
 #         self.frame_loader = FrameLoader(
 #             image_size=(self.IMG_HEIGHT, self.IMG_WIDTH),
-#             num_classes=config.get("num_classes", 1)
+#             num_classes=config.get("num_classes", 2)
 #         )
 
 #     def build_file_lists(self):
@@ -290,9 +351,8 @@ if __name__ == '__main__':
 #             repeat=False,
 #             augment=False
 #         )
-#         # Calculate steps_per_epoch after the dataset is built
 #         self.config["steps_per_epoch"] = len(self.train_files) // self.config["batch_size"]
-    
+
 #     def build_model(self):
 #         mode = self.config.get("mode")
 
@@ -308,16 +368,11 @@ if __name__ == '__main__':
 #             num_classes=self.config["num_classes"]
 #         )
 
-#         # Choose loss and metrics based on mode
 #         if mode == "yolo":
-#             loss_fn = tf.keras.losses.BinaryCrossentropy(from_logits=False)
+#             loss_fn = yolo_point_loss
 #             metrics = [
-#                 tf.keras.metrics.BinaryCrossentropy(from_logits=False, name="bce"),
-#                 tf.keras.metrics.BinaryAccuracy(threshold=0.3, name="bin_acc"),
-#                 tf.keras.metrics.Precision(thresholds=0.3, name="prec"),
-#                 tf.keras.metrics.Recall(thresholds=0.3, name="rec"),
-#                 tf.keras.metrics.AUC(name="roc_auc"),
-#                 tf.keras.metrics.AUC(curve="PR", name="pr_auc")
+#                 tf.keras.metrics.BinaryAccuracy(threshold=0.3, name="obj_acc"),
+#                 tf.keras.metrics.AUC(name="obj_auc")
 #             ]
 #         else:
 #             loss_fn = tf.keras.losses.BinaryFocalCrossentropy(
@@ -346,12 +401,11 @@ if __name__ == '__main__':
 #             print(f"\n Loading weights from: {self.config['finetune_source']}\n")
 #             self.model.load_weights(self.config["finetune_source"])
 
-
 #     def train(self):
 #         callbacks = [
 #             tf.keras.callbacks.TensorBoard(log_dir="logs", histogram_freq=1, write_graph=True, write_images=True),
 #             tf.keras.callbacks.ReduceLROnPlateau(monitor=self.config["monitor"], factor=0.5, patience=3, min_lr=0),
-#             tf.keras.callbacks.EarlyStopping(monitor=self.config["monitor"], patience=15),
+#             tf.keras.callbacks.EarlyStopping(monitor=self.config["monitor"], patience=50),
 #             tf.keras.callbacks.ModelCheckpoint(
 #                 filepath=self.config["filename"] + ".weights.h5",
 #                 save_weights_only=True,
@@ -379,6 +433,6 @@ if __name__ == '__main__':
 
 # if __name__ == '__main__':
 #     from config_birdseye import get_config
-#     config = get_config(mode="tile")
+#     config = get_config(mode="yolo")
 #     trainer = BirdsEyeTrainer(config)
 #     trainer.run()

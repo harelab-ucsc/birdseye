@@ -47,6 +47,7 @@ class FrameLoader:
                     box_w = 0.1
                     box_h = 0.1
                     
+                    cls = 0
                     target[gy, gx, a, 0:4] = [x_rel, y_rel, box_w, box_h]
                     target[gy, gx, a, 4] = 1.0
                     target[gy, gx, a, 5 + cls] = 1.0

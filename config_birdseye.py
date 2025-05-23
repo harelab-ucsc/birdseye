@@ -56,6 +56,6 @@ def get_config(mode="yolo"):  # default to "yolo" to match the example
         "thresh": 0.5,
         "logits": False,
         "monitor": "val_loss",
-        "num_classes": 2,
+        "num_classes": 1,
         "filename": filename
     }

@@ -4,7 +4,7 @@
 import tensorflow as tf
 from tensorflow.keras import layers, models, regularizers
 
-def yolo_model(input_shape=(416, 416, 3), num_classes=2, l2_reg=0.01, dropout_rate=0.5):
+def yolo_model(input_shape=(416, 416, 3), num_classes=1, l2_reg=0.01, dropout_rate=0.5, anchors=5):
     base_model = tf.keras.applications.MobileNetV2(
         input_shape=input_shape,
         include_top=False,
@@ -12,21 +12,21 @@ def yolo_model(input_shape=(416, 416, 3), num_classes=2, l2_reg=0.01, dropout_ra
     )
     base_model.trainable = True
 
-    x = base_model.output
-    x = layers.Conv2D(256, (3, 3), padding='same', activation='relu', kernel_regularizer=regularizers.l2(l2_reg))(x)
+    x = base_model.output  # e.g., (None, 13, 13, 1280) or (None, 7, 7, ...)
+    x = layers.Conv2D(256, (3, 3), padding='same', activation='relu',
+                      kernel_regularizer=regularizers.l2(l2_reg))(x)
     x = layers.BatchNormalization()(x)
     x = layers.Dropout(dropout_rate)(x)
 
-    anchors = 5
-    x = layers.Conv2D(
-        filters=anchors * (5 + num_classes),
-        kernel_size=1,
-        padding='same',
-        activation=None  # No activation: output raw logits
-    )(x)
-    x = layers.Reshape((13, 13, anchors, 5 + num_classes))(x)
+    num_outputs = 5 + num_classes  # (x, y, w, h, obj) + class
+    x = layers.Conv2D(filters=anchors * num_outputs, kernel_size=1, padding='same', activation='sigmoid')(x)
+
+    # Dynamically compute spatial dims
+    h, w = x.shape[1], x.shape[2]
+    x = layers.Reshape((h, w, anchors, num_outputs))(x)
 
     return models.Model(inputs=base_model.input, outputs=x)
+
 
 # def yolo_model(input_shape=(416, 416, 3), num_classes=1, l2_reg=0.01, dropout_rate=0.5):
 #     # Base model
