@@ -99,25 +99,29 @@ class BirdsEyeTrainer:
         self.val_files = collect_paths(self.config["val_dates"], self.config["val_dirlists"])
         
         print('\n\nComputing class weights... \n\n')
-        if self.config["tiled"]:
-            self.class_weights = tile_weights(
-                self.train_files,
-                self.tile_loader,
-                semisupervised = self.config["semisupervised"],
-                cache_dir=self.config["train_cache_dir"],
-                bypass_cache=self.config.get("bypass_cache", False)
-            )
-            tmp = tile_weights(
-                self.val_files,
-                self.tile_loader,
-                cache_dir=self.config["val_cache_dir"],
-                bypass_cache=self.config.get("bypass_cache", False)
-            )
+        if self.config["negative_mode"] is not 'none':
+            if self.config["tiled"]:
+                self.class_weights = tile_weights(
+                    self.train_files,
+                    self.tile_loader,
+                    semisupervised = self.config["semisupervised"],
+                    cache_dir=self.config["train_cache_dir"],
+                    bypass_cache=self.config.get("bypass_cache", False)
+                )
+                tmp = tile_weights(
+                    self.val_files,
+                    self.tile_loader,
+                    cache_dir=self.config["val_cache_dir"],
+                    bypass_cache=self.config.get("bypass_cache", False)
+                )
+            else:
+                self.class_weights = frame_weights(self.train_files, self.frame_loader)
+                tmp = frame_weights(self.val_files, self.frame_loader)
+
+            print(f'\n\nTraining weights:\n{self.class_weights}\n')
+            print(f'Validation stats:\n{tmp}\n\n')
         else:
-            self.class_weights = frame_weights(self.train_files, self.frame_loader)
-            tmp = frame_weights(self.val_files, self.frame_loader)
-        print(f'\n\nTraining weights:\n{self.class_weights}\n')
-        print(f'Validation stats:\n{tmp}\n\n')
+            print('  not using all-negative tiles... skipping.')
 
 
     def setup_data(self):
@@ -308,29 +312,29 @@ if __name__ == '__main__':
     label_file = 'labels.txt'
 
     train_dates = [
-        # '2025_03_25', 
+        '2025_03_25', 
         '2025_04_04',
         '2025_04_09',
-        '2025_04_23',
-        '2025_05_02'
+        # '2025_04_23',
+        # '2025_05_02'
     ]
 
     val_dates = [
-        '2025_04_16',
+        # '2025_04_16',
         '2025_04_21',
         '2025_04_23',
     ]
 
     train_dirlists = [
-        # ['haybarn_original_01_01_rect', 'haybarn_eviltwin_01_01_rect'],
+        ['haybarn_original_01_01_rect', 'haybarn_eviltwin_01_01_rect'],
         ['original_01_rect', 'original_02_rect', 'eviltwin_01_rect', 'eviltwin_02_rect', 'eviltwin_03_rect'],
         ['original_01_rect', 'original_02_rect', 'eviltwin_01_rect', 'eviltwin_02_rect'],
-        ['rosemary_rect'],  # first jacobs farm sample
-        ['rosemary_02_rect', 'jacobs_01_rect']  # different jacobs farm rosemary block, roadside holing
+        # ['rosemary_rect'],  # first jacobs farm sample
+        # ['rosemary_02_rect', 'jacobs_01_rect']  # different jacobs farm rosemary block, roadside holing
     ]
 
     val_dirlists = [
-        ['pieranch_rect'],  # first pie ranch sample
+        # ['pieranch_rect'],  # first pie ranch sample
         ['original_02_rect', 'original_03_rect'],
         ['casfs_original', 'casfs_eviltwin'],
     ]
@@ -390,7 +394,7 @@ if __name__ == '__main__':
         "train_cache_dir": os.path.expanduser("~/.cache/birdseye/class_weights"),
         "val_cache_dir": os.path.expanduser("~/.cache/birdseye/val_weights"),
         "bypass_cache": False,
-        "negative_mode": "random",  # options: 'random', 'once_per_image', 'none'
+        "negative_mode": "none",  # options: 'random', 'once_per_image', 'none'
         "semisupervised": semisup,
     }
 

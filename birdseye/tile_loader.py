@@ -379,8 +379,9 @@ def get_class_weights(file_list, tile_loader, semisupervised=False, cache_dir=No
             image_path_str = str(image_path)
             image = tf.io.decode_png(tf.io.read_file(image_path_str), channels=3).numpy()
             labels = tile_loader.load_labels(tile_loader.label_file, image_path_str)
-            if os.path.exists(os.path.join(os.path.split(image_path_str)[0], 'results.txt')):
-                labels += tile_loader.load_labels('results.txt', image_path_str)
+            if semisupervised:
+                if os.path.exists(os.path.join(os.path.split(image_path_str)[0], 'results.txt')):
+                    labels += tile_loader.load_labels('results.txt', image_path_str)
             tiles, label_list = tile_loader.tile_image_and_label(image, labels)
 
             for lbl in label_list:
