@@ -4,7 +4,7 @@
 import tensorflow as tf
 from tensorflow.keras import layers, models, regularizers
 
-def yolo_model(input_shape=(416, 416, 3), num_classes=1, l2_reg=0.01, dropout_rate=0.5, anchors=5):
+def yolo_model(input_shape=(416, 416, 3), num_classes=1, l2_reg=1e-4, dropout_rate=0.3, anchors=5):
     base_model = tf.keras.applications.MobileNetV2(
         input_shape=input_shape,
         include_top=False,

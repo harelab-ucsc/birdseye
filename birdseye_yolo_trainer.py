@@ -109,10 +109,10 @@ class BirdsEyeTrainer:
 
         # Select loss + metrics
         if mode == "yolo":
-            loss_fn = yolo_point_loss()
+            loss_fn = yolo_point_loss(obj_weight=1.0, coord_weight=1.0)
             metrics = [
                 tf.keras.metrics.BinaryCrossentropy(name="obj_bce"),
-                tf.keras.metrics.BinaryAccuracy(threshold=0.3, name="obj_acc"),
+                tf.keras.metrics.BinaryAccuracy(threshold=0.2, name="obj_acc"),
                 tf.keras.metrics.AUC(name="obj_auc", curve="ROC"),
                 tf.keras.metrics.AUC(name="pr_auc", curve="PR")
             ]
