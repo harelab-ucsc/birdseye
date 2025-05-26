@@ -312,7 +312,7 @@ if __name__ == '__main__':
     label_file = 'labels.txt'
 
     train_dates = [
-        '2025_03_25', 
+        # '2025_03_25', 
         '2025_04_04',
         '2025_04_09',
         # '2025_04_23',
@@ -326,7 +326,7 @@ if __name__ == '__main__':
     ]
 
     train_dirlists = [
-        ['haybarn_original_01_01_rect', 'haybarn_eviltwin_01_01_rect'],
+        # ['haybarn_original_01_01_rect', 'haybarn_eviltwin_01_01_rect'],
         ['original_01_rect', 'original_02_rect', 'eviltwin_01_rect', 'eviltwin_02_rect', 'eviltwin_03_rect'],
         ['original_01_rect', 'original_02_rect', 'eviltwin_01_rect', 'eviltwin_02_rect'],
         # ['rosemary_rect'],  # first jacobs farm sample
