@@ -99,7 +99,7 @@ class BirdsEyeTrainer:
         self.val_files = collect_paths(self.config["val_dates"], self.config["val_dirlists"])
         
         print('\n\nComputing class weights... \n\n')
-        if self.config["negative_mode"] is not 'none':
+        if self.config["negative_mode"] != 'none':
             if self.config["tiled"]:
                 self.class_weights = tile_weights(
                     self.train_files,
@@ -161,12 +161,10 @@ class BirdsEyeTrainer:
         if self.config.get("use_heatmaps", False):
             def weighted_heatmap_loss(from_logits=False):
                 def loss_fn(y_true, y_pred):
-                    y = y_true[..., 0]  # Ground truth heatmap
-                    w = y_true[..., 1]  # Pixelwise weight mask
+                    y = y_true[..., 0:1]  # Ground truth heatmap
+                    w = y_true[..., 1:2]  # Pixelwise weight mask
                     # tf.debugging.assert_all_finite(tf.reduce_sum(w), "Weightmap contains NaNs or Infs")
                     # tf.debugging.assert_positive(tf.reduce_sum(w), message="Sum of weights is zero — likely all negatives")
-
-                    y_pred = tf.squeeze(y_pred, axis=-1)
 
                     if from_logits:
                         bce = tf.nn.sigmoid_cross_entropy_with_logits(labels=y, logits=y_pred)
@@ -180,12 +178,11 @@ class BirdsEyeTrainer:
 
                 return loss_fn
 
-            def safe_heatmap_loss(from_logits=True):
+            def safe_heatmap_loss(from_logits=False):
                 def loss_fn(y_true, y_pred):
-                    y = y_true[..., 0]  # Ensure valid target
+                    y = y_true[..., 0:1]  # Ensure valid target
                     bce = tf.keras.losses.BinaryCrossentropy(from_logits=from_logits, reduction="sum_over_batch_size")  
-                    return bce(y, tf.squeeze(y_pred, axis=-1))
-
+                    return bce(y, y_pred)
                 return loss_fn
 
             # loss_fn = weighted_heatmap_loss(from_logits=self.config.get("logits", False))                
@@ -312,37 +309,43 @@ if __name__ == '__main__':
     label_file = 'labels.txt'
 
     train_dates = [
-        # '2025_03_25', 
+        '2025_03_25', 
         '2025_04_04',
         '2025_04_09',
-        # '2025_04_23',
-        # '2025_05_02'
+        '2025_04_23',
+        '2025_05_02',
+        '2025_05_21',
+        '2025_05_26',
     ]
 
     val_dates = [
-        # '2025_04_16',
+        '2025_04_16',
         '2025_04_21',
         '2025_04_23',
+        '2025_05_23',
     ]
 
     train_dirlists = [
-        # ['haybarn_original_01_01_rect', 'haybarn_eviltwin_01_01_rect'],
+        ['haybarn_original_01_01_rect', 'haybarn_eviltwin_01_01_rect'],
         ['original_01_rect', 'original_02_rect', 'eviltwin_01_rect', 'eviltwin_02_rect', 'eviltwin_03_rect'],
         ['original_01_rect', 'original_02_rect', 'eviltwin_01_rect', 'eviltwin_02_rect'],
-        # ['rosemary_rect'],  # first jacobs farm sample
-        # ['rosemary_02_rect', 'jacobs_01_rect']  # different jacobs farm rosemary block, roadside holing
+        ['rosemary_rect'],  # first jacobs farm sample
+        ['rosemary_02_rect', 'jacobs_01_rect'],  # different jacobs farm rosemary block, roadside holing
+        ['haybarn_rect'],
+        ['main_rect']
     ]
 
     val_dirlists = [
-        # ['pieranch_rect'],  # first pie ranch sample
+        ['pieranch_rect'],  # first pie ranch sample
         ['original_02_rect', 'original_03_rect'],
         ['casfs_original', 'casfs_eviltwin'],
+        ['oceanview_rect']
     ]
 
     semisup = False
-    finetune = True
-    finetune_source = '/home/harey/birdseye/models/birdseye_224_224_019.weights.h5' 
-    # finetune_source = '/home/harey/birdseye/models/birdseye_224_224_013.weights.h5' 
+    finetune = False
+    # finetune_source = '/home/harey/birdseye/models/birdseye_224_224_019.weights.h5' 
+    finetune_source = '/home/harey/birdseye/models/birdseye_224_224_013.weights.h5' 
 
     tiled = True
 
@@ -394,7 +397,7 @@ if __name__ == '__main__':
         "train_cache_dir": os.path.expanduser("~/.cache/birdseye/class_weights"),
         "val_cache_dir": os.path.expanduser("~/.cache/birdseye/val_weights"),
         "bypass_cache": False,
-        "negative_mode": "none",  # options: 'random', 'once_per_image', 'none'
+        "negative_mode": "random",  # options: 'random', 'once_per_image', 'none'
         "semisupervised": semisup,
     }
 
