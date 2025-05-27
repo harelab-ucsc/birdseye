@@ -5,13 +5,16 @@ import glob2
 import numpy as np
 import tensorflow as tf
 from tensorflow.keras import layers, models, regularizers
+import keras_cv
 
 class FrameLoader:
-    def __init__(self, image_size=(416, 416), num_classes=2, grid_size=13, anchors=5):
+    def __init__(self, image_size=(416, 416), num_classes=2, grid_size=13, anchors=5, augment=False):
         self.image_size = image_size
         self.num_classes = num_classes
         self.grid_size = grid_size
         self.anchors = anchors
+        self.augment = augment
+        self.flip_augmenter = keras_cv.layers.RandomFlip(mode="horizontal_and_vertical")
 
     def load_labels(self, label_file, image_filename):
         labels = []
@@ -39,20 +42,17 @@ class FrameLoader:
             gy = int(y / cell_h)
             if gx >= self.grid_size or gy >= self.grid_size:
                 continue
-
             for a in range(self.anchors):
                 if target[gy, gx, a, 4] == 0:
                     x_rel = (x % cell_w) / cell_w
                     y_rel = (y % cell_h) / cell_h
                     box_w = 0.1
                     box_h = 0.1
-                    
                     cls = 0
                     target[gy, gx, a, 0:4] = [x_rel, y_rel, box_w, box_h]
                     target[gy, gx, a, 4] = 1.0
                     target[gy, gx, a, 5 + cls] = 1.0
                     break
-
         return target
 
     def tf_frame_fn(self, image_path, label_file):
@@ -63,6 +63,10 @@ class FrameLoader:
             image = tf.image.resize(image, self.image_size).numpy().astype(np.uint8)
 
             labels = self.load_labels(label_file, image_path_str)
+
+            if self.augment:
+                image = self.flip_augmenter(tf.convert_to_tensor(image, dtype=tf.float32)).numpy().astype(np.uint8)
+
             target = self.encode_labels_to_grid(labels)
             return image, target
 
@@ -76,6 +80,7 @@ class FrameLoader:
         return image, label
 
     def build_dataset(self, file_list, label_file, batch_size, buffer_size=64, repeat=True, augment=False):
+        self.augment = augment
         ds = tf.data.Dataset.from_tensor_slices(tf.convert_to_tensor(file_list, dtype=tf.string))
         ds = ds.map(lambda path: self.tf_frame_fn(path, label_file), num_parallel_calls=tf.data.AUTOTUNE)
 
