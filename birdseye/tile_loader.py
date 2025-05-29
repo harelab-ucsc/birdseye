@@ -143,7 +143,7 @@ class TileLoader:
                             for lx, ly, cls_str, source in tile_labels:
                                 if x <= lx < x+tw and y <= ly < y+th:
                                     px, py = int(lx - x), int(ly - y)
-                                    sigma = 3 if source == "cnn" else 15
+                                    sigma = 3 if source == "cnn" else 10
                                     weight = 0.5 if source == "cnn" else 1.0
                                     self.draw_gaussian(heatmap, weightmap, px, py, sigma, weight)
                             weightmap = np.clip(weightmap, 1e-2, 1.0)
@@ -248,9 +248,9 @@ class TileLoader:
             image = tf.image.adjust_brightness(image, n * m[0] / 2)
         if m[1] < 0.5:
             image = tf.image.adjust_contrast(image, 1 + n * m[1])
-        if m[2] < 0.5:
-            image = tf.image.random_hue(image, 0.02)
-            image = tf.image.random_saturation(image, 0.95, 1.05)
+        # if m[2] < 0.5:
+            # image = tf.image.random_hue(image, 0.02)
+            # image = tf.image.random_saturation(image, 0.95, 1.05)
 
         # --- Geometric transforms ---
         if m[3] < 0.5:
@@ -264,27 +264,27 @@ class TileLoader:
                 label = tf.image.flip_up_down(label)
 
         # # --- Elastic deformation (only apply when heatmaps used) ---
-        def apply_elastic(image_np, label_np):
-            return elastic_transform(image_np), elastic_transform(label_np)
+        # def apply_elastic(image_np, label_np):
+        #     return elastic_transform(image_np), elastic_transform(label_np)
 
-        if self.use_heatmaps and m[5] < 0.3:
-            image, label = tf.numpy_function(
-                func=apply_elastic,
-                inp=[image, label],
-                Tout=[tf.float32, tf.float32]
-            )
-            image.set_shape([self.tile_height, self.tile_width, 3])
-            label.set_shape([self.tile_height, self.tile_width, 2])
+        # if self.use_heatmaps and m[5] < 0.3:
+        #     image, label = tf.numpy_function(
+        #         func=apply_elastic,
+        #         inp=[image, label],
+        #         Tout=[tf.float32, tf.float32]
+        #     )
+        #     image.set_shape([self.tile_height, self.tile_width, 3])
+        #     label.set_shape([self.tile_height, self.tile_width, 2])
 
-        # # --- Rotation (0, 90, 180, 270) ---
-        # k = tf.random.uniform([], minval=0, maxval=4, dtype=tf.int32)
-        # image = tf.image.rot90(image, k)
-        # if self.use_heatmaps:
-        #     label = tf.image.rot90(label, k)
+        # # # --- Rotation (0, 90, 180, 270) ---
+        # # k = tf.random.uniform([], minval=0, maxval=4, dtype=tf.int32)
+        # # image = tf.image.rot90(image, k)
+        # # if self.use_heatmaps:
+        # #     label = tf.image.rot90(label, k)
 
-        # # --- Additive Gaussian noise ---
-        if m[6] < 0.5:
-            image = self.add_noise(image)
+        # --- Additive Gaussian noise ---
+        # if m[6] < 0.5:
+        #     image = self.add_noise(image)
 
         # --- Postprocess ---
         image = tf.cast(image, tf.uint8)  # ✅ safe and shape-preserving
@@ -311,7 +311,7 @@ class TileLoader:
             ds = ds.repeat()
 
         ds = ds.shuffle(buffer_size)
-        ds = ds.batch(batch_size)  # 👈 this is now guaranteed to work correctly
+        ds = ds.batch(batch_size)  
         ds = ds.prefetch(tf.data.AUTOTUNE)
         return ds
 

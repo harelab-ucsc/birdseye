@@ -90,36 +90,41 @@ class BirdsEyeTrainer:
             for d, dirs in zip(dates, dirlists):
                 for subdir in dirs:
                     full_path = os.path.join(self.config["data_root"], d, subdir)
+                    print(f'  {full_path}')
                     if os.path.isdir(full_path):
                         paths.append(full_path)
                         files.extend(tf.io.gfile.glob(os.path.join(full_path, "*.png")))
+            print(f'    {len(files)} images')
             return sorted(files)
 
+        print('Training dataset:')
         self.train_files = collect_paths(self.config["train_dates"], self.config["train_dirlists"])
+        print('Validation dataset:')
         self.val_files = collect_paths(self.config["val_dates"], self.config["val_dirlists"])
         
-        print('\n\nComputing class weights... \n\n')
         if self.config["negative_mode"] != 'none':
             if self.config["tiled"]:
-                self.class_weights = tile_weights(
-                    self.train_files,
-                    self.tile_loader,
-                    semisupervised = self.config["semisupervised"],
-                    cache_dir=self.config["train_cache_dir"],
-                    bypass_cache=self.config.get("bypass_cache", False)
-                )
-                tmp = tile_weights(
-                    self.val_files,
-                    self.tile_loader,
-                    cache_dir=self.config["val_cache_dir"],
-                    bypass_cache=self.config.get("bypass_cache", False)
-                )
+                # self.class_weights = tile_weights(
+                #     self.train_files,
+                #     self.tile_loader,
+                #     semisupervised = self.config["semisupervised"],
+                #     cache_dir=self.config["train_cache_dir"],
+                #     bypass_cache=self.config.get("bypass_cache", False)
+                # )
+                # tmp = tile_weights(
+                #     self.val_files,
+                #     self.tile_loader,
+                #     cache_dir=self.config["val_cache_dir"],
+                #     bypass_cache=self.config.get("bypass_cache", False)
+                # )
+                pass
             else:
+                print('\n\nComputing class weights... \n\n')
                 self.class_weights = frame_weights(self.train_files, self.frame_loader)
                 tmp = frame_weights(self.val_files, self.frame_loader)
 
-            print(f'\n\nTraining weights:\n{self.class_weights}\n')
-            print(f'Validation stats:\n{tmp}\n\n')
+                print(f'\n\nTraining weights:\n{self.class_weights}\n')
+                print(f'Validation stats:\n{tmp}\n\n')
         else:
             print('  not using all-negative tiles... skipping.')
 
@@ -185,8 +190,8 @@ class BirdsEyeTrainer:
                     return bce(y, y_pred)
                 return loss_fn
 
-            # loss_fn = weighted_heatmap_loss(from_logits=self.config.get("logits", False))                
-            loss_fn = safe_heatmap_loss(from_logits=self.config.get("logits", False))                
+            loss_fn = weighted_heatmap_loss(from_logits=self.config.get("logits", False))                
+            # loss_fn = safe_heatmap_loss(from_logits=self.config.get("logits", False))                
             metrics=[
                 SlicedMetric(tf.keras.metrics.BinaryCrossentropy(from_logits=self.config.get("logits", False), name='bce')),
                 SlicedMetric(tf.keras.metrics.MeanSquaredError(name='mse')),
@@ -251,7 +256,7 @@ class BirdsEyeTrainer:
             callbacks=callbacks,
             class_weight=self.class_weights,
             verbose=1,
-            steps_per_epoch=self.config.get("steps_per_epoch")
+            # steps_per_epoch=self.config.get("steps_per_epoch")
         )
         metrics = self.model.evaluate(self.val_ds, verbose=1, return_dict=True)
 
@@ -293,6 +298,7 @@ class BirdsEyeTrainer:
         self.build_model()
         self.train()
         if self.config.get("use_heatmaps", False):
+            
             self.show_heatmap_prediction(self.model, self.val_ds)
 
 
@@ -309,36 +315,36 @@ if __name__ == '__main__':
     label_file = 'labels.txt'
 
     train_dates = [
-        '2025_03_25', 
-        '2025_04_04',
-        '2025_04_09',
-        '2025_04_23',
-        '2025_05_02',
+        # '2025_03_25', 
+        # '2025_04_04',
+        # '2025_04_09',
+        # '2025_04_23',
+        # '2025_05_02',
         '2025_05_21',
         '2025_05_26',
     ]
 
     val_dates = [
-        '2025_04_16',
-        '2025_04_21',
-        '2025_04_23',
+        # '2025_04_16',
+        # '2025_04_21',
+        # '2025_04_23',
         '2025_05_23',
     ]
 
     train_dirlists = [
-        ['haybarn_original_01_01_rect', 'haybarn_eviltwin_01_01_rect'],
-        ['original_01_rect', 'original_02_rect', 'eviltwin_01_rect', 'eviltwin_02_rect', 'eviltwin_03_rect'],
-        ['original_01_rect', 'original_02_rect', 'eviltwin_01_rect', 'eviltwin_02_rect'],
-        ['rosemary_rect'],  # first jacobs farm sample
-        ['rosemary_02_rect', 'jacobs_01_rect'],  # different jacobs farm rosemary block, roadside holing
+        # ['haybarn_original_01_01_rect', 'haybarn_eviltwin_01_01_rect'],
+        # ['original_01_rect', 'original_02_rect', 'eviltwin_01_rect', 'eviltwin_02_rect', 'eviltwin_03_rect'],
+        # ['original_01_rect', 'original_02_rect', 'eviltwin_01_rect', 'eviltwin_02_rect'],
+        # ['rosemary_rect'],  # first jacobs farm sample
+        # ['rosemary_02_rect', 'jacobs_01_rect'],  # different jacobs farm rosemary block, roadside holing
         ['haybarn_rect'],
         ['main_rect']
     ]
 
     val_dirlists = [
-        ['pieranch_rect'],  # first pie ranch sample
-        ['original_02_rect', 'original_03_rect'],
-        ['casfs_original', 'casfs_eviltwin'],
+        # ['pieranch_rect'],  # first pie ranch sample
+        # ['original_02_rect', 'original_03_rect'],
+        # ['casfs_original', 'casfs_eviltwin'],
         ['oceanview_rect']
     ]
 
@@ -381,7 +387,7 @@ if __name__ == '__main__':
         "edge_buffer": 81,
         "batch_size": BATCH_SIZE,
         "buffer_size": BUFFER_SIZE,
-        "balance_ratio": 0.2,
+        "balance_ratio": 0.05,
         "unfreeze_frac": 0.3,
         "use_heatmaps": True,
         "finetune": finetune,
@@ -400,6 +406,9 @@ if __name__ == '__main__':
         "negative_mode": "random",  # options: 'random', 'once_per_image', 'none'
         "semisupervised": semisup,
     }
-
+    print('\n\n')
+    for key in config.keys():
+        print(f'{key}: {config[key]}')
+    print('\n\n')
     trainer = BirdsEyeTrainer(config)
     trainer.run()
