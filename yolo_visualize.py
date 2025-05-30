@@ -1,6 +1,5 @@
 import os
 os.environ["TF_CPP_MIN_LOG_LEVEL"] = "2"
-
 import glob2
 import tensorflow as tf
 import matplotlib.pyplot as plt
@@ -85,10 +84,10 @@ if __name__ == '__main__':
         os.path.join(os.path.expanduser('~'), 'birdseye_CNN_data', '2025_04_16', 'pieranch_rect'),
     ]
     models_dir = os.path.join(os.path.expanduser('~'), 'birdseye', 'models')
-    weight_file = 'birdseye_416_416_006_yolo.weights.h5'
+    weight_file = 'birdseye_416_416_012_yolo.weights.h5'
     model_path = os.path.join(models_dir, weight_file)
 
-    infer = YOLOFrameInference(model_weights=model_path, num_classes=2)
+    infer = YOLOFrameInference(model_weights=model_path, num_classes=1)
 
     for _dir in frames_dirs:
         image_paths = sorted(glob2.glob(os.path.join(_dir, '*.png')))
@@ -109,7 +108,7 @@ if __name__ == '__main__':
 
 
 # class YOLOFrameInference:
-#     def __init__(self, model_weights, input_shape=(416, 416, 3), num_classes=1):
+#     def __init__(self, model_weights, input_shape=(416, 416, 3), num_classes=2):
 #         self.model = yolo_model(input_shape=input_shape, num_classes=num_classes)
 #         self.model.load_weights(model_weights)
 #         self.model.compile()  # No-op for inference, but avoids Keras warnings
@@ -195,7 +194,7 @@ if __name__ == '__main__':
 #     infer = YOLOFrameInference(model_weights=model_path, input_shape=(416, 416, 3), num_classes=2)
 
 #     for _dir in frames_dirs:
-#         image_paths = sorted(glob2.glob(os.path.join(_dir, '*.png'))
+#         image_paths = sorted(glob2.glob(os.path.join(_dir, '*.png')))
 #         for image_path in image_paths[:10]:  # limit to 10 for quick view
 #             print(f" Predicting {image_path}")
 #             infer.predict_and_visualize(image_path, label_file="labels.txt")
