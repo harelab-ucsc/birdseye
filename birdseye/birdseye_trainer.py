@@ -97,11 +97,11 @@ class BirdsEyeTrainer:
             print(f'    {len(files)} images')
             return sorted(files)
 
-        print('Training dataset:')
+        print('\n\nTraining dataset:')
         self.train_files = collect_paths(self.config["train_dates"], self.config["train_dirlists"])
-        print('Validation dataset:')
+        print('\nValidation dataset:')
         self.val_files = collect_paths(self.config["val_dates"], self.config["val_dirlists"])
-        
+        print('\n\n')
         if self.config["negative_mode"] != 'none':
             if self.config["tiled"]:
                 # self.class_weights = tile_weights(
@@ -117,6 +117,7 @@ class BirdsEyeTrainer:
                 #     cache_dir=self.config["val_cache_dir"],
                 #     bypass_cache=self.config.get("bypass_cache", False)
                 # )
+                # print(f'Validation stats:\n{tmp}\n\n')
                 pass
             else:
                 print('\n\nComputing class weights... \n\n')
@@ -164,34 +165,60 @@ class BirdsEyeTrainer:
         )
 
         if self.config.get("use_heatmaps", False):
-            def weighted_heatmap_loss(from_logits=False):
+            def weighted_heatmap_loss(from_logits=False, debug=False):
                 def loss_fn(y_true, y_pred):
-                    y = y_true[..., 0:1]  # Ground truth heatmap
-                    w = y_true[..., 1:2]  # Pixelwise weight mask
-                    # tf.debugging.assert_all_finite(tf.reduce_sum(w), "Weightmap contains NaNs or Infs")
-                    # tf.debugging.assert_positive(tf.reduce_sum(w), message="Sum of weights is zero — likely all negatives")
+                    # Extract channels
+                    y = y_true[..., 0:1]  # heatmap
+                    w = y_true[..., 1:2]  # weightmap
 
+                    # ✅ Shape sanity checks
+                    tf.debugging.assert_equal(tf.shape(y), tf.shape(y_pred), message="Mismatch between y and y_pred shapes")
+                    tf.debugging.assert_equal(tf.shape(y), tf.shape(w), message="Mismatch between y and weightmap shapes")
+
+                    # ✅ Check for sparse or empty weightmaps
+                    total_weight = tf.reduce_sum(w)
+                    tf.debugging.assert_greater(total_weight, 1.0, message="Weightmap too sparse — likely no labels in batch")
+
+                    # Loss computation
                     if from_logits:
                         bce = tf.nn.sigmoid_cross_entropy_with_logits(labels=y, logits=y_pred)
                     else:
-                        bce = tf.keras.backend.binary_crossentropy(y, y_pred)  # [B, H, W]
+                        bce = tf.keras.backend.binary_crossentropy(y, y_pred)
 
-                    # Apply pixelwise weights
                     weighted = bce * w
+                    loss = tf.reduce_sum(weighted) / (total_weight + 1e-6)
 
-                    return tf.reduce_sum(weighted) / (tf.reduce_sum(w) + 1e-6)
+                    # ✅ Optional debug logging
+                    if debug:
+                        tf.print("Total weight:", total_weight)
+                        tf.print("Mean weighted loss:", loss)
+                        tf.print("Batch BCE mean:", tf.reduce_mean(bce))
+                        tf.print("Heatmap mean (y):", tf.reduce_mean(y))
+                        tf.print("Prediction mean (y_pred):", tf.reduce_mean(y_pred))
 
+                    return loss
                 return loss_fn
 
-            def safe_heatmap_loss(from_logits=False):
+
+            def safe_heatmap_loss(from_logits=False, debug=False):
                 def loss_fn(y_true, y_pred):
-                    y = y_true[..., 0:1]  # Ensure valid target
-                    bce = tf.keras.losses.BinaryCrossentropy(from_logits=from_logits, reduction="sum_over_batch_size")  
-                    return bce(y, y_pred)
+                    y = y_true[..., 0:1]
+                    bce = tf.keras.backend.binary_crossentropy(y, y_pred, from_logits=from_logits)  # [B, H, W, 1]
+
+                    if debug:
+                        tf.debugging.assert_equal(tf.shape(y_true)[-1], 1, message="y_true has >1 channel but only one is used")
+                        tf.print("Heatmap mean:", tf.reduce_mean(y))
+                        tf.debugging.assert_all_finite(tf.reduce_sum(y), message="Heatmap contains NaNs/Infs")
+
+                    return tf.reduce_mean(bce)  
                 return loss_fn
 
-            loss_fn = weighted_heatmap_loss(from_logits=self.config.get("logits", False))                
-            # loss_fn = safe_heatmap_loss(from_logits=self.config.get("logits", False))                
+            if self.config.get("safe", True):
+                loss_fn = safe_heatmap_loss(from_logits=self.config.get("logits", False), debug=False)      
+                print('\n\n  Using safe_heatmap_loss (unweighted BCE)')     
+            else:
+                loss_fn = weighted_heatmap_loss(from_logits=self.config.get("logits", False), debug=False)                     
+                print('\n\n  Using weighted_heatmap_loss (weighted BCE)')     
             metrics=[
                 SlicedMetric(tf.keras.metrics.BinaryCrossentropy(from_logits=self.config.get("logits", False), name='bce')),
                 SlicedMetric(tf.keras.metrics.MeanSquaredError(name='mse')),
@@ -304,6 +331,7 @@ class BirdsEyeTrainer:
 
 
 if __name__ == '__main__':
+    assert 'subvision' in os.environ.get('CONDA_DEFAULT_ENV', ''), "Not in subvision environment!"
     os.environ["CUDA_VISIBLE_DEVICES"] = "1"
 
     # gpus = tf.config.list_physical_devices('GPU')
@@ -316,38 +344,39 @@ if __name__ == '__main__':
 
     train_dates = [
         # '2025_03_25', 
-        # '2025_04_04',
-        # '2025_04_09',
-        # '2025_04_23',
-        # '2025_05_02',
+        '2025_04_04',
+        '2025_04_09',
+        '2025_04_23',
+        '2025_05_02',
         '2025_05_21',
         '2025_05_26',
     ]
 
     val_dates = [
         # '2025_04_16',
-        # '2025_04_21',
-        # '2025_04_23',
+        '2025_04_21',
+        '2025_04_23',
         '2025_05_23',
     ]
 
     train_dirlists = [
         # ['haybarn_original_01_01_rect', 'haybarn_eviltwin_01_01_rect'],
-        # ['original_01_rect', 'original_02_rect', 'eviltwin_01_rect', 'eviltwin_02_rect', 'eviltwin_03_rect'],
-        # ['original_01_rect', 'original_02_rect', 'eviltwin_01_rect', 'eviltwin_02_rect'],
-        # ['rosemary_rect'],  # first jacobs farm sample
-        # ['rosemary_02_rect', 'jacobs_01_rect'],  # different jacobs farm rosemary block, roadside holing
+        ['original_01_rect', 'original_02_rect', 'eviltwin_01_rect', 'eviltwin_02_rect', 'eviltwin_03_rect'],
+        ['original_01_rect', 'original_02_rect', 'eviltwin_01_rect', 'eviltwin_02_rect'],
+        ['rosemary_rect'],  # first jacobs farm sample
+        ['rosemary_02_rect', 'jacobs_01_rect'],  # different jacobs farm rosemary block, roadside holing
         ['haybarn_rect'],
         ['main_rect']
     ]
 
     val_dirlists = [
         # ['pieranch_rect'],  # first pie ranch sample
-        # ['original_02_rect', 'original_03_rect'],
-        # ['casfs_original', 'casfs_eviltwin'],
+        ['original_02_rect', 'original_03_rect'],
+        ['casfs_original', 'casfs_eviltwin'],
         ['oceanview_rect']
     ]
 
+    safe = True
     semisup = False
     finetune = False
     # finetune_source = '/home/harey/birdseye/models/birdseye_224_224_019.weights.h5' 
@@ -405,6 +434,7 @@ if __name__ == '__main__':
         "bypass_cache": False,
         "negative_mode": "random",  # options: 'random', 'once_per_image', 'none'
         "semisupervised": semisup,
+        "safe": safe,
     }
     print('\n\n')
     for key in config.keys():
