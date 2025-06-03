@@ -31,14 +31,18 @@ class FrameLoader:
                         if os.path.basename(path) == os.path.basename(image_path_str):
                             labels.append((float(x_str), float(y_str), int(float(class_str))))
                     except Exception as sub_e:
-                        print(f"[Label Parse Error] {sub_e} in line: {line}")
+                        pass
+                       # print(f"[Label Parse Error] {sub_e} in line: {line}")
         except Exception as e:
-            print(f"[Label Load Error] {e} — from file: {tmp}")
+            pass
+            # print(f"[Label Load Error] {e} — from file: {tmp}")
 
         if not labels:
-            print(f"[WARNING] No labels found for {os.path.basename(image_path_str)}")
+            pass
+            # print(f"[WARNING] No labels found for {os.path.basename(image_path_str)}")
 
-        print(f"Loaded labels for {os.path.basename(image_path_str)}: {labels}")
+        
+    # print(f"Loaded labels for {os.path.basename(image_path_str)}: {labels}")
         return labels
 
     # def encode_labels_to_grid(self, labels):
@@ -97,7 +101,7 @@ class FrameLoader:
                         target[gy, gx, a, 5 + cls] = 1.0  # one-hot class
                     break  # only one anchor per object
 
-        print("Target sum:", np.sum(target[..., 4]))  # debug: number of positive anchors
+        # print("Target sum:", np.sum(target[..., 4]))  # debug: number of positive anchors
         return target
 
 

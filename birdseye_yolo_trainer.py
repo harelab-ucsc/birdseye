@@ -30,7 +30,7 @@ class BirdsEyeTrainer:
         self.frame_loader = FrameLoader(
             image_size=(self.IMG_HEIGHT, self.IMG_WIDTH),
             num_classes=config.get("num_classes", 1)
-        )
+            )
 
     def build_file_lists(self):
         def collect_paths(dates, dirlists):
@@ -142,61 +142,6 @@ class BirdsEyeTrainer:
             print(f"\n Loading weights from: {self.config['finetune_source']}\n")
             self.model.load_weights(self.config["finetune_source"])
 
-    
-    # def build_model(self):
-    #     mode = self.config.get("mode")
-
-    #     if mode == "tile":
-    #         input_shape = (self.TILE_HEIGHT, self.TILE_WIDTH, self.IMG_CHANNELS)
-    #     else:
-    #         input_shape = (self.IMG_HEIGHT, self.IMG_WIDTH, self.IMG_CHANNELS)
-
-    #     print(f" Building model for mode: {mode.upper()}...")
-
-    #     self.model = yolo_model(
-    #         input_shape=input_shape,
-    #         num_classes=self.config["num_classes"]
-    #     )
-
-    #     # Choose loss and metrics based on mode
-    #     if mode == "yolo":
-    #         loss_fn = tf.keras.losses.BinaryCrossentropy(from_logits=False)
-    #         metrics = [
-    #             tf.keras.metrics.BinaryCrossentropy(from_logits=False, name="bce"),
-    #             tf.keras.metrics.BinaryAccuracy(threshold=0.3, name="bin_acc"),
-    #             tf.keras.metrics.Precision(thresholds=0.3, name="prec"),
-    #             tf.keras.metrics.Recall(thresholds=0.3, name="rec"),
-    #             tf.keras.metrics.AUC(name="roc_auc"),
-    #             tf.keras.metrics.AUC(curve="PR", name="pr_auc")
-    #         ]
-    #     else:
-    #         loss_fn = tf.keras.losses.BinaryFocalCrossentropy(
-    #             alpha=self.config.get("alpha", 0.25),
-    #             gamma=self.config.get("gamma", 2.0),
-    #             from_logits=False
-    #         )
-    #         metrics = [
-    #             tf.keras.metrics.BinaryCrossentropy(from_logits=False, name="bce"),
-    #             tf.keras.metrics.BinaryAccuracy(threshold=0.5, name="bin_acc"),
-    #             tf.keras.metrics.Precision(thresholds=0.5, name="prec"),
-    #             tf.keras.metrics.Recall(thresholds=0.5, name="rec"),
-    #             tf.keras.metrics.AUC(name="roc_auc"),
-    #             tf.keras.metrics.AUC(curve="PR", name="pr_auc")
-    #         ]
-
-    #     self.model.compile(
-    #         optimizer=tf.keras.optimizers.AdamW(learning_rate=self.config["lr"]),
-    #         loss=loss_fn,
-    #         metrics=metrics
-    #     )
-
-    #     self.model.summary()
-
-    #     if self.config.get("finetune"):
-    #         print(f"\n Loading weights from: {self.config['finetune_source']}\n")
-    #         self.model.load_weights(self.config["finetune_source"])
-
-
     def train(self):
         callbacks = [
             tf.keras.callbacks.TensorBoard(log_dir="logs", histogram_freq=1, write_graph=True, write_images=True),
@@ -253,17 +198,17 @@ if __name__ == '__main__':
     from config_birdseye import get_config
     config = get_config(mode="yolo")
     trainer = BirdsEyeTrainer(config)
-    # trainer.run()
+    trainer.run()
 
-    # Setup data and model (but don't train yet)
-    trainer.setup_data()
-    trainer.build_model()
+    # # Setup data and model (but don't train yet)
+    # trainer.setup_data()
+    # trainer.build_model()
 
-    # Inspect gradients for a single batch
-    trainer.debug_gradients()
+    # # Inspect gradients for a single batch
+    # trainer.debug_gradients()
 
-    # Then continue training
-    trainer.train()
+    # # Then continue training
+    # trainer.train()
 
 
 
