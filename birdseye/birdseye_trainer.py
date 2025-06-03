@@ -37,24 +37,29 @@ class BirdsEyeTrainer:
             paths = []
             for d, dirs in zip(dates, dirlists):
                 for subdir in dirs:
+                    print('  ', subdir)
                     full_path = os.path.join(self.config["data_root"], d, subdir)
                     if os.path.isdir(full_path):
                         paths.append(full_path)
                         files.extend(tf.io.gfile.glob(os.path.join(full_path, "*.png")))
             return sorted(files)
 
+        print('\n\nTraining set:')
         self.train_files = collect_paths(self.config["train_dates"], self.config["train_dirlists"])
+        print(f'  --> {len(self.train_files)} images\n\nValidation set:')
         self.val_files = collect_paths(self.config["val_dates"], self.config["val_dirlists"])
+        print(f'  --> {len(self.val_files)} images')
         
         print('\n\nComputing class weights... \n\n')
         if self.config["tiled"]:
-            self.class_weights = tile_weights(self.train_files, self.tile_loader)
-            tmp = tile_weights(self.val_files, self.tile_loader)
+            # self.class_weights = tile_weights(self.train_files, self.tile_loader)
+            # tmp = tile_weights(self.val_files, self.tile_loader)
+            pass
         else:
             self.class_weights = frame_weights(self.train_files, self.frame_loader)
             tmp = frame_weights(self.val_files, self.frame_loader)
-        print(f'Training weights:\n{self.class_weights}\n')
-        print(f'Validation stats:\n{tmp}\n\n')
+            print(f'Training weights:\n{self.class_weights}\n')
+            print(f'Validation stats:\n{tmp}\n\n')
 
 
     def setup_data(self):
@@ -197,34 +202,40 @@ if __name__ == '__main__':
     label_file = 'labels.txt'
 
     train_dates = [
-        '2025_03_25', 
+        # '2025_03_25', 
         '2025_04_04',
         '2025_04_09',
         '2025_04_23',
-        '2025_05_02'
+        '2025_05_02',
+        '2025_05_21',
+        '2025_05_26',
     ]
 
     val_dates = [
-        '2025_04_16',
+        # '2025_04_16',
         '2025_04_21',
         '2025_04_23',
+        '2025_05_23',
     ]
 
     train_dirlists = [
-        ['haybarn_original_01_01_rect', 'haybarn_eviltwin_01_01_rect'],
+        # ['haybarn_original_01_01_rect', 'haybarn_eviltwin_01_01_rect'],
         ['original_01_rect', 'original_02_rect', 'eviltwin_01_rect', 'eviltwin_02_rect', 'eviltwin_03_rect'],
         ['original_01_rect', 'original_02_rect', 'eviltwin_01_rect', 'eviltwin_02_rect'],
         ['rosemary_rect'],  # first jacobs farm sample
-        ['rosemary_02_rect', 'jacobs_01_rect']  # different jacobs farm rosemary block, roadside holing
+        ['rosemary_02_rect', 'jacobs_01_rect'],  # different jacobs farm rosemary block, roadside holing
+        ['haybarn_rect'],
+        ['main_rect']
     ]
 
     val_dirlists = [
-        ['pieranch_rect'],  # first pie ranch sample
+        # ['pieranch_rect'],  # first pie ranch sample
         ['original_02_rect', 'original_03_rect'],
         ['casfs_original', 'casfs_eviltwin'],
+        ['oceanview_rect']
     ]
 
-    finetune = True
+    finetune = False
     finetune_source = '/home/harey/birdseye/models/birdseye_224_224_013.weights.h5' 
 
     tiled = True
@@ -275,6 +286,9 @@ if __name__ == '__main__':
         "monitor": "val_loss",
         "filename": filename
     }
-
+    print('\n\n')
+    for key in config.keys():
+        print(f'{key}: {config[key]}')
+    print('\n\n')
     trainer = BirdsEyeTrainer(config)
     trainer.run()

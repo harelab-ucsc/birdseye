@@ -136,8 +136,8 @@ class TileLoader:
             labels = self.load_labels(self.label_file, image_path_str)
 
             # if there is a spatially-denoised set of CNN detections, load them
-            if os.path.exists(os.path.join(os.path.split(image_filename)[0], 'results.txt'))
-                labels += self.load_labels('results.txt', image_path_str)
+            # if os.path.exists(os.path.join(os.path.split(image_filename)[0], 'results.txt'))
+            #     labels += self.load_labels('results.txt', image_path_str)
             tiles, classes = self.tile_image_and_label(image, labels)
 
             if len(tiles) == 0: # add spacer to filter away later
