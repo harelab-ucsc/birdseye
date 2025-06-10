@@ -4,7 +4,7 @@ import pickle
 import numpy as np
 import matplotlib.pyplot as plt
 import os
-from SLICAnnotator import offlineSLICAnnotator
+# from SLICAnnotator import offlineSLICAnnotator
 import glob2
 from dbConnector import dbConnector
 from utilities import *

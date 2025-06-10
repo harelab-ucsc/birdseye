@@ -139,11 +139,11 @@ def predict_frame_heatmap(frame, model, edge_buffer=(81, 81), tile_size=(224, 22
     return heatmap_full
 
 
-def postprocess_heatmap(heatmap, blur=True, blurs=3, thresh=0.5, min_area=10):
+def postprocess_heatmap(heatmap, blur=True, blurs=10, thresh=0.5, min_area=10):
     if blur:
         for blur in range(blurs):
             _, binary = cv2.threshold(heatmap, thresh, 1.0, cv2.THRESH_BINARY)
-            heatmap = cv2.GaussianBlur(heatmap, (5, 5), sigmaX=1)
+            heatmap = cv2.GaussianBlur(heatmap, (11, 11), sigmaX=1)
 
     _, binary = cv2.threshold(heatmap, thresh, 1.0, cv2.THRESH_BINARY)
     contours, _ = cv2.findContours((binary * 255).astype(np.uint8), cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)

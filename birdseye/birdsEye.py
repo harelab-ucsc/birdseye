@@ -4,7 +4,7 @@ import numpy as np
 import csv
 import utm
 import os
-import pickle
+import pickle as pkl
 from cf_triad import *
 import rclpy
 import tflite_runtime.interpreter as tflite
@@ -29,7 +29,7 @@ from collections import Counter
 
 from dbConnector import dbConnector
 from utilities import *
-from SLICAnnotator import SLICAnnotator, offlineSLICAnnotator
+from annotators import SLICAnnotator, offlineSLICAnnotator
 from tile_inference import predict_frame_heatmap, postprocess_heatmap
 from generator import generator
 
@@ -103,7 +103,7 @@ def dbscan_predict(clustering, fit_data, new_data, eps):
     return np.array(predicted_labels)
 
 
-def diff(ref, test, mode, eps=0.2, min_samples=10):
+def diff(ref, test, mode, eps=0.2, eps_predict=0.35, min_samples=10):
     """
     ref, list: reference pointcloud
     test, list: test pointcloud
@@ -128,16 +128,23 @@ def diff(ref, test, mode, eps=0.2, min_samples=10):
             return 0.0
 
         ref = np.array(ref)
+        if ref.shape[-2] > 2:
+            ref = ref[:,:2]
         test = np.array(test)
+        if test.shape[-1] > 2:
+            test = test[:,:2]
 
         if mode == 's2d':
             clustering = DBSCAN(eps=eps, min_samples=min_samples).fit(test)
-            ref_labels = dbscan_predict(clustering, test, ref, eps)
+            ref_labels = dbscan_predict(clustering, test, ref, eps_predict)
             hits = np.sum(ref_labels != -1)
-            print(f'{hits} ref points matched to clusters, hit ratio: {hits/len(ref)}')
+            clusts = set(clustering.labels_) - {-1}
+            print(f'{hits} ref points of {len(ref)} matched to clusters, hit ratio: {hits/len(ref)}')
+            print(f' --> {len(set(ref_labels) - {-1})} clusters of {len(clusts)} total detection clusters')
 
         elif mode == 'd2s' or mode == 'd2d':
             clustering = DBSCAN(eps=eps, min_samples=min_samples).fit(ref)
+            clusts = set(clustering.labels_) - {-1}
             test_labels = dbscan_predict(clustering, ref, test, eps)
             hits = np.sum(test_labels != -1)
             print(f'{hits} test points matched to clusters, hit ratio: {hits/len(test)}')
@@ -161,6 +168,7 @@ class birdsEye():
         self.sensor = kwargs.pop('sensor', 'cam0')
         self.dbc = dbConnector(os.path.join(self.img_dir, self.db_name))
         self.dbc.boot(self.db_name, self.sensor)
+        self.start_frame = kwargs.pop('start_frame', 0)
 
         self.apriltags = kwargs.pop('apriltags', None)
         self.stats = kwargs.pop('stats', None)
@@ -200,8 +208,18 @@ class birdsEye():
         self.tx = 0
         self.ty = 0
         self.tz = 0
-        self.rr = 4
-        self.rp = -5
+
+        # 2025/03/18
+        self.rr = -11
+        self.rp = 2
+
+        # 2025/04/03 to 2025/05/02 
+        # self.rr = 4
+        # self.rp = -5
+
+        # 2025/05/21 and after
+        # self.rr = 11
+        # self.rp = -5
         self.ry = 0
         self.mod = 0.125
         r_adj = R.from_euler('xyz', \
@@ -252,7 +270,8 @@ class birdsEye():
 
         if self.detect:
             root = os.path.join(os.path.expanduser('~'),'ros2_ws/src/birdseye/models')
-            default = os.path.join(root, 'birdseye_224_224_013.weights.h5')  # deep
+            default = os.path.join(root, 'birdseye_224_224_045.weights.h5')  # deep
+            # default = os.path.join(root, 'birdseye_224_224_013.weights.h5')  # deep
             # default = os.path.join(root, 'birdseye_224_224_010.weights.h5')  # interp
             # default = os.path.join(root, 'birdseye_224_224_011.weights.h5')  # interp
             tmp = kwargs.pop('model_path', None)
@@ -501,13 +520,15 @@ class birdsEye():
         img = tf.convert_to_tensor(img)
         img = tf.image.resize(img, size=(self.IMG_HEIGHT,self.IMG_WIDTH))
 
-        # self.ax2.imshow(img.numpy())
         pred = predict_frame_heatmap(img, self.model)
         pred = tf.squeeze(pred).numpy()
-        pred /= pred.max()
-        dets, bin_pred = postprocess_heatmap(pred, thresh=0.25)
 
-        return dets, pred, bin_pred
+        # Use unnormalized for confidence
+        # Normalize only for thresholding/contour detection if needed
+        norm_pred = pred / pred.max()
+        dets, bin_pred = postprocess_heatmap(norm_pred, thresh=0.2)
+
+        return dets, pred, bin_pred  # pred = raw for confidence
 
 
     def dbscan_filter(self, points, eps=0.5, min_samples=3):
@@ -533,6 +554,62 @@ class birdsEye():
             clusters.append(cluster_points)
 
         return clusters
+
+
+    def compute_geospatial_mAP(self, detections, confidences, geotags, match_radius=0.35):
+        """
+        Computes mean Average Precision for geospatial point detections.
+
+        Parameters:
+        - detections: Nx3 np.array of detection coordinates
+        - confidences: length-N list/array of confidence values (same order as detections)
+        - geotags: Mx3 np.array of ground truth points (e.g. field clicks)
+        - match_radius: float (in meters), the max distance to match det to geotag
+
+        Returns:
+        - ap: float, the area under the precision-recall curve
+        - precision, recall, thresholds: np.arrays for plotting
+        """
+        from sklearn.metrics import precision_recall_curve, auc
+
+        if len(detections) == 0 or len(geotags) == 0:
+            print("No detections or geotags available for mAP computation.")
+            return 0.0, [], [], []
+
+        detections = np.array(detections)
+        confidences = np.array(confidences)
+        # geotags = np.array(geotags)
+
+        # Sort by confidence descending
+        sorted_idx = np.argsort(-confidences)
+        detections = detections[sorted_idx]
+        confidences = confidences[sorted_idx]
+
+        # matched = np.zeros(len(geotags), dtype=bool)
+        y_true = []
+        y_scores = []
+
+        for det, score in zip(detections, confidences):
+            # dists = np.linalg.norm(geotags - det, axis=1)
+            dists = np.linalg.norm(geotags - det[:2], axis=1)
+            match_idx = np.argmin(dists)
+            if dists[match_idx] <= match_radius: # and not matched[match_idx]:
+                y_true.append(1)
+                # matched[match_idx] = True
+            else:
+                y_true.append(0)
+            y_scores.append(score)
+
+        precision, recall, thresholds = precision_recall_curve(y_true, y_scores)
+        ap = auc(recall, precision)
+
+        plt.plot(recall, precision)
+        plt.xlabel('Recall')
+        plt.ylabel('Precision')
+        plt.title(f'Geospatial PR Curve (AP@{match_radius}m={ap:.2f})')
+        plt.savefig("geospatial_PR_curve.png")
+        print(f"[Geospatial mAP] AP: {ap:.4f} (radius = {match_radius}m)")
+        return ap, precision, recall, thresholds
 
 
     def get_stats(self, clicks, click_ind, april_2D, april_3D, clicks_2D, clicks_3D):
@@ -577,10 +654,13 @@ class birdsEye():
                 tmp_a = np.squeeze(np.array(self.gt_a_reproj))
                 out_dict['gt_a_reproj'] = tmp_a.tolist()
 
-                pickle.dump(out_dict, f)
+                pkl.dump(out_dict, f)
+                # print('out_dict.pkl generated')
+        # else:
+        #     print('bonk')
 
 
-    def annotator(self, outer, inner, rect, frame):
+    def annotator(self, outer, inner, rect, frame, april_2D):
         if self.RTK_watchdog:
             if len(outer) > 0:
                 if len(inner) > 0:
@@ -818,7 +898,7 @@ class birdsEye():
 
         mask = np.all(pred == [255, 255, 255], axis=-1)  # shape (H, W), bool
         overlay = np.zeros_like(pred)
-        overlay[mask] = (0,0,255)  # Green overlay where pred is 1
+        overlay[mask] = (0,0,255)
 
         alpha = 0.4  # Transparency factor
         tmp = rect.copy()
@@ -861,7 +941,7 @@ class birdsEye():
             self.ax.scatter(bp[:,0], \
                             bp[:,1], \
                             bp[:,2], \
-                            c='b', alpha=0.1, s=32, label='ClickBackProj')
+                            c='b', alpha=0.1, s=2, label='ClickBackProj')
         elif len(self.clicks_3D) == 1:
             # first click
             self.ax.scatter(bp[0], \
@@ -909,6 +989,7 @@ class birdsEye():
 
 
     def parseFlightDatabase(self):
+        start = time.time()
         clks = self.dbc.getFrom('x, y', f"clicks_{self.db_name}")
         clks = np.array(clks)
 
@@ -942,7 +1023,30 @@ class birdsEye():
         for i in clustered_dets:
             tmp += i
         # self.export_shapefile(tmp)
-        diff(self.clicks_3D, self.dets_3D, 's2d')
+        print('\n\nclks (raw clicks) to self.dets_3D')
+        diff(clks, self.dets_3D, 's2d')
+        print('\n\nclks (raw clicks) to self.clicks_3D')
+        diff(clks, self.clicks_3D, 's2d', eps_predict=0.05)
+
+        if hasattr(self, 'confidences'):
+            if len(self.confidences) > 0 and len(self.dets_3D) > 0 and len(clks) > 0:
+                print("\n[Geospatial mAP Evaluation]")
+                self.compute_geospatial_mAP(
+                    detections=self.dets_3D,
+                    confidences=self.confidences,
+                    geotags=clks,
+                    match_radius=0.35  # meters
+                )
+            else:
+                print("Not enough data for mAP computation.")
+
+        with open('big_money.pkl', 'wb') as f:
+            big_money = {}
+            big_money['dets3D'] = self.dets_3D
+            big_money['clicks'] = clks
+            big_money['clicks_seen'] = self.clicks_3D
+            pkl.dump(big_money, f)
+            print('\n\n --> output pickled and saved!')
 
 
         print('\nRTK Service Stats:')
@@ -952,7 +1056,7 @@ class birdsEye():
         print(f'    Rare Statuses: {self.rtk_tracker[3]} of {sum(self.rtk_tracker)} ({self.rtk_tracker[3]/sum(self.rtk_tracker)})\n')
 
         print(f'roll, pitch, yaw adjustments: {self.rr}, {self.rp}, {self.ry} (mod: {self.mod})')
-
+        print(f'  --> time elapsed: {time.time()-start}')
 
     def manualProcess(self, clks):
 
@@ -999,10 +1103,18 @@ class birdsEye():
                         self.april_3D += april_3D
 
                 if self.detect:
-                    # ret, ret_raw = self.detector(rect)
-                    dets, pred = self.heatmapper(rect)
-
-                    # self.annotate(frame[-5], ret, save_name=os.path.join(self.img_dir,'results'))
+                    dets, pred, bin_pred = self.heatmapper(rect)
+                    if dets is not None:
+                        inner, i_ind, _ = self._2DBoxCheck(dets, box='inner')
+                        if len(inner) > 0:
+                            inner = self._2Dto3D(inner)
+                            self.dets_3D += inner
+                            # print(f'  --> {len(inner)} new dtections, {len(self.dets_3D)} detections total')
+                            clustered_dets = self.dbscan_filter(self.dets_3D, eps=0.20, min_samples=10)
+                            tmp_dets = []
+                            for i in clustered_dets:
+                                tmp_dets += i
+                            valid_pts = self._3Dto2D(tmp_dets)
 
                 clicks_2D = self._3Dto2D(clicks)
                 inner, i_ind, _ = self._2DBoxCheck(clicks_2D, box='inner')
@@ -1017,24 +1129,11 @@ class birdsEye():
                     self.get_stats(clicks, click_ind, april_2D, april_3D, clicks_2D, clicks_3D)
 
                 # annotation step
-                self.annotator(outer, inner, rect, frame)
+                self.annotator(outer, inner, rect, frame, april_2D)
 
                 # optional plotting step
                 if self.plot:
                     self.frameProcessPlotter(frame, rect, pred, dets, clicks_2D, april_3D)
-
-                    # if self.detect:
-                        # bot = (0, 0, 255)
-                        # vec = (0, 2.55, -2.55)
-                        # tmp = int(ret_raw*100)
-                        # c1 = (0, tmp*vec[1] + bot[1], tmp*vec[2] + bot[2])
-                        # c2 = (0, ret*100*vec[1] + bot[1], ret*100*vec[2] + bot[2])
-                        # cv2.putText(rect, f'CNN: ', (950,1190), \
-                        #     cv2.FONT_HERSHEY_SIMPLEX, 3, (0, 255, 255), 3)
-                        # cv2.putText(rect, f' {ret_raw:.04f} -> ', (1150,1190), \
-                        #     cv2.FONT_HERSHEY_SIMPLEX, 3, c1, 3)
-                        # cv2.putText(rect, f'{ret}', (1750,1190), \
-                        #     cv2.FONT_HERSHEY_SIMPLEX, 3, c2, 3)
 
                     self.fig.canvas.draw_idle()
                     plt.pause(0.01)
@@ -1074,6 +1173,9 @@ class birdsEye():
 
     def autoProcess(self, clks):
         for i, frame in enumerate(self.data):
+            if i < self.start_frame:
+                continue
+
             print(f'\nframe: {i+1} of {len(self.data)}')
             self.frame_index = i
 
@@ -1107,35 +1209,54 @@ class birdsEye():
 
                 if self.detect:
                     dets, pred, bin_pred = self.heatmapper(rect)
-                    if dets is not None:
-                        inner, i_ind, _ = self._2DBoxCheck(dets, box='inner')
-                        if len(inner) > 0:
-                            inner = self._2Dto3D(inner)
-                            self.dets_3D += inner
 
-                            clustered_dets = self.dbscan_filter(self.dets_3D, eps=0.20, min_samples=10)
-                            tmp_dets = []
-                            for i in clustered_dets:
-                                tmp_dets += i
-                            valid_pts = self._3Dto2D(tmp_dets)
-                            valid_pts, _, _ = self._2DBoxCheck(valid_pts)
-                            for pt in valid_pts:
-                                self.annotate(frame[-5], [pt[0], pt[1], 1.0], save_name=os.path.join(self.img_dir,'results'))
+                    if dets is not None and len(dets) > 0:
+                        # Filter detections to inner bound and project to 3D
+                        inner_2D, i_ind, _ = self._2DBoxCheck(dets, box='inner')
+                        inner_3D = self._2Dto3D(inner_2D)
+
+                        # Extract confidence at 2D detection location
+                        confidences = []
+                        for pt in inner_2D:
+                            x, y = int(pt[0]), int(pt[1])
+                            if 0 <= x < pred.shape[1] and 0 <= y < pred.shape[0]:
+                                confidences.append(pred[y, x])
+                            else:
+                                confidences.append(0.0)
+
+                        if not hasattr(self, 'confidences'):
+                            self.confidences = []
+
+                        self.confidences += confidences
+                        self.dets_3D += inner_3D
+
+                        clustered_dets = self.dbscan_filter(self.dets_3D, eps=0.20, min_samples=10)
+                        tmp_dets = []
+                        for i in clustered_dets:
+                            tmp_dets += i
+
+                        # # semi-supervised annotation
+                        # valid_pts = self._3Dto2D(tmp_dets)
+                        # valid_pts, _, _ = self._2DBoxCheck(valid_pts)
+                        # for pt in valid_pts:
+                        #     self.annotate(frame[-5], [pt[0], pt[1], 1.0], save_name=os.path.join(self.img_dir,'results'))
 
                 clicks_2D = self._3Dto2D(clicks)
                 inner, i_ind, _ = self._2DBoxCheck(clicks_2D, box='inner')
                 outer, o_ind, _ = self._2DBoxCheck(clicks_2D, box='outer')
                 # clicks_2D, click_ind, clicks_3D = self._2DBoxCheck(clicks_2D, stats=self.stats)
                 clicks_2D, click_ind, clicks_3D = self._2DBoxCheck(clicks_2D, stats=True)
+
                 if clicks_3D is not None:
                     self.clicks_3D += clicks_3D
 
                 # optional statistics generation step
                 if self.stats:
+                    # print('stats')
                     self.get_stats(clicks, click_ind, april_2D, april_3D, clicks_2D, clicks_3D)
 
                 # annotation step
-                self.annotator(outer, inner, rect, frame)
+                self.annotator(outer, inner, rect, frame, april_2D)
 
                 # optional plotting step
                 if self.plot:
@@ -1152,6 +1273,7 @@ if __name__ == '__main__':
     parser.add_argument("-d", "--detect", action='store_true', help="Boolean, whether or not to run a loaded AI detector (default: False)")
     parser.add_argument("-m", "--manual", action='store_true', help="Boolean, whether or not to manually advance frames (default: False)")
     parser.add_argument("-M", "--model_path", help="path to trained detection model (default: birdseye/models/birdseye_960_600_009.weights.h5)")
+    parser.add_argument("-f", "--start_frame", type=int, help="Integer, frame index to start on >= 0")
 
     # parser.add_argument("-pr", "--playback-rate", help="Float, whether or not to detect apriltags (default: False)")
 
@@ -1171,7 +1293,9 @@ if __name__ == '__main__':
         apriltags=args['apriltags'],
         plot=args['plot'],
         detect=args['detect'],
-        manual=args['manual'])
+        manual=args['manual'],
+        start_frame=args['start_frame'],
+        stats=args['stats'])
 
 
     tst.parseFlightDatabase()

@@ -12,19 +12,28 @@ import glob2
 import stat
 import time
 import sqlite3
+import fractions
+import piexif
+import rclpy.node
+# import threading
+# import queue
+import concurrent.futures
+
 import numpy as np
+# import rasterio
 
 from . import dbConnector
 from . import utilities
 
+# from rasterio.transform import from_origin
 from cv_bridge import CvBridge
 from rclpy.node import Node
 from sensor_msgs.msg import Image, Imu, NavSatFix
 from std_msgs.msg import String
 from inertial_sense_ros2.msg import DIDINS2
 from custom_msgs.msg import AltSNR
+from PIL import Image as Img
 
-import rclpy.node
 from rclpy.exceptions import ParameterNotDeclaredException
 from rcl_interfaces.msg import ParameterDescriptor, SetParametersResult
 from rclpy.qos import QoSProfile, ReliabilityPolicy, HistoryPolicy
@@ -37,6 +46,16 @@ qos_profile = QoSProfile(
     reliability=ReliabilityPolicy.RELIABLE,  # Reliable delivery
     history=HistoryPolicy.KEEP_ALL           # Keep all messages
 )
+
+
+def deg_to_dms_rational(deg_float):
+    """Convert decimal degrees to EXIF-friendly rational DMS."""
+    deg = int(deg_float)
+    min_float = (deg_float - deg) * 60
+    minute = int(min_float)
+    sec_float = (min_float - minute) * 60
+    sec = int(sec_float * 1000000)
+    return [(deg, 1), (minute, 1), (sec, 1000000)]
 
 
 class subscriberNode(rclpy.node.Node):
@@ -75,12 +94,17 @@ class subscriberNode(rclpy.node.Node):
 
         self.br = CvBridge()
 
+        self.save_executor = concurrent.futures.ThreadPoolExecutor(max_workers=4)
+
         # camera subscriber
         self.cam_sub = self.create_subscription(
             Image, '/image', self.cam_cb, qos_profile=qos_profile)
         self.data_loc = None
         self.image = None
         self.cam_times = None
+        self.declare_parameter('img_format', '.png')
+        self.img_format = self.get_parameter('img_format').value
+        # self.save_geotiff = True
 
         # ins subscriber and relevant attributes
         self.ins_sub = self.create_subscription(
@@ -239,31 +263,62 @@ class subscriberNode(rclpy.node.Node):
             return False
 
 
-    def save_image_pose(self):
-        self.get_logger().info(f'  Recording image and pose... (RTK_STATUS, INS_STATUS): ({self.RTK_STATUS}, {self.INS_STATUS})')
-        self.get_logger().info(f'                              (cam_time1, cam_time2): ({self.cam_times[0]}, {self.cam_times[1]})')
-        self.get_logger().info(f'                              (ins_time1, ins_time2): ({self.ins_times[0]}, {self.ins_times[1]})')
+    def save_worker(self):
+        while True:
+            data = self.save_queue.get()
+            if data is None:
+                break  # Optional for clean shutdown
+            self._save_image_pose_background(*data)
+            self.save_queue.task_done()
 
+
+    def _save_image_pose_background(self, image, pos, quat, rtk, ins, radalt, data_loc, cam_times, ins_times, utm_NUM, utm_LET):
+        self.get_logger().info(f'  [THREAD] Saving image and pose...')
         try:
-            cv2.imwrite(self.data_loc, self.image)
-            valsList = self.pos + self.quat + [self.RTK_STATUS, self.INS_STATUS, self.radalt, '\"'+self.data_loc+'\"', self.cam_times[0], self.cam_times[1], self.ins_times[0], self.ins_times[1]]
+            if self.img_format == '.png':
+                cv2.imwrite(data_loc, image)
+            elif self.img_format == '.jpg':
+                image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
+                # Convert OpenCV BGR (or RGB) NumPy image to PIL RGB
+                pil_img = Img.fromarray(image)  # For grayscale or already-RGB
+
+                # Compute GPS metadata
+                lat, lon = utm.to_latlon(pos[0], pos[1], utm_NUM, utm_LET)
+
+                gps_ifd = {
+                    piexif.GPSIFD.GPSLatitudeRef: 'N' if lat >= 0 else 'S',
+                    piexif.GPSIFD.GPSLatitude: deg_to_dms_rational(abs(lat)),
+                    piexif.GPSIFD.GPSLongitudeRef: 'E' if lon >= 0 else 'W',
+                    piexif.GPSIFD.GPSLongitude: deg_to_dms_rational(abs(lon)),
+                    piexif.GPSIFD.GPSAltitudeRef: 0,
+                    piexif.GPSIFD.GPSAltitude: (int(pos[2] * 100), 100),
+                }
+
+                exif_dict = {"GPS": gps_ifd}
+                exif_bytes = piexif.dump(exif_dict)
+
+                # Save directly with EXIF
+                pil_img.save(data_loc, exif=exif_bytes, format='JPEG', quality=95)
+            self.get_logger().info(f'    [THREAD] Saved image to {data_loc}...')
+
+            db_path = os.path.join(self.dir_name, self.db_name + '.db')
+            conn = sqlite3.connect(db_path)
+            cursor = conn.cursor()
+
+            valsList = pos + quat + [rtk, ins, radalt, '\"' + data_loc + '\"'] + cam_times + ins_times
             vals = ','.join([str(x) for x in valsList])
-            self.dbc.insertIgnoreInto(f"{self.sensor}_images_{self.db_name}", \
-                           "x, y, z, q, u, a, t, rtk_status, ins_status, radalt, save_loc, cam_time1, cam_time2, ins_time1, ins_time2", vals)
-        except sqlite3.OperationalError as ex:
-            self.get_logger().info(f'    Attempted to insert bad pose: {ex}')
 
-        self.image = None
-        self.pos = None
-        self.quat = None
-        self.RTK_STATUS = None
-        self.INS_STATUS = None
-        self.STROBE = None
-        self.data_loc = None
-        self.ins_times = None
-        self.cam_times = None
+            insert_query = f"""
+            INSERT OR IGNORE INTO {self.sensor}_images_{self.db_name}
+            (x, y, z, q, u, a, t, rtk_status, ins_status, radalt, save_loc, cam_time1, cam_time2, ins_time1, ins_time2)
+            VALUES ({vals});
+            """
+            cursor.execute(insert_query)
+            conn.commit()
+            conn.close()
 
-        self.update_check_list()
+        except Exception as ex:
+            self.get_logger().info(f'[THREAD] Failed to save: {ex}')
 
 
     def cam_cb(self, msg: Image):
@@ -281,9 +336,9 @@ class subscriberNode(rclpy.node.Node):
         self.cam_times = [time1, time2]
 
         if self.dir_name[-1] == '\\':
-            self.data_loc = self.dir_name + self.sensor + '_' + time2 + ".png"
+            self.data_loc = self.dir_name + self.sensor + '_' + time2 + self.img_format
         else:
-            self.data_loc = self.dir_name + "/" + self.sensor + '_' + time2 + ".png"
+            self.data_loc = self.dir_name + "/" + self.sensor + '_' + time2 + self.img_format
         self.image = self.br.imgmsg_to_cv2(msg, desired_encoding='passthrough')
         self.image = cv2.cvtColor(self.image, cv2.COLOR_BAYER_RG2RGB)
 
@@ -291,7 +346,34 @@ class subscriberNode(rclpy.node.Node):
 
         if self.STROBE is not None:
             if self.status_check():
-                self.save_image_pose()
+                self.get_logger().info('    status_check passed; pushing image and pose to queue')
+                self.save_executor.submit(
+                    self._save_image_pose_background,
+                    np.copy(self.image),
+                    self.pos[:],
+                    self.quat[:],
+                    self.RTK_STATUS,
+                    self.INS_STATUS,
+                    self.radalt,
+                    self.data_loc,
+                    self.cam_times[:],
+                    self.ins_times[:],
+                    self.utm_NUM,
+                    self.utm_LET
+                )
+
+                self.image = None
+                self.pos = None
+                self.quat = None
+                self.RTK_STATUS = None
+                self.INS_STATUS = None
+                self.STROBE = None
+                self.data_loc = None
+                self.ins_times = None
+                self.cam_times = None
+
+                self.update_check_list()
+
             elif self.radalt is None:
                 self.get_logger().info(f'    skipping image and pose; self.radalt is still unset')
             else:
@@ -328,6 +410,8 @@ class subscriberNode(rclpy.node.Node):
             self.ins_times = [time1, time2]
 
             u = utm.from_latlon(msg.lla[0], msg.lla[1])  # returns easting, northing, zone number, zone letter
+            self.utm_NUM = u[2]
+            self.utm_LET = u[3]
             self.pos = [u[0], u[1], msg.lla[2]]  # save x:easting, y:northing, z:WGS84 altitude
 
             # the quaternion comes in scalar-first format - convert it to scalar-last
@@ -338,7 +422,34 @@ class subscriberNode(rclpy.node.Node):
             self.update_check_list()
 
         if self.status_check() and self.radalt is not None:
-            self.save_image_pose()
+            self.get_logger().info('    status_check passed; pushing image and pose to queue')
+            self.save_executor.submit(
+                self._save_image_pose_background,
+                np.copy(self.image),
+                self.pos[:],
+                self.quat[:],
+                self.RTK_STATUS,
+                self.INS_STATUS,
+                self.radalt,
+                self.data_loc,
+                self.cam_times[:],
+                self.ins_times[:],
+                self.utm_NUM,
+                self.utm_LET
+            )
+
+            self.image = None
+            self.pos = None
+            self.quat = None
+            self.RTK_STATUS = None
+            self.INS_STATUS = None
+            self.STROBE = None
+            self.data_loc = None
+            self.ins_times = None
+            self.cam_times = None
+
+            self.update_check_list()
+
         elif self.radalt is None:
             self.get_logger().info(f'    Skipping image and pose; radalt is still unset')
 
@@ -346,6 +457,9 @@ class subscriberNode(rclpy.node.Node):
 def main(args=None):
     rclpy.init(args=args)
     sub_node = subscriberNode()
-    rclpy.spin(sub_node)
-    sub_node.destroy_node()
-    rclpy.shutdown()
+    try:
+        rclpy.spin(sub_node)
+    finally:
+        sub_node.save_executor.shutdown(wait=True)  # Wait for all saves
+        sub_node.destroy_node()
+        rclpy.shutdown()

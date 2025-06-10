@@ -17,6 +17,7 @@ import os
 import json
 import yaml
 import copy
+import time
 from pyproj import Proj, Transformer
 import matplotlib.pyplot as plt
 
@@ -72,6 +73,7 @@ class BagProcessor:
 
 
     def process_bag(self):
+        start = time.time()
         # Initialize reader and writer
         reader = SequentialReader()
         writer = SequentialWriter()
@@ -170,6 +172,7 @@ class BagProcessor:
         writer.close()
         print(f'--> {sum(self.paired_flags)} images of {len(self.image_msgs)} matched')
         print(f'--> time correction mean: {mean} sec, std: {std} sec')
+        print(f'  --> time elapsed: {time.time()-start}')
 
 
     def find_closest_image(self, target_timestamp):
