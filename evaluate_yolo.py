@@ -7,10 +7,19 @@ import matplotlib.pyplot as plt
 from frame_loader_yolo import FrameLoader
 from yolo_generator import yolo_model
 
-def decode_predictions(pred_tensor, threshold=0.3, grid_size=13, img_size=(416, 416), anchors=5):
+
+def decode_predictions(pred_tensor, threshold=0.3, grid_size=13, img_size=(416, 416), anchors=5, verbose=True):
+
     detections = []
     cell_h = img_size[0] / grid_size
     cell_w = img_size[1] / grid_size
+
+    # Debug: objectness stats
+    obj_scores = pred_tensor[..., 4]
+    if verbose:
+        print("Max objectness score:", np.max(obj_scores))
+        print("Mean objectness score:", np.mean(obj_scores))
+        print(f"Total cells above threshold {threshold}:", np.sum(obj_scores > threshold))
 
     for gy in range(grid_size):
         for gx in range(grid_size):
@@ -23,9 +32,37 @@ def decode_predictions(pred_tensor, threshold=0.3, grid_size=13, img_size=(416, 
                 x_rel, y_rel, w, h = cell[0:4]
                 abs_x = (gx + x_rel) * cell_w
                 abs_y = (gy + y_rel) * cell_h
-                class_id = 0 if cell.shape[-1] == 6 else int(np.argmax(cell[5:]))
+
+                if cell.shape[-1] > 6:
+                    class_id = int(np.argmax(cell[5:]))
+                else:
+                    class_id = 0
+
                 detections.append((abs_x, abs_y, conf, class_id))
+
+    if verbose:
+        print(f"Total detections returned: {len(detections)}")
     return detections
+
+# def decode_predictions(pred_tensor, threshold=0.3, grid_size=13, img_size=(416, 416), anchors=5):
+#     detections = []
+#     cell_h = img_size[0] / grid_size
+#     cell_w = img_size[1] / grid_size
+
+#     for gy in range(grid_size):
+#         for gx in range(grid_size):
+#             for a in range(anchors):
+#                 cell = pred_tensor[gy, gx, a]
+#                 conf = cell[4]
+#                 if conf < threshold:
+#                     continue
+
+#                 x_rel, y_rel, w, h = cell[0:4]
+#                 abs_x = (gx + x_rel) * cell_w
+#                 abs_y = (gy + y_rel) * cell_h
+#                 class_id = 0 if cell.shape[-1] == 6 else int(np.argmax(cell[5:]))
+#                 detections.append((abs_x, abs_y, conf, class_id))
+#     return detections
 
 def visualize_predictions(image, predictions, labels=None):
     vis = image.copy()
