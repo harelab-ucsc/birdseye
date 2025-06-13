@@ -205,7 +205,7 @@ if __name__ == '__main__':
     # trainer.build_model()
 
     # # Inspect gradients for a single batch
-    # trainer.debug_gradients()
+    trainer.debug_gradients()
 
     # # Then continue training
     # trainer.train()

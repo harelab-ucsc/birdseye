@@ -131,26 +131,26 @@ class FrameLoader:
         return image, label
 
     def build_dataset(self, file_list, label_file, batch_size, buffer_size=64, repeat=True, augment=False):
-    self.augment = augment
-    paths = tf.convert_to_tensor(file_list, dtype=tf.string)
-    ds = tf.data.Dataset.from_tensor_slices(paths)
+        self.augment = augment
+        paths = tf.convert_to_tensor(file_list, dtype=tf.string)
+        ds = tf.data.Dataset.from_tensor_slices(paths)
 
-    def has_positive_labels(image_path):
-        def _check(path):
-            path_str = path.numpy().decode("utf-8")
-            labels = self.load_labels(label_file, path_str)
-            return len(labels) > 0
-        return tf.py_function(_check, [image_path], Tout=tf.bool)
+        def has_positive_labels(image_path):
+            def _check(path):
+                path_str = path.numpy().decode("utf-8")
+                labels = self.load_labels(label_file, path_str)
+                return len(labels) > 0
+            return tf.py_function(_check, [image_path], Tout=tf.bool)
 
-    ds = ds.filter(has_positive_labels)
+        ds = ds.filter(has_positive_labels)
 
-    ds = ds.map(lambda path: self.tf_frame_fn(path, label_file), num_parallel_calls=tf.data.AUTOTUNE)
+        ds = ds.map(lambda path: self.tf_frame_fn(path, label_file), num_parallel_calls=tf.data.AUTOTUNE)
 
-    if repeat:
-        ds = ds.repeat()
+        if repeat:
+            ds = ds.repeat()
 
-    ds = ds.shuffle(buffer_size).batch(batch_size, drop_remainder=True).prefetch(tf.data.AUTOTUNE)
-    return ds
+        ds = ds.shuffle(buffer_size).batch(batch_size, drop_remainder=True).prefetch(tf.data.AUTOTUNE)
+        return ds
 
 
     # def build_dataset(self, file_list, label_file, batch_size, buffer_size=64, repeat=True, augment=False):

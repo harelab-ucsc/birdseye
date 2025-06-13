@@ -19,7 +19,7 @@ def yolo_model(input_shape=(416, 416, 3), num_classes=1, l2_reg=1e-4, dropout_ra
     x = layers.Dropout(dropout_rate)(x)
 
     num_outputs = 5 + num_classes  # (x, y, w, h, obj) + class
-    x = layers.Conv2D(filters=anchors * num_outputs, kernel_size=1, padding='same', activation='sigmoid')(x)
+    x = layers.Conv2D(filters=anchors * num_outputs, kernel_size=1, padding='same', activation=None)(x)
 
     # Dynamically compute spatial dims
     h, w = x.shape[1], x.shape[2]
