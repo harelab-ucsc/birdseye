@@ -15,28 +15,63 @@ def binary_focal_loss_from_logits(gamma=2.0, alpha=0.25):
         loss = alpha_t * modulating * ce_loss
         return tf.reduce_mean(loss)
     return loss_fn
+ 
 
-
-# YOLO-style point loss: focal loss for objectness, MSE for coordinates 
-def yolo_point_loss(obj_weight=5.0, coord_weight=1.0, gamma=2.0, alpha=0.25):
-    focal_loss = binary_focal_loss_from_logits(gamma=gamma, alpha=alpha)
-
+def yolo_point_loss(obj_weight=5.0, coord_weight=1.0):
     def loss_fn(y_true, y_pred):
-        obj_true = y_true[..., 4]                    # Ground truth objectness
-        obj_pred = y_pred[..., 4]                    # Predicted logits (not sigmoid)
+        obj_true = y_true[..., 4]
+        obj_pred_logits = y_pred[..., 4]  # raw logits
 
-        # Objectness loss (focal loss with logits)
-        bce_loss = focal_loss(obj_true, obj_pred)
+        # Binary crossentropy on logits
+        bce = tf.keras.losses.binary_crossentropy(obj_true, obj_pred_logits, from_logits=True)
+        bce_loss = tf.reduce_mean(bce)
 
-        # Coordinate loss (apply sigmoid to predictions to constrain to [0,1])
+        # Coordinate loss for positive anchors only
         obj_mask = tf.cast(obj_true > 0.5, tf.float32)
-        xy_diff = tf.square(y_true[..., 0:2] - tf.sigmoid(y_pred[..., 0:2]))
+        xy_diff = tf.square(y_true[..., 0:2] - tf.sigmoid(y_pred[..., 0:2]))  # sigmoid because coords were normalized
         xy_loss = tf.reduce_sum(obj_mask[..., tf.newaxis] * xy_diff)
         xy_loss = xy_loss / (tf.reduce_sum(obj_mask) + 1e-6)
 
-        return obj_weight * bce_loss + coord_weight * xy_loss
+        # Optional: Debug positive logits
+        # tf.print("Logits (positive):", tf.boolean_mask(obj_pred_logits, obj_mask > 0))
 
+        return obj_weight * bce_loss + coord_weight * xy_loss
     return loss_fn
+    return loss_fn
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 # BCE LOSS
 

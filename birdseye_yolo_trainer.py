@@ -74,7 +74,7 @@ class BirdsEyeTrainer:
             label_file=self.config["label_file"],
             batch_size=self.config["batch_size"],
             buffer_size=self.config["buffer_size"],
-            repeat=False,
+            repeat=True,
             augment=True
         )
 
@@ -83,7 +83,7 @@ class BirdsEyeTrainer:
             label_file=self.config["label_file"],
             batch_size=self.config["batch_size"],
             buffer_size=self.config["buffer_size"],
-            repeat=False,
+            repeat=True,
             augment=False
         )
         # Calculate steps_per_epoch after the dataset is built
@@ -174,7 +174,7 @@ class BirdsEyeTrainer:
         for x_batch, y_batch in self.train_ds.take(1):
             with tf.GradientTape() as tape:
                 y_pred = self.model(x_batch, training=True)
-                loss = self.model.compiled_loss(y_batch, y_pred)
+                loss = self.model.compute_loss(x_batch, y_batch, y_pred)
 
             gradients = tape.gradient(loss, self.model.trainable_variables)
 
@@ -209,7 +209,4 @@ if __name__ == '__main__':
 
     # # Then continue training
     # trainer.train()
-
-
-
 

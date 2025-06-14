@@ -8,7 +8,7 @@ from frame_loader_yolo import FrameLoader
 from yolo_generator import yolo_model
 
 
-def decode_predictions(pred_tensor, threshold=0.3, grid_size=13, img_size=(416, 416), anchors=5, verbose=True):
+def decode_predictions(pred_tensor, threshold=0.1, grid_size=13, img_size=(416, 416), anchors=5, verbose=True):
 
     detections = []
     cell_h = img_size[0] / grid_size
