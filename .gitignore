@@ -12,3 +12,6 @@ venv/*
 models/*
 *.png
 scripts/__pycache__/*
+holding/*
+examples/*
+
