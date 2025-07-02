@@ -5,26 +5,6 @@ import requests
 import pandas as pd
 import numpy as np
 
-output_file = 'manual.txt'
-
-if len(sys.argv) < 2:
-    print("Usage: python click_capture.py /path/to/image_urls.csv")
-    sys.exit(1)
-
-csv_path = os.path.expanduser(sys.argv[1])
-try:
-    df = pd.read_csv(csv_path)
-    if 'image_url' not in df.columns:
-        raise ValueError("CSV must contain a 'image_url' column.")
-    image_urls = df['image_url'].tolist()
-except Exception as e:
-    print(f"Failed to read CSV: {e}")
-    sys.exit(1)
-
-print(f"Loaded {len(image_urls)} image URLs from {csv_path}")
-if not image_urls:
-    print("No URLs found. Exiting.")
-    sys.exit(1)
 
 # Load existing clicks from manual.txt
 def load_manual_clicks(filepath):
@@ -50,11 +30,6 @@ def load_manual_clicks(filepath):
             clicks[frame_idx].append((x, y))
     return clicks
 
-clicks_dict = load_manual_clicks(output_file)
-frame_index = 0
-
-# Preload all images into cache
-image_cache = {}
 
 def fetch_image_from_url(url):
     try:
@@ -69,21 +44,12 @@ def fetch_image_from_url(url):
         print(f"Failed to load image from {url}: {e}")
         return None
 
-print("Preloading all images. This may take a while...")
-for idx, url in enumerate(image_urls):
-    print(f"Loading {idx+1}/{len(image_urls)}: {url}")
-    img = fetch_image_from_url(url)
-    if img is not None:
-        image_cache[url] = img
-    else:
-        # Black placeholder if load fails
-        image_cache[url] = np.zeros((480, 640, 3), dtype=np.uint8)
-print("All images loaded, launching GUI...")
 
 def draw_clicks(img, clicks):
     for (x, y) in clicks:
         cv2.circle(img, (int(x), int(y)), 5, (0, 255, 0), -1)
     return img
+
 
 def draw_overlay_text(img, frame_index):
     overlay = img.copy()
@@ -113,12 +79,14 @@ def draw_overlay_text(img, frame_index):
     img = cv2.addWeighted(overlay, 0.5, img, 0.5, 0)
     return img
 
+
 def save_all_clicks():
     with open(output_file, 'w') as f:
         for idx, url in enumerate(image_urls):
             if idx in clicks_dict:
                 for (x, y) in clicks_dict[idx]:
                     f.write(f"{idx} {url} {x},{y},1.0\n")
+
 
 def mouse_callback(event, x, y, flags, param):
     global clicks_dict
@@ -139,6 +107,7 @@ def mouse_callback(event, x, y, flags, param):
             del clicks_dict[frame_index][closest_idx]
             save_all_clicks()
 
+
 def show_image():
     url = image_urls[frame_index]
     img = image_cache.get(url)
@@ -153,23 +122,64 @@ def show_image():
     cv2.imshow("Image", display_img)
     return True
 
-cv2.namedWindow("Image", cv2.WINDOW_NORMAL)
-cv2.setMouseCallback("Image", mouse_callback)
-cv2.resizeWindow("Image", 960, 600)
 
-while True:
-    success = show_image()
-    if not success:
-        key = cv2.waitKey(100)
-        continue
+if __name__ == "__main__":
 
-    key = cv2.waitKey(30) & 0xFF
+    output_file = 'manual.txt'
 
-    if key == ord('d') and frame_index < len(image_urls) - 1:
-        frame_index += 1
-    elif key == ord('a') and frame_index > 0:
-        frame_index -= 1
-    elif key == 27:  # ESC key
-        break
+    if len(sys.argv) < 2:
+        print("Usage: python click_capture.py /path/to/image_urls.csv")
+        sys.exit(1)
 
-cv2.destroyAllWindows()
+    csv_path = os.path.expanduser(sys.argv[1])
+    try:
+        df = pd.read_csv(csv_path)
+        if 'image_url' not in df.columns:
+            raise ValueError("CSV must contain a 'image_url' column.")
+        image_urls = df['image_url'].tolist()
+    except Exception as e:
+        print(f"Failed to read CSV: {e}")
+        sys.exit(1)
+
+    print(f"Loaded {len(image_urls)} image URLs from {csv_path}")
+    if not image_urls:
+        print("No URLs found. Exiting.")
+        sys.exit(1)
+
+    clicks_dict = load_manual_clicks(output_file)
+    frame_index = 0
+
+    # Preload all images into cache
+    image_cache = {}
+
+    print("Preloading all images. This may take a while...")
+    for idx, url in enumerate(image_urls):
+        print(f"Loading {idx+1}/{len(image_urls)}: {url}")
+        img = fetch_image_from_url(url)
+        if img is not None:
+            image_cache[url] = img
+        else:
+            # Black placeholder if load fails
+            image_cache[url] = np.zeros((480, 640, 3), dtype=np.uint8)
+    print("All images loaded, launching GUI...")
+
+    cv2.namedWindow("Image", cv2.WINDOW_NORMAL)
+    cv2.setMouseCallback("Image", mouse_callback)
+    cv2.resizeWindow("Image", 960, 600)
+
+    while True:
+        success = show_image()
+        if not success:
+            key = cv2.waitKey(100)
+            continue
+
+        key = cv2.waitKey(30) & 0xFF
+
+        if key == ord('d') and frame_index < len(image_urls) - 1:
+            frame_index += 1
+        elif key == ord('a') and frame_index > 0:
+            frame_index -= 1
+        elif key == 27:  # ESC key
+            break
+
+    cv2.destroyAllWindows()

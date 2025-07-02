@@ -1,22 +1,21 @@
 import cv2
-import numpy as np
-from copy import deepcopy
+import argparse
+import os
+import pdb
+import os
 import functools
 import sys
 import glob2
-from skimage.segmentation import slic
-from skimage.segmentation import mark_boundaries
-# from skimage.exposure import rescale_intensity
-from skimage.util import img_as_float
-import matplotlib.pyplot as plt
-import argparse
-import os
-from mask import Mask
+
+import numpy as np
 import matplotlib.pyplot as plt
 
-import pdb
-import os
-import cv2
+from copy import deepcopy
+from skimage.segmentation import slic, mark_boundaries
+from skimage.util import img_as_float
+
+# Custom code imports
+from mask import Mask
 
 
 class ImageAnnotator:

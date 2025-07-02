@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
 
-import numpy as np
 import sqlite3
 import math
 import io
 import pdb
+
+import numpy as np
 
 
 def bytesIOconverter(bytes_io_object):

@@ -4,18 +4,6 @@ import sys
 import glob2
 import numpy as np
 
-output_file = 'manual.txt'
-
-if len(sys.argv) < 2:
-    print("Usage: python click_capture.py /path/to/image_parent_dir")
-    sys.exit(1)
-
-image_root = os.path.expanduser(sys.argv[1])
-image_paths = sorted(glob2.glob(os.path.join(image_root, '**', '*.png')))
-print(f"Found {len(image_paths)} images under {image_root}")
-if not image_paths:
-    print("No PNG images found. Exiting.")
-    sys.exit(1)
 
 def load_manual_clicks(filepath):
     clicks = {}
@@ -41,13 +29,12 @@ def load_manual_clicks(filepath):
             clicks[frame_idx].append((x, y))
     return clicks
 
-clicks_dict = load_manual_clicks(output_file)
-frame_index = 0
 
 def draw_clicks(img, clicks):
     for (x, y) in clicks:
         cv2.circle(img, (int(x), int(y)), 5, (0, 255, 0), -1)
     return img
+
 
 def draw_overlay_text(img, frame_index):
     overlay = img.copy()
@@ -92,6 +79,7 @@ def save_all_clicks():
                 for (x, y) in clicks_dict[idx]:
                     f.write(f"{idx} {path} {x},{y},1.0\n")
 
+
 def mouse_callback(event, x, y, flags, param):
     global clicks_dict
     if frame_index not in clicks_dict:
@@ -111,6 +99,7 @@ def mouse_callback(event, x, y, flags, param):
             del clicks_dict[frame_index][closest_idx]
             save_all_clicks()
 
+
 def show_image():
     img = cv2.imread(image_paths[frame_index])
     if img is None:
@@ -126,23 +115,42 @@ def show_image():
     cv2.imshow("Image", display_img)
     return True
 
-cv2.namedWindow("Image", cv2.WINDOW_NORMAL)
-cv2.setMouseCallback("Image", mouse_callback)
-cv2.resizeWindow("Image", (960, 600))
 
-while True:
-    success = show_image()
-    if not success:
-        key = cv2.waitKey(100)
-        continue
+if __name__ == "__main__":
 
-    key = cv2.waitKey(1) & 0xFF
+    output_file = 'manual.txt'
 
-    if key == ord('d') and frame_index < len(image_paths) - 1:
-        frame_index += 1
-    elif key == ord('a') and frame_index > 0:
-        frame_index -= 1
-    elif key == 27:  # ESC
-        break
+    if len(sys.argv) < 2:
+        print("Usage: python click_capture.py /path/to/image_parent_dir")
+        sys.exit(1)
 
-cv2.destroyAllWindows()
+    image_root = os.path.expanduser(sys.argv[1])
+    image_paths = sorted(glob2.glob(os.path.join(image_root, '**', '*.png')))
+    print(f"Found {len(image_paths)} images under {image_root}")
+    if not image_paths:
+        print("No PNG images found. Exiting.")
+        sys.exit(1)
+
+    clicks_dict = load_manual_clicks(output_file)
+    frame_index = 0
+
+    cv2.namedWindow("Image", cv2.WINDOW_NORMAL)
+    cv2.setMouseCallback("Image", mouse_callback)
+    cv2.resizeWindow("Image", (960, 600))
+
+    while True:
+        success = show_image()
+        if not success:
+            key = cv2.waitKey(100)
+            continue
+
+        key = cv2.waitKey(1) & 0xFF
+
+        if key == ord('d') and frame_index < len(image_paths) - 1:
+            frame_index += 1
+        elif key == ord('a') and frame_index > 0:
+            frame_index -= 1
+        elif key == 27:  # ESC
+            break
+
+    cv2.destroyAllWindows()

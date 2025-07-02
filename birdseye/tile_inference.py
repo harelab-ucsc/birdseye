@@ -1,13 +1,18 @@
+#!/usr/bin/env python3
+
 import os
 import glob2
 import cv2
+import math
+
 import matplotlib.pyplot as plt
 import tensorflow as tf
 import numpy as np
-import math
 
+# Custom code imports
 from tile_loader import TileLoader
 from generator import generator
+
 
 class TileInference:
     def __init__(self, model_weights, tile_size=(224, 224), edge_buffer=81, use_heatmaps=False):

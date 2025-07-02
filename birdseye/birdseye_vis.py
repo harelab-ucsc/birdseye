@@ -2,14 +2,16 @@
 
 import pickle
 import numpy as np
-import matplotlib.pyplot as plt
 import os
-# from SLICAnnotator import offlineSLICAnnotator
 import glob2
+
+import matplotlib.pyplot as plt
+
+# Custom code imports
 from dbConnector import dbConnector
 from utilities import *
 from AMI_ContourClassFamily import Contour
-from birdsEye import birdsEye
+from birdseye import birdsEye
 
 
 def skip_check(file, skip_patterns):
