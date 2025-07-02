@@ -142,8 +142,11 @@ Tell people where they can go to for help. It can be any combination of an issue
 ## Functional testing
 All additions to the `main` branch must pass all of the following functional tests:
 
-+ `birdsEye\_tests.py`
-+ `bEdbc\_tests.py`
++ `birdseye/birdsEye_tests.py`
++ `birdseye/bEdbc_tests.py`
++ `tests/test_copyright.py`
++ `tests/test_flake8.py`
++ `tests/test_pep257.py`
 
 ## Roadmap
 If you have ideas for releases in the future, it is a good idea to list them in the README.
