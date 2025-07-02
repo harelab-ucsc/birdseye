@@ -1,3 +1,5 @@
+#!/usr/bin/env python3
+
 """GPS_path_planner - convert clicks into a flight plan.
 Description:
     Translate input clicks (CSV) into a complete flight plan (KML). The output
@@ -9,25 +11,24 @@ Usage:
 Todo:
     TODO
 """
+
+import csv
+import os
+import sys
+import utm
+import fast_tsp
+import argparse
+
+import numpy as np
+import matplotlib.pyplot as plt
+import copy as cp
+
 from scipy.spatial import ConvexHull
 from scipy.stats import multivariate_normal as mvn
 from sklearn.cluster import DBSCAN
 from sklearn import metrics
 
-import numpy as np
-import matplotlib.pyplot as plt
-
-import argparse
-import copy as cp
-import csv
-import os
-import sys
-import utm
-#import simplekml
-
-# from TSP import tsp
-import fast_tsp
-
+# Custom Code imports
 from kml import plan_2_kml
 
 EPS = 2

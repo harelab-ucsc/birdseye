@@ -2,8 +2,10 @@
 import numpy as np
 import matplotlib.pyplot as plt
 from mpl_toolkits.mplot3d import Axes3D
-from utilities import *
 from scipy.spatial.transform import Rotation as R
+
+# Custom code imports
+from utilities import *
 
 
 def arrow3d(ax, length=1, width=0.05, head=0.2, headwidth=1,

@@ -15,17 +15,10 @@ import sqlite3
 import fractions
 import piexif
 import rclpy.node
-# import threading
-# import queue
 import concurrent.futures
 
 import numpy as np
-# import rasterio
 
-from . import dbConnector
-from . import utilities
-
-# from rasterio.transform import from_origin
 from cv_bridge import CvBridge
 from rclpy.node import Node
 from sensor_msgs.msg import Image, Imu, NavSatFix
@@ -33,10 +26,13 @@ from std_msgs.msg import String
 from inertial_sense_ros2.msg import DIDINS2
 from custom_msgs.msg import AltSNR
 from PIL import Image as Img
-
 from rclpy.exceptions import ParameterNotDeclaredException
 from rcl_interfaces.msg import ParameterDescriptor, SetParametersResult
 from rclpy.qos import QoSProfile, ReliabilityPolicy, HistoryPolicy
+
+# Custom code imports
+from . import dbConnector
+from . import utilities
 
 
 clicks_csv = None

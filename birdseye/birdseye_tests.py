@@ -1,13 +1,15 @@
 #!/usr/bin/env python3
 
+import os
 import cv2
 import time
 import pickle
+
 import matplotlib.pyplot as plt
 import numpy as np
-import os
-# from AMI_ContourClassFamily import Contour
-from birdsEye import *
+
+# Custom code imports
+from birdseye import *
 from dbConnector import dbConnector
 from utilities import *
 

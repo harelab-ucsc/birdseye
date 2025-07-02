@@ -25,6 +25,7 @@ def heatmap_head_deep(inputs):
     x = tf.keras.layers.Conv2D(1, 1, padding='same', activation='sigmoid')(x)  # Output: heatmap
     return x
 
+
 def heatmap_head_hybrid(inputs, h, w):
     x = tf.keras.layers.Conv2DTranspose(128, 3, strides=2,  padding='same', activation='relu')(inputs)
     x = tf.keras.layers.Conv2DTranspose(64, 3, strides=2,  padding='same', activation='relu')(x)
