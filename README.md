@@ -139,6 +139,12 @@ Use examples liberally, and show the expected output if you can. It's helpful to
 ## Support
 Tell people where they can go to for help. It can be any combination of an issue tracker, a chat room, an email address, etc.
 
+## Functional testing
+All additions to the `main` branch must pass all of the following functional tests:
+
++ `birdsEye\_tests.py`
++ `bEdbc\_tests.py`
+
 ## Roadmap
 If you have ideas for releases in the future, it is a good idea to list them in the README.
 
