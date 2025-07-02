@@ -5,28 +5,28 @@ import csv
 import utm
 import os
 import pickle as pkl
-from cf_triad import *
 import rclpy
-import tflite_runtime.interpreter as tflite
-from rclpy.node import Node
-from sensor_msgs.msg import Imu, Image, NavSatFix
-from std_msgs.msg import String
-
-import glob2
-from sklearn.cluster import DBSCAN
-from pupil_apriltags import Detector
+import fiona
 import time
 import math
 import pdb
-import tensorflow as tf
+import glob2
 
-import fiona
+import tensorflow as tf
+import tflite_runtime.interpreter as tflite
+
+from rclpy.node import Node
+from sensor_msgs.msg import Imu, Image, NavSatFix
+from std_msgs.msg import String
+from sklearn.cluster import DBSCAN
+from pupil_apriltags import Detector
 from fiona.crs import from_epsg
 from shapely.geometry import Point
-
 from sklearn.neighbors import NearestNeighbors
 from collections import Counter
 
+#   Custom code imports
+from cf_triad import *
 from dbConnector import dbConnector
 from utilities import *
 from annotators import SLICAnnotator, offlineSLICAnnotator
@@ -210,12 +210,12 @@ class birdsEye():
         self.tz = 0
 
         # 2025/03/18
-        self.rr = -11
-        self.rp = 2
+        # self.rr = -11
+        # self.rp = 2
 
-        # 2025/04/03 to 2025/05/02 
-        # self.rr = 4
-        # self.rp = -5
+        # 2025/04/03 to 2025/05/02
+        self.rr = 4
+        self.rp = -5
 
         # 2025/05/21 and after
         # self.rr = 11
@@ -525,8 +525,10 @@ class birdsEye():
 
         # Use unnormalized for confidence
         # Normalize only for thresholding/contour detection if needed
-        norm_pred = pred / pred.max()
-        dets, bin_pred = postprocess_heatmap(norm_pred, thresh=0.2)
+        # norm_pred = pred / pred.max()
+        # dets, bin_pred = postprocess_heatmap(norm_pred, thresh=0.2)
+        print(pred.max())
+        dets, bin_pred = postprocess_heatmap(pred, thresh=0.03)
 
         return dets, pred, bin_pred  # pred = raw for confidence
 
@@ -585,7 +587,7 @@ class birdsEye():
         detections = detections[sorted_idx]
         confidences = confidences[sorted_idx]
 
-        # matched = np.zeros(len(geotags), dtype=bool)
+        matched = np.zeros(len(geotags), dtype=bool)
         y_true = []
         y_scores = []
 
@@ -593,9 +595,9 @@ class birdsEye():
             # dists = np.linalg.norm(geotags - det, axis=1)
             dists = np.linalg.norm(geotags - det[:2], axis=1)
             match_idx = np.argmin(dists)
-            if dists[match_idx] <= match_radius: # and not matched[match_idx]:
+            if dists[match_idx] <= match_radius and not matched[match_idx]:
                 y_true.append(1)
-                # matched[match_idx] = True
+                matched[match_idx] = True
             else:
                 y_true.append(0)
             y_scores.append(score)
@@ -1240,7 +1242,8 @@ class birdsEye():
                         # valid_pts, _, _ = self._2DBoxCheck(valid_pts)
                         # for pt in valid_pts:
                         #     self.annotate(frame[-5], [pt[0], pt[1], 1.0], save_name=os.path.join(self.img_dir,'results'))
-
+                    else:
+                        tmp_dets = []
                 clicks_2D = self._3Dto2D(clicks)
                 inner, i_ind, _ = self._2DBoxCheck(clicks_2D, box='inner')
                 outer, o_ind, _ = self._2DBoxCheck(clicks_2D, box='outer')
