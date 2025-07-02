@@ -5,7 +5,7 @@ import csv
 import utm
 import os
 import pickle as pkl
-import rclpy
+#import rclpy
 import fiona
 import time
 import math
@@ -13,11 +13,11 @@ import pdb
 import glob2
 
 import tensorflow as tf
-import tflite_runtime.interpreter as tflite
+#import tflite_runtime.interpreter as tflite
 
-from rclpy.node import Node
-from sensor_msgs.msg import Imu, Image, NavSatFix
-from std_msgs.msg import String
+#from rclpy.node import Node
+#from sensor_msgs.msg import Imu, Image, NavSatFix
+#from std_msgs.msg import String
 from sklearn.cluster import DBSCAN
 from pupil_apriltags import Detector
 from fiona.crs import from_epsg

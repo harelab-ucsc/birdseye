@@ -7,7 +7,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 import os
 # from AMI_ContourClassFamily import Contour
-from birdsEye import *
+from birdseye import *
 from dbConnector import dbConnector
 from utilities import *
 
