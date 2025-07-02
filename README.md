@@ -1,14 +1,14 @@
-# birdsEye
+# BirdsEye
 
 ## Annotation system
 
 The annotation system is a 2-stage process in the command line: (i.) the user 
 parses the flight dataset from the ROS2-native `bag` file format into a sqlite 
 database using the ROS2 node `sub_node`, then (ii.) the user passes the resulting 
-database to the script, `birdsEye.py`, to run the geotag detection and image 
+database to the script, `birdseye.py`, to run the geotag detection and image 
 annotation processes.
 
-### 0. Calibrate birdsEye optics and odometry systems
+### 0. Calibrate birdseye optics and odometry systems
 Here, thar be monsters...
 
 ### i. Parsing from ROS2 to SQLite
@@ -36,7 +36,7 @@ Moreover, it assumes the following file structure in the home directory:
 ```
 
 This step reqires the user to provide the file(s) in the `bE_config` directory. The 
-call to the birdsEye ROS2 node, `sub_node`, will require, at minimum, a path to a valid 
+call to the birdseye ROS2 node, `sub_node`, will require, at minimum, a path to a valid 
 ROS2 bag file containing flight data. To run `sub_node`, a user can use the following
 command line invokation:
 ```
@@ -83,14 +83,14 @@ as follows:
         from the camera associated with this `sub_node` instance. Defaults to 
         `/cam0/rgb_cam/image_raw`.
         
-`sensors_yaml`: `sub_node` parameter, designating the filepath to `birdsEyeSensorParams.yaml`.
-        Defaults to `~/ros2_ws/src/birdseye/config/birdsEyeSensorParams.yaml`.
+`sensors_yaml`: `sub_node` parameter, designating the filepath to `birdseyeSensorParams.yaml`.
+        Defaults to `~/ros2_ws/src/birdseye/config/birdseyeSensorParams.yaml`.
         
 `clicks_csv`: `sub_node` parameter, designating the filepath to `data.csv`, the file containing
         the geotag data to be associated with this flight's imagery.
         Defaults to a filepath which will never be right, from my laptop. REQUIRED.
 
-### ii. Running birdsEye
+### ii. Running birdseye
 
 ## Path planning
 
@@ -142,8 +142,8 @@ Tell people where they can go to for help. It can be any combination of an issue
 ## Functional testing
 All additions to the `main` branch must pass all of the following functional tests:
 
-+ `birdseye/birdsEye_tests.py`
-+ `birdseye/bEdbc_tests.py`
++ `birdseye/birdseye_tests.py`
++ `birdseye/DBConnector_tests.py`
 + `tests/test_copyright.py`
 + `tests/test_flake8.py`
 + `tests/test_pep257.py`
