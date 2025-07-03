@@ -1,4 +1,5 @@
 # BirdsEye
+We have a technical operating manual (under development) available via [this link](https://docs.google.com/document/d/1-FZzE7Eh_Zi3TRnGS_bfW5jOKc4YxBhRKGrLWPVRbck/edit?usp=sharing)
 
 ## Annotation system
 
