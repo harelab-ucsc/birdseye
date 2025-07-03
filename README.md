@@ -1,4 +1,4 @@
-# birdsEye
+# BirdsEye
 
 ## Annotation system
 
