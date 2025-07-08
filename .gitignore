@@ -21,4 +21,4 @@ models/*
 scripts/__pycache__/*
 holding/*
 examples/*
-
+.dependencies.txt
