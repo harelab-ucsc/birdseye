@@ -1,18 +1,13 @@
-#!/usr/bin/env python3
-
 import os
 import glob2
 import cv2
-import math
 
 import matplotlib.pyplot as plt
 import tensorflow as tf
 import numpy as np
 
-# Custom code imports
 from tile_loader import TileLoader
 from generator import generator
-
 
 class TileInference:
     def __init__(self, model_weights, tile_size=(224, 224), edge_buffer=81, use_heatmaps=False):
@@ -77,20 +72,11 @@ class TileInference:
                 plt.show()
 
 
-def predict_frame_heatmap(frame, model, edge_buffer=(81, 81), tile_size=(224, 224)):
+def predict_frame_heatmap(frame, model, tile_size=(224, 224), tile_overlap=(30,40)):
     h, w = frame.shape[:2]
-    # print('frame height, width', h, w)
     th, tw = tile_size
-    tile_rows = math.ceil(h/th)
-    tile_cols = math.ceil(w/tw)
-    # print('rows, cols: ', tile_rows, tile_cols)
-    delta_y = math.ceil(th - h/tile_rows)
-    delta_x = math.ceil(tw - w/tile_cols)
-    stride_y = th - delta_y
-    stride_x = tw - delta_x
-    # print('strides: ', stride_y, stride_x)
-    # stride_y = th - tile_overlap
-    # stride_x = tw - tile_overlap
+    stride_y = th - tile_overlap[0]
+    stride_x = tw - tile_overlap[1]
 
     heatmap_full = np.zeros((h, w), dtype=np.float32)
     weight_mask = np.zeros((h, w), dtype=np.float32)
@@ -99,19 +85,9 @@ def predict_frame_heatmap(frame, model, edge_buffer=(81, 81), tile_size=(224, 22
     positions = []
 
     # Step 1: Extract tiles
-    for y in range(edge_buffer[0], h - edge_buffer[0] - th + delta_y+ 1, stride_y):
-        for x in range(edge_buffer[1], w - edge_buffer[1] - tw + delta_x + 1, stride_x):
-            # print(f'y, x: {y},{x} ({stride_y}, {stride_x})')
+    for y in range(0, h - th + 1, stride_y):
+        for x in range(0, w - tw + 1, stride_x):
             tile = frame[y:y+th, x:x+tw]
-            if tile.shape != (224, 224, 3):
-                pad_y = 224 - tile.shape[0]
-                pad_x = 224 - tile.shape[1]
-                tile = np.pad(
-                    tile,
-                    ((0, pad_y), (0, pad_x), (0, 0)),
-                    mode='constant',
-                    constant_values=0
-                )
             tiles.append(tile)
             positions.append((y, x))
 
@@ -124,14 +100,8 @@ def predict_frame_heatmap(frame, model, edge_buffer=(81, 81), tile_size=(224, 22
     # Step 3: Reassemble into heatmap
     for i, (y, x) in enumerate(positions):
         pred_tile = preds[i].squeeze()
-        # TODO: strip the pads from tiles which received pads
-                # Determine original tile height and width (before padding)
-        tile_h = min(th, h - y)
-        tile_w = min(tw, w - x)
-
-        heatmap_full[y:y+tile_h, x:x+tile_w] += pred_tile[:tile_h, :tile_w]
-        weight_mask[y:y+tile_h, x:x+tile_w] += 1.0
-
+        heatmap_full[y:y+th, x:x+tw] += pred_tile
+        weight_mask[y:y+th, x:x+tw] += 1.0
 
     # Step 4: Normalize overlapping regions
     heatmap_full = np.divide(
@@ -144,11 +114,9 @@ def predict_frame_heatmap(frame, model, edge_buffer=(81, 81), tile_size=(224, 22
     return heatmap_full
 
 
-def postprocess_heatmap(heatmap, blur=True, blurs=10, thresh=0.5, min_area=10):
+def postprocess_heatmap(heatmap, blur=True, thresh=0.5, min_area=10):
     if blur:
-        for blur in range(blurs):
-            _, binary = cv2.threshold(heatmap, thresh, 1.0, cv2.THRESH_BINARY)
-            heatmap = cv2.GaussianBlur(heatmap, (11, 11), sigmaX=1)
+        heatmap = cv2.GaussianBlur(heatmap, (5, 5), sigmaX=1)
 
     _, binary = cv2.threshold(heatmap, thresh, 1.0, cv2.THRESH_BINARY)
     contours, _ = cv2.findContours((binary * 255).astype(np.uint8), cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
@@ -172,13 +140,15 @@ if __name__ == '__main__':
     # infer.visualize_predictions("/path/to/image.png", label_file="labels.txt")
 
     frames_dirs = [
-        # os.path.join(os.path.expanduser('~'), 'birdseye_CNN_data', '2025_04_16', 'pieranch_rect'),
-        os.path.join(os.path.expanduser('~'), 'parsed_flights', '2025_04_16', 'pieranch_rect'),
+        os.path.join(os.path.expanduser('~'), 'birdseye_CNN_data', '2025_04_16', 'pieranch_rect'),
+        # os.path.join(os.path.expanduser('~'), 'parsed_flights', '2025_04_16', 'pieranch_rect'),
     ]
 
-    # models_dir = os.path.join(os.path.expanduser('~'), 'birdseye', 'models')
-    models_dir = os.path.join(os.path.expanduser('~'), 'ros2_ws', 'src', 'birdseye', 'models')
-    weight_file = 'birdseye_224_224_008.weights.h5'
+    # models_dir = os.path.join(os.path.expanduser('~'), 'ros2_ws', 'src', 'birdseye', 'models')
+    models_dir = os.path.join(os.path.expanduser('~'), 'birdseye', 'models')
+    # weight_file = 'birdseye_224_224_016.weights.h5'
+    # weight_file = 'birdseye_224_224_013.weights.h5'
+    weight_file = 'birdseye_224_224_023.weights.h5'
 
     model = generator(224, 224, 3, use_heatmap=True)
     model.load_weights(os.path.join(models_dir, weight_file))
@@ -193,7 +163,7 @@ if __name__ == '__main__':
 
         fig, ax = plt.subplots(1,2, figsize=(18,8))
         print()
-        for frame in frames:
+        for i, frame in enumerate(frames):
             print(f'predicting on {frame}')
 
             image = tf.io.decode_png(tf.io.read_file(frame), channels=3)
@@ -202,18 +172,13 @@ if __name__ == '__main__':
             pred = tf.squeeze(pred).numpy()
             pred /= pred.max()
 
-            # ax[2].hist(pred.flatten())
-
-            det, pred = postprocess_heatmap(pred, thresh=0.25)
+            # det, pred = postprocess_heatmap(pred, thresh=0.3)
             ax[1].imshow(pred, cmap='hot')
-
-            # ax[2].hist(pred.flatten())
 
             fig.canvas.draw_idle()
             plt.pause(0.2)
-            # p = os.path.expanduser('~')
-            # p = os.path.join(p, 'catch', 'tmp', f'3d_{str(self.frame_index).rjust(3,str(0))}.png')
-            # self.fig.savefig(p)
+            p = os.path.expanduser('~')
+            p = os.path.join(p, 'catch', 'tmp', f'2d_{str(i).rjust(3,str(0))}.png')
+            fig.savefig(p)
             ax[0].cla()
             ax[1].cla()
-            # ax[2].cla()
