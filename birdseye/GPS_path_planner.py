@@ -199,14 +199,15 @@ def build_dji_plan(
                 ll = '(' + ','.join(line[:2]) + ')'
                 # print('lat/lon click location: ', ll)
                 # print('    utm conversion: ', u)
-                tag = int(line[-1][-1])
+                # tag = int(line[-1][-1])
                 UTMrep.append([u[0], u[1]])
                 # for _ in range(5):
                 #     UTMrep.append(mvn.rvs(mean=[u[0], u[1]], cov=0.5).tolist())  # clicks in UTM coordinates, meter base unit
             except:
-                continue
+                # continue
+                print('bonk')
     UTMrep = np.array(UTMrep)
-    print()
+    print(UTMrep)
 
     dbscan = DBSCAN(eps=EPS, min_samples=MIN_SAMPLES).fit(UTMrep)  # cluster in the UTM/cartesian representation
     labels = dbscan.labels_

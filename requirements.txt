@@ -1,0 +1,13 @@
+opencv-python
+matplotlib
+utm
+rclpy
+fiona
+glob2
+tensorflow
+scikit-learn
+pupil-apriltags
+shapely
+scikit-image
+pycocotools
+fast-tsp
