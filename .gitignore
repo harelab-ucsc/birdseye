@@ -1,8 +1,15 @@
+# Miscellany.
 */catch
 */flights
-# macOS
+
+# Virtual env.
+.venv/*
+
+# macOS.
 .DS_Store
 */.DS_Store
+
+# Python.
 examples/__pycache__/*
 launch/__pycache__/*
 birdseye/__pycache__/*
