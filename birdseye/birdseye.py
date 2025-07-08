@@ -165,18 +165,12 @@ class birdsEye():
         self.dbc = dbConnector(os.path.join(self.img_dir, self.db_name))
         self.dbc.boot(self.db_name, self.sensor)
         self.start_frame = kwargs.pop('start_frame', 0)
-
+        self.output_name = kwargs.pop(output_name, "birdseye.geojson")
         self.apriltags = kwargs.pop('apriltags', None)
         self.stats = kwargs.pop('stats', None)
         self.plot = kwargs.pop('plot', None)
         self.detect = kwargs.pop('detect', None)
         self.manual = kwargs.pop('manual', None)
-
-        # self.model_path = kwargs.pop('model_path', os.path.join(os.path.expanduser('~'),'ucsc_512_384_13.tflite'))
-        # self.model = tflite.Interpreter(model_path=self.model_path, num_threads=4)
-        # self.model.allocate_tensors()
-        # self.input_details = self.model.get_input_details()
-        # self.output_details = self.model.get_output_details()
 
         self.radalt = None
         self.rtk_tracker = [0]*4
@@ -724,33 +718,39 @@ class birdsEye():
         print(f'    Annotation saved: {self.frame_index}, {save_name}.txt, {label}')
 
 
-    def export_shapefile(self, pt_list, filename='output_fiona.shp'):
-        """
-        Exports a list of 3D points to a shapefile.
-
-        Args:
-            pt_list: List of 3D points, each a list or tuple of [x, y, z].
-            filename: Name of the output shapefile.
-        """
-        if len(pt_list) == 0:
-            print("No points to export.")
-            return
-
-        schema = {
-            'geometry': 'Point',
-            'properties': {'id': 'int', 'elev': 'float'}
+    def save_points_as_geojson(output_path, dets_3D, clicks, clicks_3D):
+        geojson = {
+            "type": "FeatureCollection",
+            "features": []
         }
 
-        with fiona.open(filename, 'w', driver='ESRI Shapefile', schema=schema, crs=from_epsg(4326)) as shp:
-            for i, pt in enumerate(pt_list):
-                try:
-                    lon, lat = utm.to_latlon(pt[0], pt[1], 10, northern=True)  # You may need to adjust zone
-                    shp.write({
-                        'geometry': Point(lon, lat).__geo_interface__,
-                        'properties': {'id': i, 'elev': pt[2]}
-                    })
-                except Exception as e:
-                    print(f"Failed to write point {pt}: {e}")
+        def add_points(points, label):
+            for i, pt in enumerate(points):
+                if len(pt) == 3:
+                    x, y, z = pt
+                else:
+                    x, y, z = pt[0], pt[1], 0  # fallback if 2D
+                feature = {
+                    "type": "Feature",
+                    "geometry": {
+                        "type": "Point",
+                        "coordinates": [x, y, z]
+                    },
+                    "properties": {
+                        "group": label,
+                        "id": i
+                    }
+                }
+                geojson["features"].append(feature)
+
+        add_points(dets_3D, "dets3D")
+        add_points(clicks, "clicks")
+        add_points(clicks_3D, "clicks_seen")
+
+        output_file = Path("big_money.geojson")
+        with open(output_file, 'w') as f:
+            json.dump(geojson, f, indent=2)
+            print(f"\n\n --> GeoJSON saved to {output_file}!")
 
 
     def ned_to_enu_se3(self, pose_ned):
@@ -1038,13 +1038,7 @@ class birdsEye():
             else:
                 print("Not enough data for mAP computation.")
 
-        with open('big_money.pkl', 'wb') as f:
-            big_money = {}
-            big_money['dets3D'] = self.dets_3D
-            big_money['clicks'] = clks
-            big_money['clicks_seen'] = self.clicks_3D
-            pkl.dump(big_money, f)
-            print('\n\n --> output pickled and saved!')
+        save_points_as_geojson(self.output_name, self.dets_3D, clks, self.clicks_3D)
 
 
         print('\nRTK Service Stats:')
