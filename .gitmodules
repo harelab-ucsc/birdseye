@@ -1,0 +1,9 @@
+[submodule "OASIS-Base"]
+	path = OASIS-Base
+	url = git@github.com:harelab-ucsc/OASIS-Base.git
+[submodule "clicker/ClickPoint_firmware"]
+	path = clicker/ClickPoint_firmware
+	url = git@github.com:harelab-ucsc/ClickPoint_firmware.git
+[submodule "clicker/rtk_clicker"]
+	path = clicker/rtk_clicker
+	url = git@github.com:harelab-ucsc/rtk_clicker.git
