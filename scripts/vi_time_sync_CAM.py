@@ -98,6 +98,7 @@ class BagProcessor:
         # os.makedirs("images", exist_ok=True)
 
         print('reading bag')
+        imgs = 0
         # Read and process messages
         while reader.has_next():
             topic, data, timestamp = reader.read_next()
@@ -105,6 +106,8 @@ class BagProcessor:
             msg = deserialize_message(data, message_type)
 
             if topic == self.image_topic:
+                imgs += 1
+                print('image', imgs)
                 self.image_msgs.append(msg)
             elif topic == self.ins_topic:
                 self.ins_msgs.append(msg)

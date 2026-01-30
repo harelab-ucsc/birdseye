@@ -352,8 +352,15 @@ class birdsEye():
                 vector = pw - self.T_WC[:,3]
                 unit_vector = vector / np.linalg.norm(vector)
 
-                # Point scaled along this ray
-                p3D = self.T_WC[:,3] - self.radalt*unit_vector
+                # # Point scaled along this ray  # pre-sub, used experiments
+                # p3D = self.T_WC[:,3] - self.radalt*unit_vector
+                # List3D.append(p3D.tolist())
+
+                # Point scaled along this ray  # post-sub, correct scaling error
+                up = np.array([0.0,0.0,1.0])
+                scale = self.radalt/(unit_vector[:3]@up)
+                p3D = self.T_WC[:,3] - scale*unit_vector
+                
                 List3D.append(p3D.tolist())
 
         return List3D
@@ -371,11 +378,8 @@ class birdsEye():
         """
         List2D = []
 
-        try:
-            if not List3D:
-                return List2D  # Return empty list if no points
-        except ValueError:
-            pass
+        if not List3D:
+            return List2D  # Return empty list if no points
 
         List3D = np.array(List3D, dtype=np.float64)
 
