@@ -14,8 +14,26 @@ def generate_launch_description():
 
     antenna_offset_gps1_arg = DeclareLaunchArgument(
         'antenna_offset_gps1',
-        default_value='[-0.11, 0.0, -0.33]',  # Default value; update as needed
+        default_value='[0.0, -0.1, -0.34]',  # Default value; update as needed
         description='Offset for GPS1 antenna'
+    )
+
+    GNSS_Compass_arg = DeclareLaunchArgument(
+        'GNSS_Compass',
+        default_value='True',  # Default value; update as needed
+        description='Enable GNSS compassing'
+    )
+
+    gps2_enable_arg = DeclareLaunchArgument(
+        'gps2_enable',
+        default_value='True',
+        description='Boolean, whether or not to enable the second GPS antenna for compassing. Default: True'
+    )
+
+    antenna_offset_gps2_arg = DeclareLaunchArgument(
+        'antenna_offset_gps2',
+        default_value='[0.0, 0.0, 0.0]',  # Default value; update as needed
+        description='Offset for GPS2 antenna'
     )
 
     mag_declination_arg = DeclareLaunchArgument(
@@ -27,6 +45,8 @@ def generate_launch_description():
     # Get the values of the arguments
     yaml_param_file = LaunchConfiguration('yaml_param_file')
     antenna_offset_gps1 = LaunchConfiguration('antenna_offset_gps1')
+    antenna_offset_gps2 = LaunchConfiguration('antenna_offset_gps2')
+    gps2_enable = LaunchConfiguration('gps2_enable')
     mag_declination = LaunchConfiguration('mag_declination')
 
     # Include the previous launch script and pass the arguments
@@ -38,6 +58,8 @@ def generate_launch_description():
         launch_arguments={
             'yaml_param_file': yaml_param_file,
             'antenna_offset_gps1': antenna_offset_gps1,
+            'antenna_offset_gps2': antenna_offset_gps2,
+            'gps2_enable': gps2_enable,
             'mag_declination': mag_declination
         }.items()
     )
@@ -51,7 +73,9 @@ def generate_launch_description():
     return LaunchDescription([
         yaml_param_file_arg,
         antenna_offset_gps1_arg,
+        antenna_offset_gps2_arg,
+        gps2_enable_arg,
         mag_declination_arg,
         previous_launch,
-        topic_hz_process,
+        topic_hz_process
     ])
