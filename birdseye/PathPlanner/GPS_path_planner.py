@@ -4,11 +4,24 @@ Description:
     file can then be loaded to an SD card and used by a compatible drone.
 
 Usage:
-    TODO
+    python3 GPS_path_planner.py -i catch/data.csv -o flights/flight.kml
+    python3 GPS_path_planner.py -i data.csv -o out.kml -d 5.0 -r 2.0 -s 6
+    python3 GPS_path_planner.py -i data.csv -o out.kml --no-tsp --no-whifferdill
+
+Options:
+    -i, --input PATH            Input CSV of lat/lon clicks [default: catch/data.csv]
+    -o, --output PATH           Output KML (a matching .plan is also written) [default: flights/flight.kml]
+    -d, --duration_hover SECS   Hover duration in seconds at each waypoint [default: 3.0]
+    -r, --radius METERS         Whifferdill radius in meters [default: 1.0]
+    -s, --sides N               Number of sides in the Whifferdill polygon [default: 4]
+    -t, --tsp / --no-tsp        Solve TSP to minimize path length [default: enabled]
+    -w, --whifferdill / --no-whifferdill
+                                Expand each click into a polygon pattern [default: enabled]
 
 Todo:
     TODO
 """
+
 from scipy.spatial import ConvexHull
 from scipy.stats import multivariate_normal as mvn
 from sklearn.cluster import DBSCAN
@@ -23,12 +36,14 @@ import csv
 import os
 import sys
 import utm
-#import simplekml
+# import simplekml
 
 # from TSP import tsp
 import fast_tsp
 
-from kml import plan_2_kml
+from kml_filegen import plan_2_kml
+
+from plan_filegen import plan_2_qgc
 
 EPS = 2
 MIN_SAMPLES = 3
@@ -43,35 +58,30 @@ SAVE = True
 
 
 def _write_csv_file(path: str, rows: list[str]):
-    """Write rows of CSV to a file.
-    """
+    """Write rows of CSV to a file."""
     with open(path, "w+") as csvp:
         writer = csv.writer(csvp, delimiter=",")
         writer.writerows(rows)
 
+
 def _write_file(path: str, data: str):
-    """Write a string to a file.
-    """
+    """Write a string to a file."""
     with open(path, "w") as fp:
         writer = fp.write(data)
 
+
 def generate_csv_from_plan(plan, d_hover, fpath):
-    """Write the details of a flight plan to a CSV file.
-    """
+    """Write the details of a flight plan to a CSV file."""
     lines = []
-    lines.append(["lat","lon","point_name", "actions_sequence"])
-    [lines.append([
-        str(pos[0]),
-        str(pos[1]),
-        str(index),
-        f"H{d_hover}"
-    ]) for index, pos in enumerate(plan)]
+    lines.append(["lat", "lon", "point_name", "actions_sequence"])
+    [
+        lines.append([str(pos[0]), str(pos[1]), str(index), f"H{d_hover}"])
+        for index, pos in enumerate(plan)
+    ]
     _write_csv_file(fpath, lines)
 
-def _format_plan(
-    plan: list[list],
-    d_hover: int = 0.0
-) -> list[dict]:
+
+def _format_plan(plan: list[list], d_hover: int = 0.0) -> list[dict]:
     """_format_plan(plan, d_hover) -> plan_out
 
     Reformat the plan as a list of waypoints with path parameter customization.
@@ -80,26 +90,18 @@ def _format_plan(
     @param  d_hover (int)       Hover duration (seconds).
     """
     plan_out = []
-    template = {
-        "lat": "",
-        "lon": "",
-        "label": "",
-        "actions_sequence": ""
-    }
+    template = {"lat": "", "lon": "", "label": "", "actions_sequence": ""}
     for index, pos in enumerate(plan):
         row = cp.deepcopy(template)
         row["lat"] = str(pos[0])
         row["lon"] = str(pos[1])
         row["label"] = str(index)
-        row["actions_sequence"] = f"H{d_hover}"
+        row["actions_sequence"] = ""
         plan_out.append(row)
     return plan_out
 
-def build_polygon(
-        pt: tuple[float],
-        r: float,
-        n: int
-    ) -> tuple[tuple[float]]:
+
+def build_polygon(pt: tuple[float], r: float, n: int) -> tuple[tuple[float]]:
     """build_polygon
 
     Description:
@@ -116,10 +118,7 @@ def build_polygon(
         return [list(pt)]
     else:
         thetas = lambda n: [((i * 2 * np.pi) / n) for i in range(n)]
-        return [
-            [pt[0] + r * np.cos(th),
-             pt[1] + r * np.sin(th)] for th in thetas(n)
-        ]
+        return [[pt[0] + r * np.cos(th), pt[1] + r * np.sin(th)] for th in thetas(n)]
 
 
 def preprocessWaypoints(waypoints, min_gap=DJI_MIN_DISTANCE):
@@ -140,7 +139,7 @@ def preprocessWaypoints(waypoints, min_gap=DJI_MIN_DISTANCE):
         else:
             a = waypoints.pop(v)
             b = waypoints.pop(u)
-        new = [(a[0]+b[0])/2, (a[1]+b[1])/2]
+        new = [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2]
         waypoints.append(new)
         wpts = np.array(waypoints)
         dists = metrics.pairwise_distances(wpts)
@@ -154,14 +153,14 @@ def preprocessWaypoints(waypoints, min_gap=DJI_MIN_DISTANCE):
 
 
 def build_dji_plan(
-        d_hover: float,
-        do_tsp: bool,
-        do_whifferdill: bool,
-        fp_in: str,
-        fp_out: str,
-        w_rad: float,
-        w_sides: int
-    ):
+    d_hover: float,
+    do_tsp: bool,
+    do_whifferdill: bool,
+    fp_in: str,
+    fp_out: str,
+    w_rad: float,
+    w_sides: int,
+):
     """
     Args:
         d_hover         (float) :
@@ -177,14 +176,15 @@ def build_dji_plan(
         * Cleanup.
     """
     # NOTE: Set data path here.
-    #fp_in = "catch/data.csv"
-    #fp_in = "Documents/hare/birdseye/birdseye/catch/data.csv"
-    #savename = "parsed_flight/plan.kml"
-    #savename = fp_out
-    #plan_kml = os.path.join(os.path.expanduser('~'), savename)
+    # fp_in = "catch/data.csv"
+    # fp_in = "Documents/hare/birdseye/birdseye/catch/data.csv"
+    # savename = "parsed_flight/plan.kml"
+    # savename = fp_out
+    # plan_kml = os.path.join(os.path.expanduser('~'), savename)
     clicks_csv = fp_in
-    plan_kml = fp_out
-
+    base_out = os.path.splitext(fp_out)[0]
+    kml_path = base_out + ".kml"
+    plan_path = base_out + ".plan"
 
     LLrep = []
     UTMrep = []
@@ -195,10 +195,10 @@ def build_dji_plan(
             # break down line
             try:
                 u = utm.from_latlon(float(line[0]), float(line[1]))
-                ll = '(' + ','.join(line[:2]) + ')'
+                ll = "(" + ",".join(line[:2]) + ")"
                 # print('lat/lon click location: ', ll)
                 # print('    utm conversion: ', u)
-                tag = int(line[-1][-1])
+                #                tag = int(line[-1][-1])
                 UTMrep.append([u[0], u[1]])
                 # for _ in range(5):
                 #     UTMrep.append(mvn.rvs(mean=[u[0], u[1]], cov=0.5).tolist())  # clicks in UTM coordinates, meter base unit
@@ -207,7 +207,9 @@ def build_dji_plan(
     UTMrep = np.array(UTMrep)
     print()
 
-    dbscan = DBSCAN(eps=EPS, min_samples=MIN_SAMPLES).fit(UTMrep)  # cluster in the UTM/cartesian representation
+    dbscan = DBSCAN(eps=EPS, min_samples=MIN_SAMPLES).fit(
+        UTMrep
+    )  # cluster in the UTM/cartesian representation
     labels = dbscan.labels_
     # print('labels: ', labels)
     # Number of clusters in labels, ignoring noise if present.
@@ -225,7 +227,7 @@ def build_dji_plan(
 
     colors = [plt.cm.Spectral(each) for each in np.linspace(0, 1, len(unique_labels))]
     waypoints = []
-    plt.rcParams['figure.figsize'] = [15,15]
+    plt.rcParams["figure.figsize"] = [15, 15]
     for k, col in zip(unique_labels, colors):
         tmp = []
         if k == -1:
@@ -286,23 +288,41 @@ def build_dji_plan(
         out = range(len(waypoints))
     spt = out[0]
     for pt in out[1:]:
-        plt.plot([waypoints[spt,0], waypoints[pt,0]], [waypoints[spt,1], waypoints[pt,1]], 'k')
-        plt.plot(waypoints[pt,0], waypoints[pt,1], 'o', markerfacecolor='xkcd:neon green', markeredgecolor='k', markersize=5)
+        plt.plot(
+            [waypoints[spt, 0], waypoints[pt, 0]],
+            [waypoints[spt, 1], waypoints[pt, 1]],
+            "k",
+        )
+        plt.plot(
+            waypoints[pt, 0],
+            waypoints[pt, 1],
+            "o",
+            markerfacecolor="xkcd:neon green",
+            markeredgecolor="k",
+            markersize=5,
+        )
         spt = pt
-    plt.plot([waypoints[spt,0], waypoints[out[0],0]], [waypoints[spt,1], waypoints[out[0],1]], 'k')
+    plt.plot(
+        [waypoints[spt, 0], waypoints[out[0], 0]],
+        [waypoints[spt, 1], waypoints[out[0], 1]],
+        "k",
+    )
 
     plan = []
     for pt in waypoints[out]:
         plan.append(list(utm.to_latlon(pt[0], pt[1], u[-2], u[-1])))
     # plan = np.array(plan)
-    print(len(plan)//DJI_MAX_POINTS, len(plan)%DJI_MAX_POINTS)
+    print(len(plan) // DJI_MAX_POINTS, len(plan) % DJI_MAX_POINTS)
 
     print(f"Formatting flight plan...")
     plan_formatted = _format_plan(plan, int(d_hover * 1000))
-    plan_kml = plan_2_kml(plan_formatted)
+    kml_str = plan_2_kml(plan_formatted)
+    plan_str = plan_2_qgc(plan_formatted, wait_ms=int(d_hover * 1000))
     print("    DONE.")
-    print(f"Generating flight plan at {fp_out}...")
-    _write_file(fp_out, plan_kml)
+    print(f"Writing {kml_path}...")
+    _write_file(kml_path, kml_str)
+    print(f"Writing {plan_path}...")
+    _write_file(plan_path, plan_str)
     """
     generate_csv_from_plan(
         plan,
@@ -312,83 +332,84 @@ def build_dji_plan(
     """
     print("    DONE.")
 
-    plt.tick_params(axis='x', which='both', bottom=False,
-                top=False, labelbottom=False)
-    plt.tick_params(axis='y', which='both', right=False,
-                left=False, labelleft=False)
-    for pos in ['right', 'top', 'bottom', 'left']:
+    plt.tick_params(axis="x", which="both", bottom=False, top=False, labelbottom=False)
+    plt.tick_params(axis="y", which="both", right=False, left=False, labelleft=False)
+    for pos in ["right", "top", "bottom", "left"]:
         plt.gca().spines[pos].set_visible(False)
 
     if SAVE:
-        fig, ax = plt.subplots(figsize=(15,15))
-        ax.plot(UTMrep[:,0], UTMrep[:,1],
+        fig, ax = plt.subplots(figsize=(15, 15))
+        ax.plot(
+            UTMrep[:, 0],
+            UTMrep[:, 1],
             "o",
             # markerfacecolor=tuple(col),
             markerfacecolor="w",
             markeredgecolor="k",
             markersize=10,
-            )
-        ax.spines['top'].set_visible(False)
-        ax.spines['right'].set_visible(False)
-        ax.spines['bottom'].set_visible(False)
-        ax.spines['left'].set_visible(False)
+        )
+        ax.spines["top"].set_visible(False)
+        ax.spines["right"].set_visible(False)
+        ax.spines["bottom"].set_visible(False)
+        ax.spines["left"].set_visible(False)
 
         ax.get_xaxis().set_ticks([])
         ax.get_yaxis().set_ticks([])
-        plt.savefig('clicks.png', transparent=True)
+        plt.savefig("clicks.png", transparent=True)
 
     plt.show()
+
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument(
         "-d",
         "--duration_hover",
-        default=3.0,
+        default=0.0,
         help="Specify duration of hover at each point.",
-        type=float
+        type=float,
     )
     parser.add_argument(
         "-i",
         "--input",
         default="catch/data.csv",
         help="Specify path to input [CSV] file.",
-        type=str
+        type=str,
     )
     parser.add_argument(
         "-o",
         "--output",
-        default="flights/plan.kml",
-        help="Specify path to output [KML] file; defaults to 'plan.kml'.",
-        type=str
+        default="flights/flight(.kml/.plan)",
+        help="Specify path to output [KML&plan] file; defaults to 'flight.kml' and 'flight.plan'.",
+        type=str,
     )
     parser.add_argument(
         "-r",
         "--radius",
         default=1.0,
         help="Specify the radius of created Whifferdill [if enabled].",
-        type=float
+        type=float,
     )
     parser.add_argument(
         "-s",
         "--sides",
         default=4,
         help="Specify the number of sides of created Whifferdill [if enabled].",
-        type=int
+        type=int,
     )
     parser.add_argument(
         "-t",
         "--tsp",
         action=argparse.BooleanOptionalAction,
         default=True,
-        help="Find the shortest path between each point visited?"
+        help="Find the shortest path between each point visited?",
     )
     parser.add_argument(
         "-w",
         "--whifferdill",
         action=argparse.BooleanOptionalAction,
         default=True,
-        help="Generate Whifferdill pattern around each point?"
+        help="Generate Whifferdill pattern around each point?",
     )
     args = parser.parse_args()
 
@@ -399,5 +420,5 @@ if __name__ == "__main__":
         fp_in=args.input,
         fp_out=args.output,
         w_rad=args.radius,
-        w_sides=args.sides
+        w_sides=args.sides,
     )
