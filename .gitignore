@@ -1,10 +1,7 @@
-*/catch
-*/flights
-# macOS
-.DS_Store
-*/.DS_Store
-models/*
-birdseye/__pycache__/*
-logs/*
-launch/__pycache__/*
-benchmark/build/*
+**/flights/*
+**/pycache__/*
+**/__pycache__/
+__pycache__/
+**/.DS_Store
+**/clicks.png
+

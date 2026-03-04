@@ -261,10 +261,6 @@ def plan_2_kml(
                     kml_str += hover_template.substitute(
                         length=action[1:]
                     )
-        elif hover >= 500:
-            kml_str += hover_template.substitute(
-                length=str(hover)
-            )
 
         kml_str += "\n" + \
             waypoint_end.substitute(lon=lon, lat=lat, height=height,)+"\n"
