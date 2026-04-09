@@ -149,7 +149,11 @@ def preprocessWaypoints(waypoints, min_gap=DJI_MIN_DISTANCE):
     # plt.show()
     # print(dists[np.nonzero(dists)].min())
     # print(np.where(dists == 0))
-    return dists, wpts
+    # Normalize to uint16 range for fast_tsp (max value 65535)
+    max_dist = dists.max()
+    if max_dist > 0:
+        dists = (dists.astype(np.float64) / max_dist * 65535).astype(np.int32)
+    return dists.tolist(), wpts
 
 
 def build_dji_plan(
