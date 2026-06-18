@@ -1,34 +1,58 @@
 import numpy as np
 
 
-class CameraModel:
-    def __init__(self, K, T_WC):
+@dataclass
+class Ray:
+    origin: np.ndarray      # (3,)
+    direction: np.ndarray   # (3,)
+
+
+class PinholeCameraModel:
+    def __init__(self, K):
         self.K = K
-        self.T_WC = T_WC  # world -> camera
 
-    def project(self, X_world):
-        X = np.hstack([X_world, 1.0])
-
-        Xc = np.linalg.inv(self.T_WC) @ X
-        x = self.K @ Xc[:3]
-
-        return x[:2] / x[2]
-
-    def ray(self, pixel):
+    def image_to_rays(self, pixels, T_WC):
         """
-        returns world-space ray (origin, direction)
+        pixels: (N,2)
+        returns: list[Ray]
         """
-        px = np.array([pixel[0], pixel[1], 1.0])
+        pixels = np.asarray(pixels)
 
-        dir_cam = np.linalg.inv(self.K) @ px
-        dir_cam = dir_cam / np.linalg.norm(dir_cam)
+        R = T_WC[:3, :3]
+        origin = T_WC[:3, 3]
 
-        origin_cam = np.array([0, 0, 0, 1])
+        rays = []
 
-        origin_world = self.T_WC @ origin_cam
-        origin_world = origin_world[:3]
+        Kinv = np.linalg.inv(self.K)
 
-        dir_world = self.T_WC[:3, :3] @ dir_cam
-        dir_world = dir_world / np.linalg.norm(dir_world)
+        for u, v in pixels:
+            p = np.array([u, v, 1.0])
+            d_cam = Kinv @ p
+            d_world = R.T @ d_cam
+            d_world /= np.linalg.norm(d_world)
 
-        return origin_world, dir_world
+            rays.append(Ray(origin=origin.copy(), direction=d_world))
+
+        return rays
+
+    # Forward projection (3D → 2D)
+    def world_to_image(self, world_points, T_WC):
+        world_points = np.asarray(world_points)
+
+        if world_points.shape[0] == 0:
+            return np.zeros((0, 2))
+
+        if world_points.shape[1] == 3:
+            world_points = np.hstack([
+                world_points,
+                np.ones((len(world_points), 1))
+            ])
+
+        T_CW = np.linalg.inv(T_WC)
+        cam = T_CW @ world_points.T
+        cam = cam[:3,:]
+
+        proj = self.K @ cam
+        proj /= proj[2:3]
+
+        return proj[:2].T
