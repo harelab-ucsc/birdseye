@@ -55,14 +55,14 @@ class SensorConfigLoader:
 
 
 class PinholeCameraModel:
-    def __init__(self, K, res, name):
+    def __init__(self, K, T_cam_ins, res, name):
         self.K = K
+        self.Kinv = np.linalg.inv(K)
+        self.T_cam_ins = T_cam_ins
         width, height = res
         self.width = width
         self.height = height
         self.name = name
-
-        self.Kinv = np.linalg.inv(K)
 
     @classmethod
     def from_config(cls, cam_cfg):
@@ -73,6 +73,7 @@ class PinholeCameraModel:
         # Support both dataclass + raw dict usage
         if hasattr(cam_cfg, "K"):
             K = cam_cfg.K
+            T_cam_ins = cam_cfg.T_cam_ins
             width = cam_cfg.width
             height = cam_cfg.height
             name = cam_cfg.name
@@ -92,6 +93,7 @@ class PinholeCameraModel:
 
         return cls(
             K=K,
+            T_cam_ins=T_cam_ins,
             res=(width, height),
             name=name
         )

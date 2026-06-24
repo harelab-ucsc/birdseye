@@ -13,7 +13,7 @@ import numpy as np
 import open3d as o3d
 import pyvista as pv
 
-from birdseye.camera.camera import Ray, CameraConfig, SensorConfigLoader, PinholeCameraModel
+from birdseye.camera.camera import CameraConfig, SensorConfigLoader, PinholeCameraModel
 from birdseye.camera.geo_datasets import GeoTIFF, GeoPointCloud
 
 
