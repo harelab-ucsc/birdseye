@@ -22,7 +22,6 @@ setup(
     entry_points={
         'console_scripts': [
             'sub_node = birdseye.sub_node:main',
-            'camera_validator = birdseye.camera_validator:main'
         ],
     },
 )

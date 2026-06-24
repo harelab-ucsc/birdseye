@@ -28,9 +28,9 @@ class BagProcessor:
         self.rate = int(rate)
         self.br = CvBridge()
 
-        print(self.input_bag_path)
-        print(self.image_topic)
-        print(self.ds_dir)
+        print(f'[PROC]    input_bag_path: {self.input_bag_path}')
+        print(f'[PROC]    image_topic: {self.image_topic}')
+        print(f'[PROC]    ds_dir: {self.ds_dir}')
 
 
     def load_intrinsics(self, intrinsics_path):

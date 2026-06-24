@@ -259,13 +259,13 @@ class subscriberNode(rclpy.node.Node):
             return False
 
 
-    def save_worker(self):
-        while True:
-            data = self.save_queue.get()
-            if data is None:
-                break  # Optional for clean shutdown
-            self._save_image_pose_background(*data)
-            self.save_queue.task_done()
+    # def save_worker(self):
+    #     while True:
+    #         data = self.save_queue.get()
+    #         if data is None:
+    #             break  # Optional for clean shutdown
+    #         self._save_image_pose_background(*data)
+    #         self.save_queue.task_done()
 
 
     def _save_image_pose_background(self, image, pos, quat, rtk, ins, radalt, data_loc, cam_times, ins_times, utm_NUM, utm_LET):

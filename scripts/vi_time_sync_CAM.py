@@ -23,9 +23,17 @@ import matplotlib.pyplot as plt
 
 #from rectify import rectify_image
 
-
 class BagProcessor:
-    def __init__(self, input_bag_path, ds_dir, output_bag_path, image_topic, ins_topic, intrinsics_path, rectify, sync):
+    def __init__(self,
+        input_bag_path,     # Path to the input ROS2 bag file
+        ds_dir,             # Path to the directory to save images/poses.json
+        output_bag_path,    # Path to the output ROS2 bag file
+        image_topic,        # Image topic name (e.g., /camera/image_raw)
+        ins_topic,          # INS topic name (e.g., /ins/data)
+        intrinsics_path,    # Path to the YAML file with camera intrinsics
+        rectify,            # Whether or not to rectify in vi_time_sync.py (default: True)
+        sync,               # Whether or not to perform time synchronization (default: True)
+    ):
         self.input_bag_path = input_bag_path
         self.output_bag_path = output_bag_path
         self.image_topic = image_topic
@@ -50,8 +58,8 @@ class BagProcessor:
         self.width = self.intrinsics["resx"]
         self.height = self.intrinsics["resy"]
         self.map1, self.map2 = cv2.initUndistortRectifyMap(self.K, self.D, None, self.K, (self.width, self.height), cv2.CV_32FC1)
-
         self.rectify = rectify
+
         self.sync = sync
 
         self.count = 0

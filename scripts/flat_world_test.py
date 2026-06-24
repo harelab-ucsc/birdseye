@@ -212,9 +212,9 @@ if __name__ == '__main__':
                 norm=mcolors.LogNorm(),
                 colors='black')
             plt.clabel(cf, inline=True, fontsize=14, fmt='%1.1f')
-            plt.xlabel("Terrain Average Slope (degrees)", fontsize=16)
-            plt.ylabel("Normalized Distance from Optical Center [unitless]", fontsize=16)
-            plt.title(f"Altitude = {h}m", fontsize=16)
+            plt.xlabel("Terrain Average Slope (degrees)", fontsize=20)
+            plt.ylabel("Distance from Optical Center [m/m]", fontsize=20)
+            plt.title(f"{h}m", fontsize=20)
             plt.xticks(fontsize=12)
             plt.tight_layout()
             plt.savefig(f"/home/mwmaster/catch/flatworld_alt{int(h)}m_{index}_contour.png")

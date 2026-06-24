@@ -6,6 +6,8 @@ from numpy.linalg import norm, eigh
 from scipy.linalg import expm
 import matplotlib.pyplot as plt
 from matplotlib.path import Path
+from matplotlib.lines import Line2D
+from matplotlib.patches import Patch
 
 np.random.seed(42)
 plt.tight_layout()
@@ -176,10 +178,11 @@ def plot_covariance_ellipse(S, mean, ax):
     return ellipse_line, axis1_line, axis2_line
 
 
-def perturbation_panel(all_results, test_points, scales):
+def perturbation_panel(all_results, test_points, scales, fontsize=18):
 
     dof_labels = ["X", "Y", "Z", "Roll", "Pitch", "Yaw"]
     altitudes = sorted(all_results.keys())
+
     altitude_cmaps = {
         5: plt.cm.Purples,
         10: plt.cm.Oranges,
@@ -191,43 +194,116 @@ def perturbation_panel(all_results, test_points, scales):
     axes = axes.flatten()
 
     for dof in range(6):
+
         ax = axes[dof]
+
         for alt in altitudes:
 
-            if alt not in altitude_cmaps:
-                cmap = plt.cm.viridis
-            else:
-                cmap = altitude_cmaps[alt]
-            colors = cmap(np.linspace(0.4, 0.8, len(test_points)))
+            cmap = altitude_cmaps.get(alt, plt.cm.viridis)
+            color = cmap(0.7)  # one color per altitude
 
-            for idx, Pw in enumerate(test_points):
-                key = tuple(Pw)
-                if key not in all_results[alt]:
-                    continue
-                if "perturbation" not in all_results[alt][key]:
-                    continue
-                results = all_results[alt][key]["perturbation"][dof]
-                major_pred = []
-                major_emp = []
+            major_pred_all = []
+            major_emp_all  = []
 
-                for alpha in scales:
-                    if alpha not in results:
+            for alpha in scales:
+
+                major_pred_vals = []
+                major_emp_vals  = []
+
+                for Pw in test_points:
+
+                    key = tuple(Pw)
+
+                    if key not in all_results[alt]:
                         continue
-                    r = results[alpha]
-                    major_pred.append(r["major_pred"])
-                    major_emp.append(r["major_emp"])
 
-                if len(major_pred) == 0:
+                    if "perturbation" not in all_results[alt][key]:
+                        continue
+
+                    if alpha not in all_results[alt][key]["perturbation"][dof]:
+                        continue
+
+                    r = all_results[alt][key]["perturbation"][dof][alpha]
+
+                    major_pred_vals.append(r["major_pred"])
+                    major_emp_vals.append(r["major_emp"])
+
+                if len(major_pred_vals) == 0:
                     continue
 
-                ax.loglog(scales, major_pred, color=colors[idx], alpha=0.3)
-                ax.loglog(scales, major_emp,  ':', color=colors[idx])
+                # aggregate across points
+                major_pred_all.append([
+                    np.min(major_pred_vals),
+                    np.mean(major_pred_vals),
+                    np.max(major_pred_vals)
+                ])
 
-        ax.set_title(dof_labels[dof])
+                major_emp_all.append([
+                    np.min(major_emp_vals),
+                    np.mean(major_emp_vals),
+                    np.max(major_emp_vals)
+                ])
+
+            if len(major_pred_all) == 0:
+                continue
+
+            major_pred_all = np.array(major_pred_all)
+            major_emp_all  = np.array(major_emp_all)
+
+            # ---- plot ----
+            ax.fill_between(scales,
+                            major_emp_all[:,0],
+                            major_emp_all[:,2],
+                            color=color, alpha=0.15)
+
+            ax.loglog(scales,
+                      major_pred_all[:,1],
+                      color=color, linewidth=2,
+                      label=f"{alt}m (AN)" if dof == 0 else None)
+
+            ax.loglog(scales,
+                      major_emp_all[:,1],
+                      linestyle='--',
+                      color=color, linewidth=2,
+                      label=f"{alt}m (MC)" if dof == 0 else None)
+
+        ax.set_title(dof_labels[dof], fontsize=fontsize)
         ax.grid(True)
 
-    axes[0].set_ylabel("1-σ Pixel Uncertainty (pixels)", fontsize=14)
-    axes[3].set_ylabel("1-σ Pixel Uncertainty (pixels)", fontsize=14)
+    # ---- labels ----
+    axes[0].set_ylabel("1-σ Pixel Uncertainty", fontsize=fontsize)
+    axes[3].set_ylabel("1-σ Pixel Uncertainty", fontsize=fontsize)
+
+    for ax in axes[3:]:
+        ax.set_xlabel("Perturbation Scale Factor", fontsize=fontsize)
+
+    # ---- legend (only once) ----
+    alt_lines = [
+        Line2D([0], [0], color=plt.cm.Purples(0.7), lw=3),
+        Line2D([0], [0], color=plt.cm.Oranges(0.7), lw=3),
+        Line2D([0], [0], color=plt.cm.Greens(0.7), lw=3),
+        Line2D([0], [0], color=plt.cm.Blues(0.7), lw=3),
+    ]
+    alt_labels = ["5 m", "10 m", "20 m", "50 m"]
+
+    style_lines = [
+        Line2D([0], [0], color='k', lw=2, linestyle='-'),
+        Line2D([0], [0], color='k', lw=2, linestyle='--')
+    ]
+    style_labels = ["Analytic", "Monte Carlo"]
+
+    patch = Patch(facecolor='gray', alpha=0.3)
+
+    handles = alt_lines + style_lines + [patch]
+    labels = alt_labels + style_labels + ["MC spread"]
+
+    fig.legend(handles, labels,
+               loc='lower center',
+               ncol=7,
+               fontsize=18,
+               frameon=False)
+
+    plt.tight_layout(rect=[0, 0.12, 1, 1])
     # axes[-1].set_ylim(bottom=1)
 
     for ax in axes[3:]:
@@ -240,7 +316,7 @@ def perturbation_panel(all_results, test_points, scales):
     fig.savefig('/home/mwmaster/catch/perturbation.pdf', dpi=300, bbox_inches='tight')
 
 
-def scaling_panel(all_results, test_points, scales, fontsize=18):
+def scaling_panel(all_results, test_points, scales, fontsize=20):
 
     altitudes = sorted(all_results.keys())
 
@@ -255,73 +331,140 @@ def scaling_panel(all_results, test_points, scales, fontsize=18):
 
     for alt in altitudes:
 
-        if alt not in altitude_cmaps:
-            cmap = plt.cm.viridis
-        else:
-            cmap = altitude_cmaps[alt]
+        cmap = altitude_cmaps.get(alt, plt.cm.viridis)
+        color = cmap(0.7)  # single color per altitude
 
-        colors = cmap(np.linspace(0.4, 0.8, len(test_points)))
+        # ---- collect across points ----
+        major_pred_all = []
+        major_emp_all  = []
 
-        for idx, Pw in enumerate(test_points):
+        aniso_pred_all = []
+        aniso_emp_all  = []
 
-            key = tuple(Pw)
+        kl_all = []
 
-            if key not in all_results[alt]:
-                continue
+        for alpha in scales:
 
-            if "scaling" not in all_results[alt][key]:
-                continue
+            major_pred_vals = []
+            major_emp_vals  = []
 
-            color = colors[idx]
+            aniso_pred_vals = []
+            aniso_emp_vals  = []
 
-            results_pw = all_results[alt][key]["scaling"]
+            kl_vals = []
 
-            major_pred = []
-            major_emp  = []
-            aniso_pred = []
-            aniso_emp  = []
-            kl_vals    = []
+            for Pw in test_points:
 
-            for alpha in scales:
+                key = tuple(Pw)
 
-                if alpha not in results_pw:
+                if key not in all_results[alt]:
                     continue
 
-                r = results_pw[alpha]
+                if "scaling" not in all_results[alt][key]:
+                    continue
 
-                major_pred.append(r["major_pred"])
-                major_emp.append(r["major_emp"])
+                if alpha not in all_results[alt][key]["scaling"]:
+                    continue
 
-                aniso_pred.append(r["anisotropy_pred"])
-                aniso_emp.append(r["anisotropy_emp"])
+                r = all_results[alt][key]["scaling"][alpha]
+
+                major_pred_vals.append(r["major_pred"])
+                major_emp_vals.append(r["major_emp"])
+
+                aniso_pred_vals.append(r["anisotropy_pred"])
+                aniso_emp_vals.append(r["anisotropy_emp"])
 
                 kl_vals.append(r["kl_divergence"])
 
-            if len(major_pred) == 0:
+            # skip if no data
+            if len(major_pred_vals) == 0:
                 continue
 
-            # ---- Magnitude ----
-            axes[0].loglog(scales, major_pred, color=color, alpha=0.3)
-            axes[0].loglog(scales, major_emp, ':', color=color)
+            # ---- aggregate ----
+            major_pred_all.append([
+                np.min(major_pred_vals),
+                np.mean(major_pred_vals),
+                np.max(major_pred_vals)
+            ])
 
-            # ---- Shape ----
-            axes[1].loglog(scales, aniso_pred, color=color, alpha=0.3)
-            axes[1].loglog(scales, aniso_emp, ':', color=color)
+            major_emp_all.append([
+                np.min(major_emp_vals),
+                np.mean(major_emp_vals),
+                np.max(major_emp_vals)
+            ])
 
-            # ---- KL ----
-            axes[2].loglog(scales, kl_vals, color=color)
+            aniso_pred_all.append([
+                np.min(aniso_pred_vals),
+                np.mean(aniso_pred_vals),
+                np.max(aniso_pred_vals)
+            ])
 
+            aniso_emp_all.append([
+                np.min(aniso_emp_vals),
+                np.mean(aniso_emp_vals),
+                np.max(aniso_emp_vals)
+            ])
+
+            kl_all.append(np.mean(kl_vals))  # KL → just mean
+
+        # convert to arrays
+        major_pred_all = np.array(major_pred_all)
+        major_emp_all  = np.array(major_emp_all)
+
+        aniso_pred_all = np.array(aniso_pred_all)
+        aniso_emp_all  = np.array(aniso_emp_all)
+
+        kl_all = np.array(kl_all)
+
+        # ---- MAGNITUDE ----
+        ax = axes[0]
+
+        ax.fill_between(scales,
+                        major_emp_all[:,0],
+                        major_emp_all[:,2],
+                        color=color, alpha=0.15)
+
+        ax.loglog(scales, major_pred_all[:,1],
+                  color=color, linewidth=2,
+                  label=f"{alt}m (AN)")
+
+        ax.loglog(scales, major_emp_all[:,1],
+                  linestyle='--', color=color, linewidth=2,
+                  label=f"{alt}m (MC)")
+
+        # optional: bounds
+        # ax.loglog(scales, major_pred_all[:,0], color=color, alpha=0.3)
+        # ax.loglog(scales, major_pred_all[:,2], color=color, alpha=0.3)
+
+        # ---- ANISOTROPY ----
+        ax = axes[1]
+
+        ax.fill_between(scales,
+                        aniso_emp_all[:,0],
+                        aniso_emp_all[:,2],
+                        color=color, alpha=0.15)
+
+        ax.loglog(scales, aniso_pred_all[:,1],
+                  color=color, linewidth=2)
+
+        ax.loglog(scales, aniso_emp_all[:,1],
+                  linestyle='--', color=color, linewidth=2)
+
+        # ---- KL ----
+        ax = axes[2]
+
+        ax.loglog(scales, kl_all,
+                  color=color, linewidth=2,
+                  label=f"{alt} m")
+
+    # ---- formatting ----
     axes[0].set_ylabel("Pixel Major Axis", fontsize=fontsize)
-    # axes[0].set_title("Pixel Uncertainty Magnitude")
-
     axes[1].set_ylabel("Anisotropy", fontsize=fontsize)
-    # axes[1].set_title("Ellipse Shape Behavior")
-
-    axes[2].hlines(1e-1, 0.5e-1, 1.5e2, 'k', linestyles='dashed')
-    axes[2].hlines(1e-2, 0.5e-1, 1.5e2, 'k', linestyles='dashed')
     axes[2].set_ylabel("sKLD", fontsize=fontsize)
     axes[2].set_xlabel("Covariance Scale Factor", fontsize=fontsize)
-    # axes[2].set_title("Gaussian Approximation Divergence: Analytic vs Monte Carlo")
+
+    axes[2].hlines(1e-1, scales[0], scales[-1], 'k', linestyles='dashed')
+    axes[2].hlines(1e-2, scales[0], scales[-1], 'k', linestyles='dashed')
 
     for ax in axes:
         ax.grid(True)
@@ -331,7 +474,32 @@ def scaling_panel(all_results, test_points, scales, fontsize=18):
     #     "(color groups = altitude)"
     # )
 
-    # axes[2].legend()
+    alt_lines = [
+        Line2D([0], [0], color=plt.cm.Purples(0.7), lw=3),
+        Line2D([0], [0], color=plt.cm.Oranges(0.7), lw=3),
+        Line2D([0], [0], color=plt.cm.Greens(0.7), lw=3),
+        Line2D([0], [0], color=plt.cm.Blues(0.7), lw=3),
+    ]
+    alt_labels = ["5 m", "10 m", "20 m", "50 m"]
+
+    style_lines = [
+        Line2D([0], [0], color='k', lw=2, linestyle='-'),
+        Line2D([0], [0], color='k', lw=2, linestyle='--')
+    ]
+    style_labels = ["Analytic", "Monte Carlo"]
+
+    patch = Patch(facecolor='gray', alpha=0.3)
+
+    handles = alt_lines + style_lines + [patch]
+    labels = alt_labels + style_labels + ["MC spread"]
+
+    fig.legend(handles, labels,
+               loc='lower center',
+               ncol=4,
+               fontsize=fontsize,
+               frameon=False)
+
+    plt.tight_layout(rect=[0, 0.12, 1, 1])
     fig.savefig("/home/mwmaster/catch/scaling.pdf", dpi=300, bbox_inches='tight')
 
 
@@ -393,12 +561,37 @@ def ellipse_panel(all_results, test_points, alpha, camera):
             ellipse_mc.set_color(color)
             ellipse_mc.set_linestyle('--')
 
-        ax.set_title(f"{alt} m altitude")
+        # ax.set_title(f"{alt} m altitude")
         ax.set_aspect("equal")
         ax.set_xlim(850, res[0])
         ax.set_ylim(550, res[1])
         ax.grid(True)
-    # plt.suptitle(f"Pixel Uncertainty Ellipses (scale={alpha})")
+
+    alt_lines = [
+        Line2D([0], [0], color=plt.cm.Purples(0.7), lw=3),
+        Line2D([0], [0], color=plt.cm.Oranges(0.7), lw=3),
+        Line2D([0], [0], color=plt.cm.Greens(0.7), lw=3),
+        Line2D([0], [0], color=plt.cm.Blues(0.7), lw=3),
+    ]
+    alt_labels = ["5 m", "10 m", "20 m", "50 m"]
+
+    style_lines = [
+        Line2D([0], [0], color='k', lw=2, linestyle='-'),
+        Line2D([0], [0], color='k', lw=2, linestyle='--')
+    ]
+    style_labels = ["Analytic", "Monte Carlo"]
+
+
+    handles = alt_lines + style_lines
+    labels = alt_labels + style_labels
+
+    fig.legend(handles, labels,
+               loc='lower center',
+               ncol=6,
+               fontsize=18,
+               frameon=False)
+
+    plt.tight_layout(rect=[0, 0.12, 1, 1])
     fig.savefig('/home/mwmaster/catch/ellipse.pdf', dpi=300, bbox_inches='tight')
 
 
@@ -762,12 +955,13 @@ if __name__ == "__main__":
 
     perturbation_panel(all_results, test_points, scales)
     scaling_panel(all_results, test_points, scales)
-    alpha_to_visualize = scales[len(scales)//2]  # pick mid-scale
+    alpha_to_visualize = scales[len(scales)//2 + len(scales)//4 + len(scales)//8]  # pick mid-scale
     ellipse_panel(all_results,
               test_points,
               alpha_to_visualize,
               camera)
     plt.show()
+    # print(alpha_to_visualize)
 
     with open(savename,'wb') as f:
         pickle.dump(all_results, f)
