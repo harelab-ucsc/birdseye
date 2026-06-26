@@ -14,15 +14,14 @@ setup(
     ],
     install_requires=['setuptools',],
     zip_safe=True,
-    maintainer='jetson',
-    maintainer_email='jetson@todo.todo',
+    maintainer='mwmaster',
+    maintainer_email='mwmaster@ucsc.edu',
     description='TODO: Package description',
     license='TODO: License declaration',
     tests_require=['pytest'],
     entry_points={
         'console_scripts': [
             'sub_node = birdseye.sub_node:main',
-            # 'birdseye = birdseye.birdsEye:parseFlightDatabase'
         ],
     },
 )

@@ -1,394 +1,387 @@
-#!/usr/bin/env python3
-
+import queue
+import utm
 import csv
 import yaml
-import utm
-import rclpy
-import os
-import time
-import pdb
 import cv2
-import glob2
-import stat
+import os
+import threading
 import time
-import sqlite3
-import numpy as np
 
-from . import dbConnector
-from . import utilities
+import numpy as np
+import open3d as o3d
+
+from functools import partial
+from collections import deque
+from scipy.spatial.transform import Rotation as R
+
+import rclpy
+import tf2_ros
 
 from cv_bridge import CvBridge
 from rclpy.node import Node
-from sensor_msgs.msg import Image, Imu, NavSatFix
-from std_msgs.msg import String
-from inertial_sense_ros2.msg import DIDINS2
-from custom_msgs.msg import AltSNR
+from rclpy.qos import (
+    DurabilityPolicy,
+    QoSProfile,
+    ReliabilityPolicy,
+    HistoryPolicy,
+    qos_profile_sensor_data,
+)
+from builtin_interfaces.msg import Time as BuiltinTime
+from geometry_msgs.msg import TransformStamped
+from sensor_msgs.msg import Image
 
-import rclpy.node
-from rclpy.exceptions import ParameterNotDeclaredException
-from rcl_interfaces.msg import ParameterDescriptor, SetParametersResult
-from rclpy.qos import QoSProfile, ReliabilityPolicy, HistoryPolicy
+from birdseye.camera.projection_models import ProjectionEngine, MeshBackend
+from birdseye.camera.camera import SensorConfigLoader, PinholeCameraModel
 
+# Tolerant imports — these message types live in repos that may not be
+# installed in test/CI containers (inertial_sense_ros2, custom_msgs).
+# Subscriptions are skipped when their msg types aren't importable, and
+# all_caught() naturally only requires inputs we actually subscribed to.
+try:
+    from inertial_sense_ros2.msg import DIDINS2
+except ImportError:
+    DIDINS2 = None
 
-clicks_csv = None
+# try:
+#     from custom_msgs.msg import AltSNR
+# except ImportError:
+#     AltSNR = None
 
-# Create a custom QoSProfile to prevent message drops
-qos_profile = QoSProfile(
-    reliability=ReliabilityPolicy.RELIABLE,  # Reliable delivery
-    history=HistoryPolicy.KEEP_ALL           # Keep all messages
+# RELIABLE QoS for navigation/sensor data — these topics use RELIABLE
+# and must not be dropped (INS, radalt, spectrometer, PPS).
+sns_qos = QoSProfile(
+    reliability=ReliabilityPolicy.RELIABLE,
+    history=HistoryPolicy.KEEP_LAST,
+    depth=10,
 )
 
+# 1. PPS Trigger (The heartbeat of the state machine)
+# depth=1: only the latest pulse matters. Prevents sync_node from
+# receiving a burst of backlogged PPS messages on startup (which would
+# create many simultaneous jobs and flood the drop log).
+pps_qos = QoSProfile(
+    reliability=ReliabilityPolicy.RELIABLE,
+    history=HistoryPolicy.KEEP_LAST,
+    depth=1,
+)
 
-class subscriberNode(rclpy.node.Node):
+# BEST_EFFORT QoS for camera images — camera drivers publish with SensorDataQoS
+# (BEST_EFFORT). A RELIABLE subscription against a BEST_EFFORT publisher is a
+# DDS QoS incompatibility; no messages flow. For image data, BEST_EFFORT is
+# correct: a missed frame is recovered on the next PPS cycle.
+img_qos = qos_profile_sensor_data
+
+
+class AnnotatorNode(Node):
+    # TODO: registration against pre-existing mesh
+
     def __init__(self):
-        time.sleep(1)
-        # node init
-        super().__init__('flight_data_sub')
-        self.declare_parameter("sensorID", "cam0")
-        self.sensor = self.get_parameter("sensorID").value
+        super().__init__("projection_node")
 
-        self.declare_parameter("dir_name", 'parsed_flight')
-        self.dir_name = self.get_parameter("dir_name").value
-        self.dir_name = os.path.join(os.path.expanduser('~'), self.dir_name)
-        self.dirCheck()
-
-        # db connector
-        self.declare_parameter("db_name", 'flight_data')
-        self.db_name = self.get_parameter("db_name").value
-        self.dbc = dbConnector.dbConnector(os.path.join(self.dir_name, self.db_name))
-        self.dbc.boot(self.db_name, self.sensor)
-        os.chmod(os.path.join(self.dir_name, self.db_name+'.db'), stat.S_IRWXU | stat.S_IRWXG | stat.S_IRWXO)
-        self.db_bool = True
-        time.sleep(1)
-
-        # sensor calibration parameters
-        self.declare_parameter("sensors_yaml", "sensor_params/birdsEyeSensorParams.yaml")
-        self.sensors_yaml = self.get_parameter("sensors_yaml").value
-        self.sensors_yaml = os.path.join(os.path.expanduser('~'), self.sensors_yaml)
-        self.calibUptake()
-
-        self.declare_parameter("clicks_csv", "catch/data__2025_01_09.csv")
-        # self.declare_parameter("clicks_csv", "catch/data__2025_01_10.csv")
-        self.clicks_csv = self.get_parameter("clicks_csv").value
-        self.clicks_csv = os.path.join(os.path.expanduser('~'), self.clicks_csv)
+        # PARAMETERS (ROS2 style)
+        self.declare_parameter("yaml_filepath", "")
+        self.declare_parameter("mesh_filepath", "")
+        self.declare_parameter("click_filepath", "")
+        self.declare_parameter("save_dir", "")
+        self.declare_parameter("img_format", ".png")
+        self.yaml_filepath = self.get_parameter("yaml_filepath").value
+        self.mesh_filepath = self.get_parameter("mesh_filepath").value
+        self.clicks_csv = self.get_parameter("click_filepath").value
+        self.save_dir = self.get_parameter("save_dir").value
+        self.img_format = self.get_parameter("img_format").value
+        self.label_save_name = os.path.join(self.save_dir, "labels.txt")
+        self.clicks = None
         self.csv_read()
 
-        self.br = CvBridge()
+        # --- State Machine Variables ---
+        self.state_lock = threading.Lock()
+        self.active_jobs = deque(maxlen=10)
+        self.max_latency = 0.2  # seconds (tune this)
+        self.assignment_window = {  # Per-sensor assignment windows (AFTER PPS)
+            "pose": self.max_latency,
+        }
 
-        # camera subscriber
-        self.cam_sub = self.create_subscription(
-            Image, '/image', self.cam_cb, qos_profile=qos_profile)
-        self.data_loc = None
-        self.image = None
-        self.cam_times = None
+        self.cam_loader = SensorConfigLoader(self.yaml_filepath)
+        self.pipelines = {}
+        self.subscribers = {}
+        self.backend = self._load_mesh()
+        self.pretrigger_tolerance = 0.05
+        self._setup_cameras()
 
-        # ins subscriber and relevant attributes
-        self.ins_sub = self.create_subscription(
-            DIDINS2, '/ins', self.ins_cb, 100)
-        self.HDW_STATUS_STROBE_IN_EVENT = 0x00000020
-        self.INS_STATUS_SOLUTION_MASK = 0x000F0000
-        self.INS_STATUS_SOLUTION_OFFSET = 16
-        self.INS_STATUS_GPS_NAV_FIX_MASK = 0x03000000
-        self.INS_STATUS_GPS_NAV_FIX_OFFSET = 24
-        self.pos = None
-        self.quat = None
-        self.ins_times = None
-        self.RTK_STATUS = None
-        self.INS_STATUS = None
-        self.STROBE = None
+        self.subscribers["pps"] = self.create_subscription(
+            BuiltinTime, "/pps/time", self._pps_cb, qos_profile=pps_qos
+        )
+        if DIDINS2 is not None:
+            self.subscribers["ins"] = self.create_subscription(
+                DIDINS2, "/ins_quat_uvw_lla", self._ins_callback, qos_profile=sns_qos
+            )
 
-        # radalt subscriber
-        self.rad_sub = self.create_subscription(
-            AltSNR, '/rad_altitude', self.radalt_cb, 100)
-        self.radalt = None
+        # --- Producer/consumer save queue ---
+        self.save_queue = queue.Queue()
+        self._save_workers = []
+        for _ in range(8):
+            t = threading.Thread(target=self._save_worker, daemon=True)
+            t.start()
+            self._save_workers.append(t)
 
-        self.check_list = [self.image, \
-                           self.pos, \
-                           self.quat, \
-                           self.RTK_STATUS, \
-                           self.INS_STATUS, \
-                           self.STROBE, \
-                           self.data_loc, \
-                           self.ins_times, \
-                           self.cam_times, \
-                           self.radalt]
+        threading.Thread(target=self._queue_watchdog, daemon=True).start()
+        self.HDW_STROBE = 0x00000020
 
-
-    def dirCheck(self):
-        if not os.path.isdir(self.dir_name):
-            self.get_logger().info(f"{self.dir_name} does not exist in home dir... Generating.")
-            try:
-                os.makedirs(self.dir_name, exist_ok=True)
-            except FileExistsError:
-                self.get_logger().info(f"{self.dir_name} exists now... Someone beat me to it.")
-        else:
-            self.get_logger().info(f"{self.dir_name} exists...")
-            self.clear_dir()
-        time.sleep(1)
-
-
-    def clear_dir(self):
-        try:
-            files = glob2.glob(os.path.join(self.dir_name, '*'))
-            if len(files) >= 1:
-                for file in files:
-                    if os.path.isfile(file):
-                        os.remove(file)
-                self.get_logger().info(f"All files in {self.dir_name} deleted successfully.\n")
-            else:
-                self.get_logger().info(f"No files in {self.dir_name}.\n")
-        except Exception as e:
-            self.get_logger().info(f"Error occurred while clearing {self.dir_name} files: {e}.\n")
-
+        self.T_ned_enu = np.eye(4)
+        self.T_ned_enu[:3,:3] = np.array([[0,1,0],[1,0,0],[0,0,-1]])  # NED INS to ENU viz
 
     def csv_read(self):
-        self.get_logger().info(f'Reading clicks CSV file: {self.clicks_csv}...')
+        self.get_logger().info(f"Reading clicks CSV: {self.clicks_csv}...")
         data = []
         with open(self.clicks_csv) as clicks:
             reader = csv.reader(clicks)
             for line in reader:
-                # breakdown line
-                # self.get_logger().info(f'{line}')
-                u = utm.from_latlon(float(line[0]), float(line[1]))  # returns easting, northing, zone number, zone letter
+                # returns easting, northing, zone number, zone letter
+                u = utm.from_latlon(float(line[0]), float(line[1]))
                 tag = int(line[-1][-1])
-                data.append([u[0], u[1], float(line[2]), float(line[3]), tag])
-        self.dbc.insertClicks(f"clicks_{self.db_name}", data)
-        self.get_logger().info('...Done reading clicks CSV file.\n')
+                data.append(  # Eastingn Northing, Number, Letter, EPS, MSL, tag
+                    [u[0], u[1], u[2], u[3], float(line[2]), float(line[3]), tag]
+                )
+        self.clicks = np.array(data)
 
+    def _setup_cameras(self):
+        for cam_name in self.cam_loader.list_cameras():
+            cam_cfg = self.cam_loader.get_camera(cam_name)
+            cam = PinholeCameraModel.from_config(cam_cfg)
+            backend = self.backend  # shared mesh
+            self.pipelines[cam_name] = ProjectionEngine(cam, backend)
+            topic = f"/{cam_name}/camera/image_raw"
+            self.subscribers[cam_name] = self.create_subscription(
+                Image,
+                topic,
+                partial(self._image_callback, cam_name=cam_name),
+                img_qos,
+            )
+            self.assignment_window[cam_name] = self.max_latency
 
-    def calibUptake(self):
-        self.get_logger().info(f'Reading sensor parameters YAML file: {self.sensors_yaml}...')
-        devices = [f'{self.sensor}', 'ins', 'radalt']
-        res = None
-        intr1 = None
-        intr2 = None
-        extr = None
-        with open(self.sensors_yaml, 'r') as f:
-            params = yaml.safe_load(f)
-            for device in devices:
-                data = params[device]
-                if device == self.sensor:
-                    self.res = data["resolution"]
-                    self.K = data["intrinsics"]
-                    self.dist = data["distortion_coeffs"]
-                    self.extr = data["T_cam_imu"]  # extrinsics relative to imu base link
-                    self.extr = utilities.matrix_list_converter(self.extr, (4,4))
-                    res = self.res
-                    intr1 = self.K
-                    intr2 = self.dist
-                    extr = self.extr
-                    self.putParameters(device, res, intr1, intr2, extr)
-                elif device == 'ins':
-                    intr1 = [data["accelerometer_noise_density"], data["accelerometer_random_walk"]]
-                    intr2 = [data["gyroscope_noise_density"],  data["gyroscope_random_walk"]]
-                    self.putParameters(device, res, intr1, intr2, extr)
-                elif device == 'radalt':
-                    extr = data["T_rad_imu"]
-                    self.putParameters(device, res, intr1, intr2, utilities.matrix_list_converter(extr, (4,4)))
-                res = None
-                intr1 = None
-                intr2 = None
-                extr = None
-        self.get_logger().info('...Done reading sensor parameters YAML file.\n')
+    def _load_mesh(self):
+        mesh = o3d.io.read_triangle_mesh(self.mesh_filepath)
+        tmesh = o3d.t.geometry.TriangleMesh.from_legacy(mesh)
+        scene = o3d.t.geometry.RaycastingScene()
+        scene.add_triangles(tmesh)
+        return MeshBackend(scene)
 
-
-    def putParameters(self, device_key, resolution, intrinsics1, intrinsics2, extrinsics):
-        vals = '"'
-        cols = "sensorID, resolution, intrinsics1, intrinsics2, extrinsics"
-        valsList = [device_key, resolution, intrinsics1, intrinsics2, extrinsics]
-        vals += '","'.join([str(x) for x in valsList])
-        vals += '"'
-        self.dbc.insertIgnoreInto(f"parameters_{self.db_name}", cols, vals)
-
-
-    def getParameters(self, device_key):
-        params = []
-        cols = "sensorID, resolution, intrinsics1, intrinsics2, extrinsics"
-        table = f"parameters_{self.db_name}"
-        ret = self.dbc.getFrom(cols, table, cond=f'WHERE sensorID = "{device_key}"')
-        for elem in ret:
-            for i, item in enumerate(elem):
-                if item == device_key:
-                    params.append(item)
-                elif item != 'None':
-                    tmp = utilities.string_list_converter(item)
-                    if item == elem[-1]:
-                        tmp = utilities.matrix_list_converter(tmp, (4,4))
-                    params.append(tmp)
-        return params
-
-
-    def update_check_list(self):
-        self.check_list = [self.image, \
-                           self.pos, \
-                           self.quat, \
-                           self.RTK_STATUS, \
-                           self.INS_STATUS, \
-                           self.STROBE, \
-                           self.data_loc, \
-                           self.ins_times, \
-                           self.cam_times, \
-                           self.radalt]
-
-
-    def status_check(self):
-        tst = [0 if i is None else 1 for i in self.check_list]
-        if sum(tst) == len(self.check_list):
-            return True
-        else:
-            return False
-
-
-    def save_image_pose(self):
-        self.get_logger().info(f'  Recording image and pose... (RTK_STATUS, INS_STATUS): ({self.RTK_STATUS}, {self.INS_STATUS})')
-        self.get_logger().info(f'                              (cam_time1, cam_time2): ({self.cam_times[0]}, {self.cam_times[1]})')
-        self.get_logger().info(f'                              (ins_time1, ins_time2): ({self.ins_times[0]}, {self.ins_times[1]})')
-
+    def _get_msg_time(self, msg):
         try:
-            cv2.imwrite(self.data_loc, self.image)
-            valsList = self.pos + self.quat + [self.RTK_STATUS, self.INS_STATUS, self.radalt, '\"'+self.data_loc+'\"', self.cam_times[0], self.cam_times[1], self.ins_times[0], self.ins_times[1]]
-            vals = ','.join([str(x) for x in valsList])
-            self.dbc.insertIgnoreInto(f"{self.sensor}_images_{self.db_name}", \
-                           "x, y, z, q, u, a, t, rtk_status, ins_status, radalt, save_loc, cam_time1, cam_time2, ins_time1, ins_time2", vals)
-        except sqlite3.OperationalError as ex:
-            self.get_logger().info(f'    Attempted to insert bad pose: {ex}')
+            return msg.header.stamp.sec + msg.header.stamp.nanosec * 1e-9
+        except AttributeError:
+            return time.time()
 
-        self.image = None
-        self.pos = None
-        self.quat = None
-        self.RTK_STATUS = None
-        self.INS_STATUS = None
-        self.STROBE = None
-        self.data_loc = None
-        self.ins_times = None
-        self.cam_times = None
+    def _pps_cb(self, msg: BuiltinTime):
+        pps_time = msg.sec + msg.nanosec * 1e-9
 
-        self.update_check_list()
+        job = {
+            "pps_time": pps_time,
+            "stamp_msg": msg,
+            "created_at": time.time(),
+            "data": {
+                "pose": None,
+            },
+            "dt": {},  # diagnostics
+        }
+        for cam_name in self.cam_loader.list_cameras():
+            job["data"][cam_name] = None
 
+        with self.state_lock:
+            self.active_jobs.append(job)
 
-    def cam_cb(self, msg: Image):
-        self.get_logger().info('  Image received.')
- #       start = time.time()
+        # Try to resolve older jobs
+        self.process_jobs()
 
-        if not self.STROBE:
-            self.get_logger().info(f'    skipping image; self.STROBE is still unset')
-            pass
-        else:
-            tmp = self.get_clock().now().to_msg()
-            sec1 = str(tmp.sec)
-            nsec1 = str(tmp.nanosec).rjust(9,str(0))
-            time1 = f'{sec1}.{nsec1}'
+    def _ins_callback(self, msg):
+        if msg.hdw_status & self.HDW_STROBE == self.HDW_STROBE:
+            self.assign_to_job("pose", msg)
 
-            sec2 = str(msg.header.stamp.sec)
-            nsec2 = str(msg.header.stamp.nanosec).rjust(9,str(0))
-            time2 = f'{sec2}.{nsec2}'
+    def _image_callback(self, msg, cam_name):
+        engine = self.pipelines[cam_name]
+        self.assign_to_job(cam_name, msg)
 
-            self.cam_times = [time1, time2]
+    def assign_to_job(self, key, msg):
+        ts = self.get_msg_time(msg)
 
-            self.data_loc = self.dir_name + "/" + self.sensor + '_' + time2 + ".png"
-            self.image = self.br.imgmsg_to_cv2(msg, desired_encoding='passthrough')
-            self.image = cv2.cvtColor(self.image, cv2.COLOR_BGR2RGB)
+        with self.state_lock:
+            best_job = None
+            best_dt = float("inf")
 
-            self.update_check_list()
+            for job in self.active_jobs:
+                dt = ts - job["pps_time"]
 
-            if self.status_check() and self.radalt is not None:
-                self.save_image_pose()
-            elif self.radalt is None:
-                self.get_logger().info(f'    skipping image and pose; self.radalt is still unset')
+                # Allow small pre-trigger (INS edge case)
+                if dt < -self.pretrigger_tolerance:
+                    continue
+
+                if dt > self.assignment_window[key]:
+                    continue
+
+                abs_dt = abs(dt)
+
+                if abs_dt < best_dt:
+                    best_dt = abs_dt
+                    best_job = job
+
+            if best_job is None:
+                return
+
+            existing = best_job["data"][key]
+
+            if existing is None:
+                best_job["data"][key] = msg
+                best_job["dt"][key] = best_dt
             else:
-                self.get_logger().info(f'    *** BONK ***')
-#        self.get_logger().info(f'      cam_cb runtime: {time.time()-start}')
+                # Replace if closer
+                if best_dt < best_job["dt"][key]:
+                    best_job["data"][key] = msg
+                    best_job["dt"][key] = best_dt
 
+    def process_jobs(self):
+        now = time.time()
 
-    def radalt_cb(self, msg: AltSNR):
-        if msg.snr > 13:
-            self.radalt = msg.altitude
-        else:
-            print('radalt measurement discarded; SNR too small')
+        with self.state_lock:
+            while self.active_jobs:
+                job = self.active_jobs[0]
 
+                if now - job["created_at"] < self.max_latency:
+                    break  # wait for more data
 
-    def ins_cb(self, msg: DIDINS2):
-        self.get_logger().info('  Pose received.') 
-#        start = time.time()
+                self.active_jobs.popleft()
 
-        tmp = self.get_clock().now().to_msg()
-        sec1 = str(tmp.sec)
-        nsec1 = str(tmp.nanosec).rjust(9,str(0))
-        time1 = f'{sec1}.{nsec1}'
+                if self.is_complete(job):
+                    self.log_sync_diagnostics(job)
+                    self.save_queue.put((job["data"], job["stamp_msg"]))
+                else:
+                    self.get_logger().warn(
+                        f"PPS frame drop @ {job['pps_time']:.3f} (incomplete)"
+                    )
+                    for key in job["data"].keys():
+                        if job["data"][key] is None:
+                            self.get_logger().warn(f"    job['data'][{key}] is None")
 
-        sec2 = str(msg.header.stamp.sec)
-        nsec2 = str(msg.header.stamp.nanosec).rjust(9,str(0))
-        time2 = f'{sec2}.{nsec2}'
+    def is_complete(self, job):
+        return all(v is not None for v in job["data"].values())
 
-        self.cam_times = [time1, time2]
+    def _save_worker(self):
+        while True:
+            item = self.save_queue.get()
+            if item is None:
+                self.save_queue.task_done()
+                break
+            data, stamp = item
+            try:
+                self.post_process(data, stamp)
+            finally:
+                self.save_queue.task_done()
 
-        if self.dir_name[-1] == '\\':
-            self.data_loc = self.dir_name + self.sensor + '_' + time2 + ".png"
-        else:
-            self.data_loc = self.dir_name + "/" + self.sensor + '_' + time2 + ".png"
-        self.image = self.br.imgmsg_to_cv2(msg, desired_encoding='passthrough')
-        self.image = cv2.cvtColor(self.image, cv2.COLOR_BAYER_RG2RGB)
+    def post_process(self, data, stamp):
+        # ANNOTATIONS
+        pose = data["pose"]
+        u = utm.from_latlon(pose.lla[0], pose.lla[1])
+        t = [  # UTM -> x:easting, y:northing, z:WGS84 altitude
+            u[1],           # North
+            u[0],           # East
+            -pose.lla[2]    # Down
+        ]
+        quat = [  # quat is scalar-first NED -> convert to scalar-last NED
+            pose.qn2b[1],
+            pose.qn2b[2],
+            pose.qn2b[3],
+            pose.qn2b[0]
+        ]
+        rot = R.from_quat(quat).as_matrix()
 
-        self.update_check_list()
+        for cam_name in self.pipelines.keys():
+            pipeline = self.pipelines[cam_name]
+            T_cam_ins = pipeline.camera.T_cam_ins
+            T_ins_ned = np.eye(4)
+            T_ins_ned[:3,:3] = rot
+            T_ins_ned[:3,3] = t
+            T_cam_world = self.T_ned_enu @ T_ins_ned @ T_cam_ins
+            pixels, visible = pipeline.visible_world_points(
+                self.clicks[:, [0,1,4]],
+                T_cam_world
+            )
+            img_file = os.path.join(
+                self.save_dir,
+                f'{cam_name}_{stamp.sec}.{stamp.nanosec:09}{self.img_format}'
+            )
+            tags = self.clicks[visible][:, -1]
+            pix = pixels[visible]
+            labels = np.hstack((pix, tags[:, None]))
+            self.annotate(img_file, labels)
 
-        if self.STROBE is not None:
-            if self.status_check():
-                self.save_image_pose()
-            elif self.radalt is None:
-                self.get_logger().info(f'    skipping image and pose; self.radalt is still unset')
-            else:
-                self.get_logger().info(f'    *** BONK ***')
-        else:
-            self.get_logger().info(f'    holding image; STROBE is unset')
+    def annotate(self, img_file, labels, save_name=None):
+        if save_name is None:
+            save_name = self.label_save_name
 
+        with open(save_name, "a")as f:
+            for label in labels:
+                line = f'{img_file} '
 
-    def radalt_cb(self, msg: AltSNR):
-        if msg.snr > 13:
-            self.radalt = msg.altitude
-        else:
-            print('radalt measurement discarded; SNR too small')
+                try:  # if label is an iterable
+                    vals = ','.join([str(x) for x in label])
+                    # print(vals)
+                except TypeError:  # else
+                    vals = str(label)
 
+                line += vals
+                line += '\n'
+                # print(line)
+                f.write(line)
+                print(
+                    f'[PROC]    Annotation saved to {save_name}.txt:\n'
+                    f'[PROC]        {line}'
+                )
 
-    def ins_cb(self, msg: DIDINS2):
-        self.get_logger().info('  Pose received.')
-#        start = time.time()
+    def log_sync_diagnostics(self, job):
+        dt_info = job["dt"]
+        msg = ", ".join(
+            f"{k}:{v * 1000:.1f}ms" for k, v in dt_info.items() if v is not None
+        )
+        self.get_logger().debug(f"[SYNC] {msg}")
 
-        if msg.hdw_status & self.HDW_STATUS_STROBE_IN_EVENT == self.HDW_STATUS_STROBE_IN_EVENT:
+    def _queue_watchdog(self):
+        while rclpy.ok():
+            sq = self.save_queue.qsize()
+            if sq > 0:
+                self.get_logger().info(f"[PROC] [WATCH]    Save queue depth: {sq}")
+            time.sleep(2.0)
 
-            self.get_logger().info('    Strobed.')
-            self.STROBE = 1
-
-            self.RTK_STATUS = ((msg.ins_status)&self.INS_STATUS_GPS_NAV_FIX_MASK)>>self.INS_STATUS_GPS_NAV_FIX_OFFSET
-            self.INS_STATUS = ((msg.ins_status)&self.INS_STATUS_SOLUTION_MASK)>>self.INS_STATUS_SOLUTION_OFFSET
-
-            tmp = self.get_clock().now().to_msg()
-            sec1 = str(tmp.sec)
-            nsec1 = str(tmp.nanosec).rjust(9,str(0))
-            time1 = f'{sec1}.{nsec1}'
-            sec2 = str(msg.header.stamp.sec)
-            nsec2 = str(msg.header.stamp.nanosec).rjust(9,str(0))
-            time2 = f'{sec2}.{nsec2}'
-            self.ins_times = [time1, time2]
-
-            u = utm.from_latlon(msg.lla[0], msg.lla[1])  # returns easting, northing, zone number, zone letter
-            self.pos = [u[0], u[1], msg.lla[2]]  # save x:easting, y:northing, z:WGS84 altitude
-
-            # the quaternion comes in scalar-first format - convert it to scalar-last
-            self.quat = [msg.qn2b[1], msg.qn2b[2], msg.qn2b[3], msg.qn2b[0]]
-            # the quaternion comes in in a NED reference - convert it to ENU
-            self.quat = [self.quat[1], self.quat[0], -self.quat[2], self.quat[3]]
-
-            self.update_check_list()
-
-        if self.status_check() and self.radalt is not None:
-            self.save_image_pose()
-        elif self.radalt is None:
-            self.get_logger().info(f'    Skipping image and pose; radalt is still unset')
+    def destroy_node(self):
+        # Snapshot depth before sentinels so we don't count them as pending work.
+        remaining = self.save_queue.qsize()
+        if remaining > 0:
+            self.get_logger().info(
+                f"Shutdown: waiting for {remaining} queued save(s) to finish..."
+            )
+            while not self.save_queue.empty():
+                self.get_logger().info(
+                    f"  save queue: {self.save_queue.qsize()} job(s) remaining"
+                )
+                time.sleep(2.0)
+        for _ in self._save_workers:
+            self.save_queue.put(None)
+        self.save_queue.join()
+        super().destroy_node()
 
 
 def main(args=None):
     rclpy.init(args=args)
-    sub_node = subscriberNode()
-    rclpy.spin(sub_node)
-    sub_node.destroy_node()
-    rclpy.shutdown()
+    node = AnnotatorNode()
+    try:
+        while rclpy.ok():
+            try:
+                rclpy.spin_once(node, timeout_sec=1.0)
+            except RuntimeError as e:
+                # FastDDS SHM corruption (e.g. after a peer node SIGSEGV) can
+                # cause take_message to throw; log and continue rather than
+                # crashing the whole node.
+                node.get_logger().error(f"Executor RuntimeError (continuing): {e}")
+    except KeyboardInterrupt:
+        pass
+    finally:
+        node.destroy_node()
+        rclpy.shutdown()
