@@ -117,6 +117,24 @@ class GeoPointCloud(GeoBase):
         self.points = np.vstack((self.las.x, self.las.y, self.las.z)).T
         self.intensity = self.las.intensity
         self.classification = self.las.classification
+        
+         # Optional RGB
+        self.colors = None
+        if all(hasattr(self.las, c) for c in ("red", "green", "blue")):
+            rgb = np.column_stack([
+                self.las.red,
+                self.las.green,
+                self.las.blue,
+            ]).astype(np.float32)
+
+            # LAS stores 16-bit colors
+            if rgb.max() > 255:
+                rgb /= 65535.0
+            else:
+                rgb /= 255.0
+
+            self.colors = rgb
+
         self.crs = CRS.from_wkt(self.las.header.parse_crs().to_wkt())
 
 
