@@ -32,6 +32,7 @@ from sensor_msgs.msg import Image
 
 from birdseye.camera.projection_models import ProjectionEngine, MeshBackend
 from birdseye.camera.camera import SensorConfigLoader, PinholeCameraModel
+from birdseye_msgs import CaptureComplete, CameraCapture
 
 # Tolerant imports — these message types live in repos that may not be
 # installed in test/CI containers (inertial_sense_ros2, custom_msgs).
