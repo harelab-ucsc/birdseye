@@ -78,7 +78,7 @@ class AnnotatorNode(Node):
     def __init__(self):
         super().__init__("projection_node")
 
-        # PARAMETERS (ROS2 style)
+        # --- PARAMETERS ---
         self.declare_parameter("yaml_filepath", "")
         self.declare_parameter("mesh_filepath", "")
         self.declare_parameter("click_filepath", "")
@@ -96,25 +96,20 @@ class AnnotatorNode(Node):
         # --- State Machine Variables ---
         self.state_lock = threading.Lock()
         self.active_jobs = deque(maxlen=10)
-        self.max_latency = 0.2  # seconds (tune this)
-        self.assignment_window = {  # Per-sensor assignment windows (AFTER PPS)
-            "pose": self.max_latency,
-        }
 
+        # --- CaptureComplete subscriber
+        self.capture_sub = self.create_subscription(
+            CaptureComplete,
+            "/sync/capture_complete",
+            self._capture_complete_callback,
+            10,
+        )
+
+        # --- Camera setup ---
         self.cam_loader = SensorConfigLoader(self.yaml_filepath)
         self.pipelines = {}
-        self.subscribers = {}
         self.backend = self._load_mesh()
-        self.pretrigger_tolerance = 0.05
         self._setup_cameras()
-
-        self.subscribers["pps"] = self.create_subscription(
-            BuiltinTime, "/pps/time", self._pps_cb, qos_profile=pps_qos
-        )
-        if DIDINS2 is not None:
-            self.subscribers["ins"] = self.create_subscription(
-                DIDINS2, "/ins_quat_uvw_lla", self._ins_callback, qos_profile=sns_qos
-            )
 
         # --- Producer/consumer save queue ---
         self.save_queue = queue.Queue()
@@ -124,9 +119,10 @@ class AnnotatorNode(Node):
             t.start()
             self._save_workers.append(t)
 
+        # --- Watchdog thread ---
         threading.Thread(target=self._queue_watchdog, daemon=True).start()
-        self.HDW_STROBE = 0x00000020
 
+        # --- Helper transform ---
         self.T_ned_enu = np.eye(4)
         self.T_ned_enu[:3,:3] = np.array([[0,1,0],[1,0,0],[0,0,-1]])  # NED INS to ENU viz
 
@@ -157,7 +153,6 @@ class AnnotatorNode(Node):
                 partial(self._image_callback, cam_name=cam_name),
                 img_qos,
             )
-            self.assignment_window[cam_name] = self.max_latency
 
     def _load_mesh(self):
         mesh = o3d.io.read_triangle_mesh(self.mesh_filepath)
@@ -172,20 +167,15 @@ class AnnotatorNode(Node):
         except AttributeError:
             return time.time()
 
-    def _pps_cb(self, msg: BuiltinTime):
-        pps_time = msg.sec + msg.nanosec * 1e-9
+    def _capture_complete_callback(self, msg: CaptureComplete):
+        self.get_logger().info(
+            f"Received capture with {len(msg.cameras)} camera(s)"
+        )
 
         job = {
-            "pps_time": pps_time,
-            "stamp_msg": msg,
             "created_at": time.time(),
-            "data": {
-                "pose": None,
-            },
-            "dt": {},  # diagnostics
+            "data": msg,
         }
-        for cam_name in self.cam_loader.list_cameras():
-            job["data"][cam_name] = None
 
         with self.state_lock:
             self.active_jobs.append(job)
@@ -193,76 +183,14 @@ class AnnotatorNode(Node):
         # Try to resolve older jobs
         self.process_jobs()
 
-    def _ins_callback(self, msg):
-        if msg.hdw_status & self.HDW_STROBE == self.HDW_STROBE:
-            self.assign_to_job("pose", msg)
-
-    def _image_callback(self, msg, cam_name):
-        engine = self.pipelines[cam_name]
-        self.assign_to_job(cam_name, msg)
-
-    def assign_to_job(self, key, msg):
-        ts = self.get_msg_time(msg)
-
-        with self.state_lock:
-            best_job = None
-            best_dt = float("inf")
-
-            for job in self.active_jobs:
-                dt = ts - job["pps_time"]
-
-                # Allow small pre-trigger (INS edge case)
-                if dt < -self.pretrigger_tolerance:
-                    continue
-
-                if dt > self.assignment_window[key]:
-                    continue
-
-                abs_dt = abs(dt)
-
-                if abs_dt < best_dt:
-                    best_dt = abs_dt
-                    best_job = job
-
-            if best_job is None:
-                return
-
-            existing = best_job["data"][key]
-
-            if existing is None:
-                best_job["data"][key] = msg
-                best_job["dt"][key] = best_dt
-            else:
-                # Replace if closer
-                if best_dt < best_job["dt"][key]:
-                    best_job["data"][key] = msg
-                    best_job["dt"][key] = best_dt
-
     def process_jobs(self):
         now = time.time()
 
         with self.state_lock:
             while self.active_jobs:
                 job = self.active_jobs[0]
-
-                if now - job["created_at"] < self.max_latency:
-                    break  # wait for more data
-
                 self.active_jobs.popleft()
-
-                if self.is_complete(job):
-                    self.log_sync_diagnostics(job)
-                    self.save_queue.put((job["data"], job["stamp_msg"]))
-                else:
-                    self.get_logger().warn(
-                        f"PPS frame drop @ {job['pps_time']:.3f} (incomplete)"
-                    )
-                    for key in job["data"].keys():
-                        if job["data"][key] is None:
-                            self.get_logger().warn(f"    job['data'][{key}] is None")
-
-    def is_complete(self, job):
-        return all(v is not None for v in job["data"].values())
+                self.save_queue.put(job["data"])
 
     def _save_worker(self):
         while True:
@@ -276,42 +204,45 @@ class AnnotatorNode(Node):
             finally:
                 self.save_queue.task_done()
 
-    def post_process(self, data, stamp):
-        # ANNOTATIONS
-        pose = data["pose"]
-        u = utm.from_latlon(pose.lla[0], pose.lla[1])
-        t = [  # UTM -> x:easting, y:northing, z:WGS84 altitude
-            u[1],           # North
-            u[0],           # East
-            -pose.lla[2]    # Down
-        ]
-        quat = [  # quat is scalar-first NED -> convert to scalar-last NED
-            pose.qn2b[1],
-            pose.qn2b[2],
-            pose.qn2b[3],
-            pose.qn2b[0]
-        ]
-        rot = R.from_quat(quat).as_matrix()
+    def post_process(self, data):
+        stamp = data.header.stamp
+        pose = data.ins_pose_ned
+        T_ins_ned = self.pose_msg_to_matrix(pose)
 
-        for cam_name in self.pipelines.keys():
-            pipeline = self.pipelines[cam_name]
+        for cam in data.cameras:
+            pipeline = self.pipelines[cam.camera_name]
             T_cam_ins = pipeline.camera.T_cam_ins
-            T_ins_ned = np.eye(4)
-            T_ins_ned[:3,:3] = rot
-            T_ins_ned[:3,3] = t
+            assert T_cam_ins == self.pose_msg_to_matrix(cam.cam_pose_ins)
+
             T_cam_world = self.T_ned_enu @ T_ins_ned @ T_cam_ins
             pixels, visible = pipeline.visible_world_points(
                 self.clicks[:, [0,1,4]],
                 T_cam_world
             )
-            img_file = os.path.join(
-                self.save_dir,
-                f'{cam_name}_{stamp.sec}.{stamp.nanosec:09}{self.img_format}'
-            )
+            img_file = os.path.join( self.save_dir, cam.image_filename )
             tags = self.clicks[visible][:, -1]
             pix = pixels[visible]
             labels = np.hstack((pix, tags[:, None]))
             self.annotate(img_file, labels)
+
+    def pose_msg_to_matrix(self, pose):
+        t = [
+            pose.position.x,
+            pose.position.y,
+            pose.position.z
+        ]
+        quat = [
+            pose.orientation.x,
+            pose.orientation.y,
+            pose.orientation.z,
+            pose.orientation.w
+        ]
+        rot = R.from_quat(quat).as_matrix()
+
+        Tf = np.eye(4)
+        Tf[:3,:3] = rot
+        Tf[:3,3] = t
+        return Tf
 
     def annotate(self, img_file, labels, save_name=None):
         if save_name is None:
@@ -335,13 +266,6 @@ class AnnotatorNode(Node):
                     f'[PROC]    Annotation saved to {save_name}.txt:\n'
                     f'[PROC]        {line}'
                 )
-
-    def log_sync_diagnostics(self, job):
-        dt_info = job["dt"]
-        msg = ", ".join(
-            f"{k}:{v * 1000:.1f}ms" for k, v in dt_info.items() if v is not None
-        )
-        self.get_logger().debug(f"[SYNC] {msg}")
 
     def _queue_watchdog(self):
         while rclpy.ok():

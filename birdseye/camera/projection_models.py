@@ -364,7 +364,7 @@ if __name__ == "__main__":
             f"[PROC]        Mesh: {len(mesh.vertices):,} vertices, "
             f"{len(mesh.triangles):,} triangles"
         )
-        
+
         if dataset.colors is not None:
             print("[PROC]    Coloring mesh from pointcloud.")
             pcd_tree = o3d.geometry.KDTreeFlann(pcd)
@@ -386,8 +386,6 @@ if __name__ == "__main__":
         o3d.io.write_triangle_mesh(filename, mesh)
         print('[PROC]    Mesh built and cached at: {filename}')
 
-    # TODO: add mean subtraction of the dataset, so that numbers are smaller
-
     T_ins_world = np.eye(4)
     T_ins_world[:3,:3] = np.array([[0,1,0],[1,0,0],[0,0,-1]])  # NED INS to ENU viz
     T_ins_world[:3,3] = np.array([584150, 4093350, 115])
@@ -395,7 +393,7 @@ if __name__ == "__main__":
     # Visualize
     pv_mesh = to_pyvista_mesh(mesh)
     plotter = pv.Plotter()
-    plotter.add_mesh(pv_mesh, opacity=1.0)
+    plotter.add_mesh(pv_mesh, scalars="Colors", rgb=True, opacity=1.0)
 
     loader = SensorConfigLoader(args.yaml_filepath)
     cam_cfg = loader.get_camera("rgb_1")

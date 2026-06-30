@@ -21,7 +21,7 @@ setup(
     tests_require=['pytest'],
     entry_points={
         'console_scripts': [
-            'sub_node = birdseye.sub_node:main',
+            'annotator_node = birdseye.annotator_node:main',
         ],
     },
 )
