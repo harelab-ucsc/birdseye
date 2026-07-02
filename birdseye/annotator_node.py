@@ -32,7 +32,7 @@ from sensor_msgs.msg import Image
 
 from birdseye.camera.projection_models import ProjectionEngine, MeshBackend
 from birdseye.camera.camera import SensorConfigLoader, PinholeCameraModel
-from birdseye_msgs import CaptureComplete, CameraCapture
+from birdseye_msgs.msg import CaptureComplete, CameraCapture
 
 # Tolerant imports — these message types live in repos that may not be
 # installed in test/CI containers (inertial_sense_ros2, custom_msgs).
@@ -125,7 +125,9 @@ class AnnotatorNode(Node):
 
         # --- Helper transform ---
         self.T_ned_enu = np.eye(4)
-        self.T_ned_enu[:3,:3] = np.array([[0,1,0],[1,0,0],[0,0,-1]])  # NED INS to ENU viz
+        self.T_ned_enu[:3, :3] = np.array(
+            [[0, 1, 0], [1, 0, 0], [0, 0, -1]]
+        )  # NED INS to ENU viz
 
     def csv_read(self):
         self.get_logger().info(f"Reading clicks CSV: {self.clicks_csv}...")
@@ -169,9 +171,7 @@ class AnnotatorNode(Node):
             return time.time()
 
     def _capture_complete_callback(self, msg: CaptureComplete):
-        self.get_logger().info(
-            f"Received capture with {len(msg.cameras)} camera(s)"
-        )
+        self.get_logger().info(f"Received capture with {len(msg.cameras)} camera(s)")
 
         job = {
             "created_at": time.time(),
@@ -217,55 +217,50 @@ class AnnotatorNode(Node):
 
             T_cam_world = self.T_ned_enu @ T_ins_ned @ T_cam_ins
             pixels, visible = pipeline.visible_world_points(
-                self.clicks[:, [0,1,4]],
-                T_cam_world
+                self.clicks[:, [0, 1, 4]], T_cam_world
             )
-            img_file = os.path.join( self.save_dir, cam.image_filename )
+            img_file = os.path.join(self.save_dir, cam.image_filename)
             tags = self.clicks[visible][:, -1]
             pix = pixels[visible]
             labels = np.hstack((pix, tags[:, None]))
             self.annotate(img_file, labels)
 
     def pose_msg_to_matrix(self, pose):
-        t = [
-            pose.position.x,
-            pose.position.y,
-            pose.position.z
-        ]
+        t = [pose.position.x, pose.position.y, pose.position.z]
         quat = [
             pose.orientation.x,
             pose.orientation.y,
             pose.orientation.z,
-            pose.orientation.w
+            pose.orientation.w,
         ]
         rot = R.from_quat(quat).as_matrix()
 
         Tf = np.eye(4)
-        Tf[:3,:3] = rot
-        Tf[:3,3] = t
+        Tf[:3, :3] = rot
+        Tf[:3, 3] = t
         return Tf
 
     def annotate(self, img_file, labels, save_name=None):
         if save_name is None:
             save_name = self.label_save_name
 
-        with open(save_name, "a")as f:
+        with open(save_name, "a") as f:
             for label in labels:
-                line = f'{img_file} '
+                line = f"{img_file} "
 
                 try:  # if label is an iterable
-                    vals = ','.join([str(x) for x in label])
+                    vals = ",".join([str(x) for x in label])
                     # print(vals)
                 except TypeError:  # else
                     vals = str(label)
 
                 line += vals
-                line += '\n'
+                line += "\n"
                 # print(line)
                 f.write(line)
                 print(
-                    f'[PROC]    Annotation saved to {save_name}.txt:\n'
-                    f'[PROC]        {line}'
+                    f"[PROC]    Annotation saved to {save_name}.txt:\n"
+                    f"[PROC]        {line}"
                 )
 
     def _queue_watchdog(self):

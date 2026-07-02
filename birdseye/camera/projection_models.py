@@ -35,7 +35,7 @@ def csv_read(clicks_csv):
                 [u[0], u[1], u[2], u[3], float(line[2]), float(line[3]), tag]
             )
     data = np.array(data)
-    data = data[:, [0,1,4]].astype(float)
+    data = data[:, [0, 1, 4]].astype(float)
     print("[PROC]      ... Done.")
     return data
 
@@ -46,9 +46,9 @@ def to_pyvista_mesh(o3d_mesh):
     faces = np.asarray(o3d_mesh.triangles)
 
     # PyVista face format: [3, v0, v1, v2, 3, v0, v1, v2, ...]
-    faces_pv = np.hstack(
-        [np.full((faces.shape[0], 1), 3), faces]
-    ).astype(np.int64).ravel()
+    faces_pv = (
+        np.hstack([np.full((faces.shape[0], 1), 3), faces]).astype(np.int64).ravel()
+    )
 
     pv_mesh = pv.PolyData(vertices, faces_pv)
 
@@ -63,7 +63,9 @@ def to_pyvista_mesh(o3d_mesh):
     return pv_mesh
 
 
-def draw_camera(loader, engine, cam_name, color, T_ins_world, stride=STRIDE, verbose=False):
+def draw_camera(
+    loader, engine, cam_name, color, T_ins_world, stride=STRIDE, verbose=False
+):
     cam_cfg = loader.get_camera(cam_name)
     cam = PinholeCameraModel.from_config(cam_cfg)
     engine.camera = cam
@@ -79,17 +81,17 @@ def draw_camera(loader, engine, cam_name, color, T_ins_world, stride=STRIDE, ver
         T_cam_world,
         stride=stride,
     )
-    if stride != 'corners' and verbose:
-        print(f'[PROC] [DEBUG]    Rays cast: ',
-            f'{(image_shape[0]//stride)*(image_shape[1]//stride)}',
-            f'({image_shape[0]//stride} x {image_shape[1]//stride})')
-    print(f'[PROC] [DEBUG]    elapsed: {time.time() - start}')
+    if stride != "corners" and verbose:
+        print(
+            f"[PROC] [DEBUG]    Rays cast: ",
+            f"{(image_shape[0] // stride) * (image_shape[1] // stride)}",
+            f"({image_shape[0] // stride} x {image_shape[1] // stride})",
+        )
+    print(f"[PROC] [DEBUG]    elapsed: {time.time() - start}")
     hit_result = engine.backend.raycast(origins, dirs)
     t_hit = hit_result["t_hit"].numpy()
     hit_points = np.where(
-        np.isfinite(t_hit)[:, None],
-        origins + t_hit[:, None] * dirs,
-        np.nan
+        np.isfinite(t_hit)[:, None], origins + t_hit[:, None] * dirs, np.nan
     )
     add_rays(plotter, origins, dirs, hit_points, color=color)
 
@@ -102,7 +104,7 @@ def add_rays(plotter, origins, dirs, hit_points=None, color=None):
         # end = o + d * length
         line = pv.Line(o, hit_points[i])
         if color is None:
-            plotter.add_mesh(line, color='red', line_width=1)
+            plotter.add_mesh(line, color="red", line_width=1)
         else:
             plotter.add_mesh(line, color=color, line_width=1)
 
@@ -113,13 +115,11 @@ def add_rays(plotter, origins, dirs, hit_points=None, color=None):
         if hit_points is not None and np.all(np.isfinite(hit_points[i])):
             if color is None:
                 plotter.add_mesh(
-                    pv.Sphere(radius=1.5, center=hit_points[i]),
-                    color='blue'
+                    pv.Sphere(radius=1.5, center=hit_points[i]), color="blue"
                 )
             else:
                 plotter.add_mesh(
-                    pv.Sphere(radius=1.5, center=hit_points[i]),
-                    color=color
+                    pv.Sphere(radius=1.5, center=hit_points[i]), color=color
                 )
 
 
@@ -137,6 +137,7 @@ class GeometryBackend(ABC):
     Unified interface for all geometry models:
     flat-world, DSM, point cloud, mesh, etc.
     """
+
     # Scene query (core primitive)
     @abstractmethod
     def raycast(self, origins, directions):
@@ -161,18 +162,11 @@ class ProjectionEngine:
     def world_to_image(self, points, T_cam_world):
         return self.camera.world_to_image(points, T_cam_world)
 
-    def camera_frustum(self, image_shape, T_cam_world, stride='corners'):
+    def camera_frustum(self, image_shape, T_cam_world, stride="corners"):
         # TODO: change so that we don't assume rectangular frame
         w, h = image_shape
-        if stride == 'corners':
-            pixels = np.array(
-                [
-                    [0.0, 0.0],
-                    [0.0, h-1],
-                    [w-1, 0.0],
-                    [w-1, h-1]
-                ]
-            )
+        if stride == "corners":
+            pixels = np.array([[0.0, 0.0], [0.0, h - 1], [w - 1, 0.0], [w - 1, h - 1]])
         else:
             u = np.arange(0, w, stride)
             v = np.arange(0, h, stride)
@@ -195,11 +189,7 @@ class ProjectionEngine:
 
         # visible if:
         #   first thing hit is the target itself
-        not_occluded = (
-            np.isfinite(t_hit)
-            &
-            np.abs(t_hit - target_dist) <= epsilon
-        )
+        not_occluded = np.isfinite(t_hit) & np.abs(t_hit - target_dist) <= epsilon
         return not_occluded
 
     def visible_world_points(
@@ -221,28 +211,21 @@ class ProjectionEngine:
 
 
 class FlatWorldBackend(GeometryBackend):
-
     def __init__(self, ground_z=0.0):
         self.ground_z = ground_z
 
     # ray → plane intersection
     def raycast(self, origins, directions):
-        denom = directions[:,2]
+        denom = directions[:, 2]
         valid = np.abs(denom) > 1e-8
         t = np.full(len(origins), np.nan)
-        t[valid] = (
-            self.ground_z - origins[valid,2]
-        ) / denom[valid]
+        t[valid] = (self.ground_z - origins[valid, 2]) / denom[valid]
         hits = np.full_like(origins, np.nan)
-        hits[valid] = (
-            origins[valid]
-            + directions[valid] * t[valid,None]
-        )
+        hits[valid] = origins[valid] + directions[valid] * t[valid, None]
         return hits
 
 
 class MeshBackend(GeometryBackend):
-
     def __init__(self, scene):
         self.scene = scene
 
@@ -275,9 +258,13 @@ class MeshBackend(GeometryBackend):
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Demo run for Projection Models in the BirdsEye ecosystem.")
+    parser = argparse.ArgumentParser(
+        description="Demo run for Projection Models in the BirdsEye ecosystem."
+    )
     parser.add_argument("laz_filepath", help="file path to a target pointcloud")
-    parser.add_argument("yaml_filepath", help="file path to a sensor configuration YAML")
+    parser.add_argument(
+        "yaml_filepath", help="file path to a sensor configuration YAML"
+    )
     parser.add_argument("clicks_csv", help="file path to geotag data CSV")
     parser.add_argument("save_dir", help="file path to output directory (save target)")
     parser.add_argument("--downsample", action="store_true", default=False)
@@ -292,22 +279,24 @@ if __name__ == "__main__":
     elif ext in [".las", ".laz"]:
         dataset = GeoPointCloud(filepath)
     else:
-        print("[PROC] [ERROR]    Unsupported file type. Please provide a .tif, .las, or .laz file.")
+        print(
+            "[PROC] [ERROR]    Unsupported file type. Please provide a .tif, .las, or .laz file."
+        )
         sys.exit(1)
 
     print("[PROC]\n[PROC]    === Dataset Summary ===")
     summary = dataset.summary()
     for key in summary.keys():
-        print(f'[PROC]    {key}: {summary[key]}')
-    print('[PROC]')
+        print(f"[PROC]    {key}: {summary[key]}")
+    print("[PROC]")
 
     cached_mesh = False
     tmp = [str(summary[key]) for key in summary]
     tmp = "".join(tmp)
     hash_id = hashlib.sha256(tmp.encode()).hexdigest()
-    filename = f'mesh_{hash_id}.ply'
+    filename = f"mesh_{hash_id}.ply"
     filename = os.path.join(args.save_dir, filename)
-    files = glob2.glob(f'{args.save_dir}/*.ply')
+    files = glob2.glob(f"{args.save_dir}/*.ply")
     if filename in files:
         cached_mesh = True
         mesh = o3d.io.read_triangle_mesh(filename)
@@ -315,14 +304,14 @@ if __name__ == "__main__":
         scene = o3d.t.geometry.RaycastingScene()
         scene.add_triangles(tmesh)
         backend = MeshBackend(scene)
-        print(f'[PROC]    Found cached mesh at: {filename}')
+        print(f"[PROC]    Found cached mesh at: {filename}")
         print(
             f"[PROC]      Mesh: {len(mesh.vertices):,} vertices, "
             f"{len(mesh.triangles):,} triangles"
         )
 
     if not cached_mesh:
-        print('[PROC]    Making new mesh from pointcloud...')
+        print("[PROC]    Making new mesh from pointcloud...")
         # Convert to Open3D point cloud
         pcd = o3d.geometry.PointCloud()
         pcd.points = o3d.utility.Vector3dVector(dataset.points)
@@ -330,7 +319,7 @@ if __name__ == "__main__":
             pcd.colors = o3d.utility.Vector3dVector(dataset.colors)
 
         if args.downsample:
-            print('[PROC]    Downsampling...')
+            print("[PROC]    Downsampling...")
             # Optional: downsample if the cloud is very large
             voxel_size = 0.25
             pcd = pcd.voxel_down_sample(voxel_size)
@@ -338,7 +327,7 @@ if __name__ == "__main__":
         print(f"[PROC]        After downsampling: {len(pcd.points):,} points")
 
         # Estimate normals (required for Poisson reconstruction)
-        print('[PROC]    Estimating pointcloud normals...')
+        print("[PROC]    Estimating pointcloud normals...")
         pcd.estimate_normals(
             search_param=o3d.geometry.KDTreeSearchParamHybrid(
                 radius=5.0,
@@ -378,17 +367,19 @@ if __name__ == "__main__":
 
             mesh.vertex_colors = o3d.utility.Vector3dVector(vertex_colors)
 
-        print('[PROC]    Building Open3D RaycastingScene')
+        print("[PROC]    Building Open3D RaycastingScene")
         tmesh = o3d.t.geometry.TriangleMesh.from_legacy(mesh)
         scene = o3d.t.geometry.RaycastingScene()
         scene.add_triangles(tmesh)
         backend = MeshBackend(scene)
         o3d.io.write_triangle_mesh(filename, mesh)
-        print('[PROC]    Mesh built and cached at: {filename}')
+        print("[PROC]    Mesh built and cached at: {filename}")
 
     T_ins_world = np.eye(4)
-    T_ins_world[:3,:3] = np.array([[0,1,0],[1,0,0],[0,0,-1]])  # NED INS to ENU viz
-    T_ins_world[:3,3] = np.array([584150, 4093350, 115])
+    T_ins_world[:3, :3] = np.array(
+        [[0, 1, 0], [1, 0, 0], [0, 0, -1]]
+    )  # NED INS to ENU viz
+    T_ins_world[:3, 3] = np.array([584150, 4093350, 115])
 
     # Visualize
     pv_mesh = to_pyvista_mesh(mesh)
@@ -409,7 +400,7 @@ if __name__ == "__main__":
     draw_camera(loader, engine, "multispec_3", "honeydew", T_ins_world)
     draw_camera(loader, engine, "multispec_4", "light_goldenrod", T_ins_world)
 
-    add_spheres(clicks, color='magenta')
+    add_spheres(clicks, color="magenta")
 
     plotter.set_background("white")
     plotter.show_axes()

@@ -8,13 +8,16 @@ import numpy as np
 from tile_loader import TileLoader
 from generator import generator
 
+
 class TileInference:
-    def __init__(self, model_weights, tile_size=(224, 224), edge_buffer=81, use_heatmaps=False):
+    def __init__(
+        self, model_weights, tile_size=(224, 224), edge_buffer=81, use_heatmaps=False
+    ):
         self.tile_loader = TileLoader(
             tile_size=tile_size,
             edge_buffer=edge_buffer,
             use_heatmaps=use_heatmaps,
-            include_negatives=True
+            include_negatives=True,
         )
         self.model = generator()
         self.model.load_weights(model_weights)
@@ -28,7 +31,7 @@ class TileInference:
             batch_size=1,
             buffer_size=1,
             repeat=False,
-            augment=False
+            augment=False,
         )
 
         predictions = []
@@ -46,7 +49,7 @@ class TileInference:
             batch_size=1,
             buffer_size=1,
             repeat=False,
-            augment=False
+            augment=False,
         )
 
         for images, labels in dataset.take(1):
@@ -61,10 +64,17 @@ class TileInference:
 
                 plt.subplot(1, 2, 2)
                 if self.use_heatmaps:
-                    plt.imshow(labels[i].numpy().squeeze(), cmap='hot')
+                    plt.imshow(labels[i].numpy().squeeze(), cmap="hot")
                     plt.title("Heatmap")
                 else:
-                    plt.text(0.5, 0.5, f"Pred: {preds[i][0]:.2f}", ha='center', va='center', fontsize=16)
+                    plt.text(
+                        0.5,
+                        0.5,
+                        f"Pred: {preds[i][0]:.2f}",
+                        ha="center",
+                        va="center",
+                        fontsize=16,
+                    )
                     plt.title("Prediction")
                     plt.axis("off")
                 plt.tight_layout()
@@ -73,6 +83,7 @@ class TileInference:
 
 import numpy as np
 import tensorflow as tf
+
 
 def predict_frame_heatmap(frame, model, tile_size=(224, 224), tile_overlap=0):
     h, w = frame.shape[:2]
@@ -89,7 +100,7 @@ def predict_frame_heatmap(frame, model, tile_size=(224, 224), tile_overlap=0):
     # Step 1: Extract tiles
     for y in range(0, h - th + 1, stride_y):
         for x in range(0, w - tw + 1, stride_x):
-            tile = frame[y:y+th, x:x+tw]
+            tile = frame[y : y + th, x : x + tw]
             tiles.append(tile)
             positions.append((y, x))
 
@@ -102,21 +113,21 @@ def predict_frame_heatmap(frame, model, tile_size=(224, 224), tile_overlap=0):
     # Step 3: Reassemble into heatmap
     for i, (y, x) in enumerate(positions):
         pred_tile = preds[i].squeeze()
-        heatmap_full[y:y+th, x:x+tw] += pred_tile
-        weight_mask[y:y+th, x:x+tw] += 1.0
+        heatmap_full[y : y + th, x : x + tw] += pred_tile
+        weight_mask[y : y + th, x : x + tw] += 1.0
 
     # Step 4: Normalize overlapping regions
     heatmap_full = np.divide(
         heatmap_full,
         weight_mask,
         out=np.zeros_like(heatmap_full),
-        where=weight_mask > 0
+        where=weight_mask > 0,
     )
 
     return heatmap_full
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     # # Example usage
     # infer = TileInference(model_weights="birds_eye_model.weights.h5", use_heatmaps=False)
     # predictions = infer.predict_on_image("/path/to/image.png", label_file="labels.txt")
@@ -124,11 +135,13 @@ if __name__ == '__main__':
     # infer.visualize_predictions("/path/to/image.png", label_file="labels.txt")
 
     frames_dirs = [
-        os.path.join(os.path.expanduser('~'), 'birdseye_CNN_data', '2025_04_16', 'pieranch_rect'),
+        os.path.join(
+            os.path.expanduser("~"), "birdseye_CNN_data", "2025_04_16", "pieranch_rect"
+        ),
     ]
 
-    models_dir = os.path.join(os.path.expanduser('~'), 'birdseye', 'models')
-    weight_file = 'birdseye_224_224_008.weights.h5'
+    models_dir = os.path.join(os.path.expanduser("~"), "birdseye", "models")
+    weight_file = "birdseye_224_224_008.weights.h5"
 
     model = generator(224, 224, 3, use_heatmap=True)
     model.load_weights(os.path.join(models_dir, weight_file))
@@ -137,19 +150,19 @@ if __name__ == '__main__':
     # model = tf.keras.models.load_model(os.path.join(models_dir, weight_file))
     plt.ion()
     for _dir in frames_dirs:
-        frames = sorted(glob2.glob(os.path.join(_dir, '*.png')))
+        frames = sorted(glob2.glob(os.path.join(_dir, "*.png")))
         plt.tight_layout()
-        fig, ax = plt.subplots(1,2, figsize=(18,8))
+        fig, ax = plt.subplots(1, 2, figsize=(18, 8))
         plt.show(block=False)
         print()
         for frame in frames:
-            print(f'predicting on {frame}')
-            
+            print(f"predicting on {frame}")
+
             image = tf.io.decode_png(tf.io.read_file(frame), channels=3)
             ax[0].imshow(image.numpy())
             pred = predict_frame_heatmap(image, model)
             pred = tf.squeeze(pred).numpy()
-            ax[1].imshow(pred, cmap='hot')
+            ax[1].imshow(pred, cmap="hot")
 
             fig.canvas.draw_idle()
             plt.pause(0.2)

@@ -67,40 +67,23 @@ class TriangleCoverageKeyframeSelector:
         #
         visible_triangles = np.unique(visible_triangles)
 
-        visible_area = self.triangle_area[
-            visible_triangles
-        ].sum()
+        visible_area = self.triangle_area[visible_triangles].sum()
 
         under_observed_mask = (
-            self.triangle_observation_count[
-                visible_triangles
-            ]
+            self.triangle_observation_count[visible_triangles]
             < self.max_hits_per_triangle
         )
 
-        novel_triangles = visible_triangles[
-            under_observed_mask
-        ]
+        novel_triangles = visible_triangles[under_observed_mask]
 
-        novel_area = self.triangle_area[
-            novel_triangles
-        ].sum()
+        novel_area = self.triangle_area[novel_triangles].sum()
 
-        novel_fraction = (
-            novel_area / visible_area
-            if visible_area > 0
-            else 0.0
-        )
+        novel_fraction = novel_area / visible_area if visible_area > 0 else 0.0
 
-        keep = (
-            novel_fraction
-            >= self.min_novel_area_fraction
-        )
+        keep = novel_fraction >= self.min_novel_area_fraction
 
         if keep:
-            self.triangle_observation_count[
-                visible_triangles
-            ] += 1
+            self.triangle_observation_count[visible_triangles] += 1
 
         return keep, {
             "visible_area": visible_area,
@@ -119,10 +102,7 @@ class TriangleCoverageKeyframeSelector:
         v1 = vertices[triangles[:, 1]]
         v2 = vertices[triangles[:, 2]]
 
-        return (
-            0.5
-            * np.linalg.norm(
-                np.cross(v1 - v0, v2 - v0),
-                axis=1,
-            )
+        return 0.5 * np.linalg.norm(
+            np.cross(v1 - v0, v2 - v0),
+            axis=1,
         )

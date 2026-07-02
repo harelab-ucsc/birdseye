@@ -3,6 +3,7 @@ from fixtures.simple_camera import make_camera
 from fixtures.simple_mesh import make_plane
 from birdseye.camera.projection_models import MeshBackend
 
+
 def test_flat_world_intersection():
     cam, T_cam_world = make_camera()
     scene = make_plane()
@@ -21,11 +22,7 @@ def test_image_to_world_consistency():
     cam, T_cam_world = make_camera()
     scene = make_plane()
     backend = MeshBackend(scene)
-    pixels = np.array([
-        [320, 240],
-        [300, 240],
-        [340, 240]
-    ])
+    pixels = np.array([[320, 240], [300, 240], [340, 240]])
     origins, dirs = cam.image_to_rays(pixels, T_cam_world)
     result = backend.raycast(origins, dirs)
 
@@ -44,7 +41,7 @@ def test_projection_consistency():
 
     origins, dirs = cam.image_to_rays(pixels, T_cam_world)
     result = backend.raycast(origins, dirs)
-    
+
     test = origins + result["t_hit"].numpy() * dirs
     reproject, in_front = cam.world_to_image(test, T_cam_world)
     assert reproject.shape == (1, 2)
