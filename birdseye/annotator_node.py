@@ -137,7 +137,7 @@ class AnnotatorNode(Node):
         )  # NED INS to ENU viz
 
     def clicks_read(self):
-        self.get_logger().debug(f"Reading clicks CSV: {self.clicks_csv}...")
+        self.get_logger().info(f"Reading clicks CSV: {self.clicks_csv}...")
         data = []
         with open(self.clicks_csv) as clicks:
             reader = csv.reader(clicks)
@@ -158,14 +158,18 @@ class AnnotatorNode(Node):
         )
         self.clicks = data
         self.labels = labels
+        self.get_logger().info("    ...Done reading clicks.")
 
     def _setup_cameras(self):
+        self.get_logger().info("Setting up cameras...")
         for cam_name in self.cam_loader.list_cameras():
             cam_cfg = self.cam_loader.get_camera(cam_name)
             cam = PinholeCameraModel.from_config(cam_cfg)
             backend = self.backend  # shared mesh
             self.pipelines[cam_name] = ProjectionEngine(cam, backend)
-            topic = f"/{cam_name}/camera/image_raw"
+        self.get_logger().info(
+            f"    ...Set up {len(self.cam_loader.list_cameras())} cameras."
+        )
 
     def _load_mesh(self):
         mesh = o3d.io.read_triangle_mesh(self.mesh_filepath)
