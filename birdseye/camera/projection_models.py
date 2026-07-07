@@ -11,6 +11,14 @@ import csv
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 
+import warnings
+
+warnings.filterwarnings(
+    "ignore",
+    category=UserWarning,
+    module="matplotlib.projections",
+)
+
 import numpy as np
 import open3d as o3d
 import pyvista as pv
@@ -30,7 +38,7 @@ def csv_read(clicks_csv):
         for line in reader:
             # returns easting, northing, zone number, zone letter
             u = utm.from_latlon(float(line[0]), float(line[1]))
-            tag = int(line[-1][-1])
+            tag = line[-1][-1]
             data.append(  # Easting, Northing, Number, Letter, EPS, MSL, tag
                 [u[0], u[1], u[2], u[3], float(line[2]), float(line[3]), tag]
             )
@@ -81,13 +89,14 @@ def draw_camera(
         T_cam_world,
         stride=stride,
     )
-    if stride != "corners" and verbose:
-        print(
-            f"[PROC] [DEBUG]    Rays cast: ",
-            f"{(image_shape[0] // stride) * (image_shape[1] // stride)}",
-            f"({image_shape[0] // stride} x {image_shape[1] // stride})",
-        )
-    print(f"[PROC] [DEBUG]    elapsed: {time.time() - start}")
+    if verbose:
+        if stride != "corners":
+            print(
+                f"[PROC] [DEBUG]    Rays cast: ",
+                f"{(image_shape[0] // stride) * (image_shape[1] // stride)}",
+                f"({image_shape[0] // stride} x {image_shape[1] // stride})",
+            )
+            print(f"[PROC] [DEBUG]    elapsed: {time.time() - start}")
     hit_result = engine.backend.raycast(origins, dirs)
     t_hit = hit_result["t_hit"].numpy()
     hit_points = np.where(
@@ -201,12 +210,19 @@ class ProjectionEngine:
     ):
         pixels, in_front = self.world_to_image(world_points, T_cam_world)
         in_frame = self.pixels_in_view(pixels)
-        visible = in_front & in_frame
+        candidate_mask = in_front & in_frame
         if not occlusion_check:
-            return pixels, visible
-
-        not_occluded = self.occlusion_mask(world_points, T_cam_world, epsilon)
-        visible &= not_occluded
+            return pixels, candidate_mask
+        if not np.any(candidate_mask):
+            return pixels, candidate_mask
+        candidate_points = world_points[candidate_mask]
+        not_occluded = self.occlusion_mask(
+            candidate_points,
+            T_cam_world,
+            epsilon,
+        )
+        visible = np.zeros(len(world_points), dtype=bool)
+        visible[candidate_mask] = not_occluded
         return pixels, visible
 
 
@@ -255,6 +271,89 @@ class MeshBackend(GeometryBackend):
         rays = np.hstack((origins, directions)).astype(np.float32)
         tensor = o3d.core.Tensor(rays, dtype=o3d.core.Dtype.Float32)
         return self.scene.cast_rays(tensor)
+
+    def snap_points_along_direction(
+        self,
+        points,
+        direction=np.array([0.0, 0.0, 1.0]),
+        max_distance=np.inf,
+    ):
+        """
+        Project points onto the mesh along a specified direction.
+
+        Rays are cast in both +direction and -direction, and the nearest
+        intersection is chosen.
+
+        Parameters
+        ----------
+        points : (N,3) ndarray
+            World coordinates.
+        direction : (3,) array_like
+            Projection direction (need not be unit length).
+            Examples:
+                ENU vertical : [0,0,1]
+                NED vertical : [0,0,-1]
+                East-West    : [1,0,0]
+        max_distance : float
+            Ignore intersections farther than this distance.
+
+        Returns
+        -------
+        snapped : (N,3) ndarray
+            Snapped coordinates. Rows are NaN if no intersection exists.
+        """
+        points = np.asarray(points, dtype=np.float32)
+        direction = np.asarray(direction, dtype=np.float32)
+
+        norm = np.linalg.norm(direction)
+        if norm < 1e-8:
+            raise ValueError("direction must have nonzero length")
+
+        direction /= norm
+
+        n = len(points)
+
+        rays_pos = np.hstack((
+            points,
+            np.tile(direction, (n, 1))
+        )).astype(np.float32)
+
+        rays_neg = np.hstack((
+            points,
+            np.tile(-direction, (n, 1))
+        )).astype(np.float32)
+
+        hit_pos = self.scene.cast_rays(
+            o3d.core.Tensor(rays_pos, dtype=o3d.core.Dtype.Float32)
+        )
+
+        hit_neg = self.scene.cast_rays(
+            o3d.core.Tensor(rays_neg, dtype=o3d.core.Dtype.Float32)
+        )
+
+        t_pos = hit_pos["t_hit"].numpy()
+        t_neg = hit_neg["t_hit"].numpy()
+
+        snapped = np.full_like(points, np.nan)
+
+        valid_pos = np.isfinite(t_pos) & (t_pos <= max_distance)
+        valid_neg = np.isfinite(t_neg) & (t_neg <= max_distance)
+
+        choose_pos = valid_pos & (~valid_neg | (t_pos <= t_neg))
+        choose_neg = valid_neg & (~valid_pos | (t_neg < t_pos))
+
+        snapped = np.full_like(points, np.nan)
+
+        snapped[choose_pos] = (
+            points[choose_pos]
+            + t_pos[choose_pos, None] * direction
+        )
+
+        snapped[choose_neg] = (
+            points[choose_neg]
+            - t_neg[choose_neg, None] * direction
+        )
+        return snapped
 
 
 if __name__ == "__main__":
@@ -375,6 +474,22 @@ if __name__ == "__main__":
         o3d.io.write_triangle_mesh(filename, mesh)
         print("[PROC]    Mesh built and cached at: {filename}")
 
+    verts = np.asarray(mesh.vertices)
+
+    print(
+        f"[PROC] Mesh bounds:\n"
+        f"[PROC]    X: {verts[:,0].min():.2f} -> {verts[:,0].max():.2f}\n"
+        f"[PROC]    Y: {verts[:,1].min():.2f} -> {verts[:,1].max():.2f}\n"
+        f"[PROC]    Z: {verts[:,2].min():.2f} -> {verts[:,2].max():.2f}"
+    )
+
+    print(
+        f"[PROC] Click bounds (pre-snap):\n"
+        f"[PROC]    X: {clicks[:,0].min():.2f} -> {clicks[:,0].max():.2f}\n"
+        f"[PROC]    Y: {clicks[:,1].min():.2f} -> {clicks[:,1].max():.2f}\n"
+        f"[PROC]    Z: {clicks[:,2].min():.2f} -> {clicks[:,2].max():.2f}"
+    )
+
     T_ins_world = np.eye(4)
     T_ins_world[:3, :3] = np.array(
         [[0, 1, 0], [1, 0, 0], [0, 0, -1]]
@@ -390,6 +505,17 @@ if __name__ == "__main__":
     cam_cfg = loader.get_camera("rgb_1")
     cam = PinholeCameraModel.from_config(cam_cfg)
     engine = ProjectionEngine(cam, backend)
+    clicks = backend.snap_points_along_direction(
+        clicks,
+        direction=[0, 0, 1],   # ENU "up"
+        max_distance=20.0,
+    )
+    print(
+        f"[PROC] Click bounds (post-snap):\n"
+        f"[PROC]    X: {clicks[:,0].min():.2f} -> {clicks[:,0].max():.2f}\n"
+        f"[PROC]    Y: {clicks[:,1].min():.2f} -> {clicks[:,1].max():.2f}\n"
+        f"[PROC]    Z: {clicks[:,2].min():.2f} -> {clicks[:,2].max():.2f}"
+    )
 
     draw_camera(loader, engine, "rgb_1", "red", T_ins_world)
     draw_camera(loader, engine, "rgb_2", "blue", T_ins_world)

@@ -91,8 +91,10 @@ class AnnotatorNode(Node):
         self.save_dir = self.get_parameter("save_dir").value
         self.img_format = self.get_parameter("img_format").value
         self.label_save_name = os.path.join(self.save_dir, "labels.txt")
-        self.clicks = None
-        self.csv_read()
+        try:
+           open(self.label_save_name, 'x')
+        except FileExistsError:
+           pass
 
         # --- State Machine Variables ---
         self.state_lock = threading.Lock()
@@ -112,10 +114,15 @@ class AnnotatorNode(Node):
         self.backend = self._load_mesh()
         self._setup_cameras()
 
+        # --- Geotag / click setup
+        self.clicks = None
+        self.labels = None
+        self.clicks_read()
+
         # --- Producer/consumer save queue ---
         self.save_queue = queue.Queue()
         self._save_workers = []
-        for _ in range(8):
+        for _ in range(1):
             t = threading.Thread(target=self._save_worker, daemon=True)
             t.start()
             self._save_workers.append(t)
@@ -129,19 +136,28 @@ class AnnotatorNode(Node):
             [[0, 1, 0], [1, 0, 0], [0, 0, -1]]
         )  # NED INS to ENU viz
 
-    def csv_read(self):
-        self.get_logger().info(f"Reading clicks CSV: {self.clicks_csv}...")
+    def clicks_read(self):
+        self.get_logger().debug(f"Reading clicks CSV: {self.clicks_csv}...")
         data = []
         with open(self.clicks_csv) as clicks:
             reader = csv.reader(clicks)
             for line in reader:
                 # returns easting, northing, zone number, zone letter
                 u = utm.from_latlon(float(line[0]), float(line[1]))
-                tag = int(line[-1][-1])
-                data.append(  # Eastingn Northing, Number, Letter, EPS, MSL, tag
+                tag = line[-1][-1]
+                data.append(  # Easting, Northing, Number, Letter, EPS, MSL, tag
                     [u[0], u[1], u[2], u[3], float(line[2]), float(line[3]), tag]
                 )
-        self.clicks = np.array(data)
+        data = np.array(data)
+        labels = data[:, -1]
+        data = data[:, [0,1,4]]  # east, north, wgs84_altitude
+        data = self.backend.snap_points_along_direction(
+            data,
+            direction=[0, 0, 1],   # ENU "up" / NED "down"
+            max_distance=20.0,
+        )
+        self.clicks = data
+        self.labels = labels
 
     def _setup_cameras(self):
         for cam_name in self.cam_loader.list_cameras():
@@ -150,12 +166,6 @@ class AnnotatorNode(Node):
             backend = self.backend  # shared mesh
             self.pipelines[cam_name] = ProjectionEngine(cam, backend)
             topic = f"/{cam_name}/camera/image_raw"
-            self.subscribers[cam_name] = self.create_subscription(
-                Image,
-                topic,
-                partial(self._image_callback, cam_name=cam_name),
-                img_qos,
-            )
 
     def _load_mesh(self):
         mesh = o3d.io.read_triangle_mesh(self.mesh_filepath)
@@ -171,7 +181,7 @@ class AnnotatorNode(Node):
             return time.time()
 
     def _capture_complete_callback(self, msg: CaptureComplete):
-        self.get_logger().info(f"Received capture with {len(msg.cameras)} camera(s)")
+        self.get_logger().debug(f"Received capture with {len(msg.cameras)} camera(s)")
 
         job = {
             "created_at": time.time(),
@@ -185,8 +195,6 @@ class AnnotatorNode(Node):
         self.process_jobs()
 
     def process_jobs(self):
-        now = time.time()
-
         with self.state_lock:
             while self.active_jobs:
                 job = self.active_jobs[0]
@@ -196,13 +204,26 @@ class AnnotatorNode(Node):
     def _save_worker(self):
         while True:
             item = self.save_queue.get()
+
             if item is None:
+                self.get_logger().info("Worker exiting.")
                 self.save_queue.task_done()
                 break
-            data, stamp = item
+
+            self.get_logger().debug(
+                f"Worker starting job. Queue={self.save_queue.qsize()}"
+            )
+
+            start = time.perf_counter()
+
             try:
+                data, stamp = item
                 self.post_process(data, stamp)
             finally:
+                elapsed = time.perf_counter() - start
+                self.get_logger().info(
+                    f"Finished save in {elapsed:.2f}s"
+                )
                 self.save_queue.task_done()
 
     def post_process(self, data):
@@ -214,10 +235,16 @@ class AnnotatorNode(Node):
             pipeline = self.pipelines[cam.camera_name]
             T_cam_ins = pipeline.camera.T_cam_ins
             assert T_cam_ins == self.pose_msg_to_matrix(cam.cam_pose_ins)
-
             T_cam_world = self.T_ned_enu @ T_ins_ned @ T_cam_ins
+
+            pr_start = time.perf_counter()
             pixels, visible = pipeline.visible_world_points(
-                self.clicks[:, [0, 1, 4]], T_cam_world
+                self.clicks,
+                T_cam_world
+            )
+            pr_elapsed = time.perf_counter() - pr_start
+            self.get_logger().info(
+                f"Finished visible world point projection in {pr_elapsed:.3f}s"
             )
             img_file = os.path.join(self.save_dir, cam.image_filename)
             tags = self.clicks[visible][:, -1]
@@ -245,6 +272,7 @@ class AnnotatorNode(Node):
             save_name = self.label_save_name
 
         with open(save_name, "a") as f:
+            lines = []
             for label in labels:
                 line = f"{img_file} "
 
@@ -256,12 +284,12 @@ class AnnotatorNode(Node):
 
                 line += vals
                 line += "\n"
-                # print(line)
-                f.write(line)
-                print(
-                    f"[PROC]    Annotation saved to {save_name}.txt:\n"
-                    f"[PROC]        {line}"
-                )
+                lines.append(line)
+            f.write(lines)
+            print(
+                f"[PROC]    Annotation saved to {save_name}.txt:\n"
+                f"[PROC]        {line}"
+            )
 
     def _queue_watchdog(self):
         while rclpy.ok():
