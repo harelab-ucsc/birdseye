@@ -158,20 +158,24 @@ class AnnotatorNode(Node):
         )
         self.clicks = data
         self.labels = labels
+        self.get_logger().debug("    ...Done loading clicks")
 
     def _setup_cameras(self):
+        self.get_logger().info("Setting up cameras...")
         for cam_name in self.cam_loader.list_cameras():
             cam_cfg = self.cam_loader.get_camera(cam_name)
             cam = PinholeCameraModel.from_config(cam_cfg)
             backend = self.backend  # shared mesh
             self.pipelines[cam_name] = ProjectionEngine(cam, backend)
-            topic = f"/{cam_name}/camera/image_raw"
+        self.get_logger().info(f"    ...Set up {len(self.cam_loader.list_cameras())} cameras.")
 
     def _load_mesh(self):
+        self.get_logger().info("Loading mesh...")
         mesh = o3d.io.read_triangle_mesh(self.mesh_filepath)
         tmesh = o3d.t.geometry.TriangleMesh.from_legacy(mesh)
         scene = o3d.t.geometry.RaycastingScene()
         scene.add_triangles(tmesh)
+        self.get_logger().info("    ...Done loading mesh.")
         return MeshBackend(scene)
 
     def _get_msg_time(self, msg):
