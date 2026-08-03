@@ -13,6 +13,7 @@ import open3d as o3d
 from functools import partial
 from collections import deque
 from scipy.spatial.transform import Rotation as R
+from scipy.spatial import KDTree
 
 import rclpy
 import tf2_ros
@@ -32,6 +33,7 @@ from sensor_msgs.msg import Image
 
 from birdseye.camera.projection_models import ProjectionEngine, MeshBackend
 from birdseye.camera.camera import SensorConfigLoader, PinholeCameraModel
+from birdseye.geometry.se3 import SE3
 from birdseye_msgs.msg import CaptureComplete, CameraCapture
 
 # Tolerant imports — these message types live in repos that may not be
@@ -84,17 +86,12 @@ class AnnotatorNode(Node):
         self.declare_parameter("mesh_filepath", "")
         self.declare_parameter("click_filepath", "")
         self.declare_parameter("save_dir", "")
-        self.declare_parameter("img_format", ".png")
         self.yaml_filepath = self.get_parameter("yaml_filepath").value
         self.mesh_filepath = self.get_parameter("mesh_filepath").value
         self.clicks_csv = self.get_parameter("click_filepath").value
         self.save_dir = self.get_parameter("save_dir").value
-        self.img_format = self.get_parameter("img_format").value
         self.label_save_name = os.path.join(self.save_dir, "labels.txt")
-        try:
-           open(self.label_save_name, 'x')
-        except FileExistsError:
-           pass
+        os.close(os.open(self.label_save_name, os.O_CREAT | os.O_WRONLY))
 
         # --- State Machine Variables ---
         self.state_lock = threading.Lock()
@@ -111,7 +108,8 @@ class AnnotatorNode(Node):
         # --- Camera setup ---
         self.cam_loader = SensorConfigLoader(self.yaml_filepath)
         self.pipelines = {}
-        self.backend = self._load_mesh()
+        backend, mesh = self._load_mesh()  # backend: project, mesh: render
+        self.backend = backend
         self._setup_cameras()
 
         # --- Geotag / click setup
@@ -122,7 +120,7 @@ class AnnotatorNode(Node):
         # --- Producer/consumer save queue ---
         self.save_queue = queue.Queue()
         self._save_workers = []
-        for _ in range(1):
+        for _ in range(8):
             t = threading.Thread(target=self._save_worker, daemon=True)
             t.start()
             self._save_workers.append(t)
@@ -167,9 +165,10 @@ class AnnotatorNode(Node):
             cam_cfg = self.cam_loader.get_camera(cam_name)
             cam = PinholeCameraModel.from_config(cam_cfg)
             backend = self.backend  # shared mesh
-            self.pipelines[cam_name] = ProjectionEngine(cam, backend)
+            proj = ProjectionEngine(cam, backend)
+            self.pipelines[cam_name] = proj
         self.get_logger().info(
-            f"    ...Set up {len(self.cam_loader.list_cameras())} cameras."
+            f"    ...Set up cameras: {self.cam_loader.list_cameras()}."
         )
 
     def _load_mesh(self):
@@ -179,7 +178,7 @@ class AnnotatorNode(Node):
         scene = o3d.t.geometry.RaycastingScene()
         scene.add_triangles(tmesh)
         self.get_logger().info("    ...Done loading mesh.")
-        return MeshBackend(scene)
+        return MeshBackend(scene), mesh
 
     def _get_msg_time(self, msg):
         try:
@@ -189,7 +188,6 @@ class AnnotatorNode(Node):
 
     def _capture_complete_callback(self, msg: CaptureComplete):
         self.get_logger().debug(f"Received capture with {len(msg.cameras)} camera(s)")
-
         job = {
             "created_at": time.time(),
             "data": msg,
@@ -224,8 +222,8 @@ class AnnotatorNode(Node):
             start = time.perf_counter()
 
             try:
-                data, stamp = item
-                self.post_process(data, stamp)
+                msg = item
+                self.post_process(msg)
             finally:
                 elapsed = time.perf_counter() - start
                 self.get_logger().info(
@@ -233,31 +231,374 @@ class AnnotatorNode(Node):
                 )
                 self.save_queue.task_done()
 
-    def post_process(self, data):
+    def post_process(
+        self,
+        data,
+        eps = 1e-6,
+    ):
         stamp = data.header.stamp
         pose = data.ins_pose_ned
         T_ins_ned = self.pose_msg_to_matrix(pose)
 
         for cam in data.cameras:
-            pipeline = self.pipelines[cam.camera_name]
-            T_cam_ins = pipeline.camera.T_cam_ins
-            assert T_cam_ins == self.pose_msg_to_matrix(cam.cam_pose_ins)
+            # self.get_logger().info(f'{cam.camera_name}')
+            if cam.camera_name != 'rgb_1':
+                continue
+            proj = self.pipelines[cam.camera_name]
+            T_cam_ins = proj.camera.T_cam_ins
+            # assert np.all(np.isclose(T_cam_ins, self.pose_msg_to_matrix(cam.cam_pose_ins)))
             T_cam_world = self.T_ned_enu @ T_ins_ned @ T_cam_ins
 
-            pr_start = time.perf_counter()
-            pixels, visible = pipeline.visible_world_points(
+            pixels, visible = proj.visible_world_points(self.clicks,T_cam_world)
+
+            real = cv2.imread(
+                os.path.join(self.save_dir, cam.image_filename),
+                cv2.IMREAD_GRAYSCALE
+            )
+            # TODO: all-black image filter
+            # CLAHE is an adaptive contrast equalizer
+            clahe = cv2.createCLAHE(clipLimit=40)
+            clahe_img = np.clip(clahe.apply(real), 0, 255).astype(np.uint8)
+
+            # Small amount of smoothing
+            # base = cv2.bilateralFilter(clahe_img, 8, 32, 32)
+
+            # Build a Gaussian scale space
+            sigmas = [0, 2, 4, 6]
+            edges = []
+
+            for s in sigmas:
+                if s == 0:
+                    img = clahe_img
+                else:
+                    img = cv2.GaussianBlur(clahe_img, (0, 0), sigmaX=s)
+
+                edges.append(
+                    cv2.Canny(
+                        img,
+                        threshold1=25,
+                        threshold2=50
+                    ) > 0
+                )
+            # edge = np.logical_and.reduce(edges)
+            votes = np.sum(edges, axis=0)
+            edge = (votes >= 2).astype(np.uint8) * 255
+
+            # --- Nonmax suppression in contour set ---
+            edge_clean = np.zeros_like(edge)
+            contours, _ = cv2.findContours(edge,
+                               cv2.RETR_LIST,
+                               cv2.CHAIN_APPROX_NONE)
+            for c in contours:
+                length = cv2.arcLength(c, False)
+                x, y, w, h = cv2.boundingRect(c)
+                extent = max(w, h)
+                if length > 40 and extent > 10:
+                    cv2.drawContours(edge_clean, [c], -1, 255, 1)
+            edge = edge_clean
+
+            # --- Get edge orientations ---
+            edge_f = edge.astype(np.float32)
+            gx = cv2.Sobel(edge_f, cv2.CV_32F, 1, 0, ksize=3)
+            gy = cv2.Sobel(edge_f, cv2.CV_32F, 0, 1, ksize=3)
+            mag = np.sqrt(gx**2 + gy**2)
+            gx /= (mag + eps)
+            gy /= (mag + eps)
+
+            dist = cv2.distanceTransform(255-edge, cv2.DIST_L2, 5)
+
+            # Build nearest-edge orientation images
+            edge_mask = edge > 0
+            edge_pixels = np.column_stack(np.nonzero(edge_mask))
+            # columns are (v,u)
+            tree = KDTree(edge_pixels)
+            H, W = edge.shape
+            vv, uu = np.indices((H, W))
+            query = np.column_stack((vv.ravel(), uu.ravel()))
+            _, idx = tree.query(query, workers=-1)
+            nearest = edge_pixels[idx]
+            nearest_v = nearest[:, 0]
+            nearest_u = nearest[:, 1]
+            nearest_gx = gx[nearest_v, nearest_u].reshape(H, W)
+            nearest_gy = gy[nearest_v, nearest_u].reshape(H, W)
+
+            # registration step
+            T_refined, residuals, kps, synth = self.register_pose(
+                proj,
+                T_cam_world,
+                dist,
+                nearest_gx,
+                nearest_gy,
+                backend='gauss-newton'
+            )
+            edge = cv2.cvtColor(edge,cv2.COLOR_GRAY2RGB)
+            real = cv2.cvtColor(real,cv2.COLOR_GRAY2RGB)
+            dist = cv2.cvtColor(dist,cv2.COLOR_GRAY2RGB)
+            for kp, r in zip(kps, residuals):
+                if r < 10:
+                    color = (0, 255, 0)      # green
+                elif r < 20:
+                    color = (0, 255, 255)    # yellow
+                else:
+                    color = (0, 0, 255)      # red
+                cv2.circle(edge, kp.astype(np.int32), radius=2, color=color, thickness=-1)
+                cv2.circle(real, kp.astype(np.int32), radius=2, color=color, thickness=-1)
+                cv2.circle(dist, kp.astype(np.int32), radius=2, color=color, thickness=-1)
+            for kp in synth.keypoints_2D:
+                cv2.circle(edge, kp.astype(np.int32), radius=2, color=(255, 0, 0), thickness=-1)
+                cv2.circle(real, kp.astype(np.int32), radius=2, color=(255, 0, 0), thickness=-1)
+                cv2.circle(dist, kp.astype(np.int32), radius=2, color=(255, 0, 0), thickness=-1)
+
+            # --- Diagnnostic image writing with type clamping
+            cv2.imwrite('edges.png', edge.astype(np.uint8))
+            cv2.imwrite('real.png', real.astype(np.uint8))
+            cv2.imwrite('norm.png', synth.normals.astype(np.uint8))
+            cv2.imwrite('grad.png', synth.normalgrad.astype(np.uint8))
+            cv2.imwrite('dist.png', dist.astype(np.uint8))
+
+            pixels_r, visible_r = proj.visible_world_points(
                 self.clicks,
-                T_cam_world
+                T_refined
             )
-            pr_elapsed = time.perf_counter() - pr_start
-            self.get_logger().info(
-                f"Finished visible world point projection in {pr_elapsed:.3f}s"
-            )
-            img_file = os.path.join(self.save_dir, cam.image_filename)
-            tags = self.clicks[visible][:, -1]
+
+            # --- Annotate; diagnostic comparative for w/ and w/o register ---
+            # TODO: annotate is not thread safe
+            tags = self.labels[visible]
             pix = pixels[visible]
             labels = np.hstack((pix, tags[:, None]))
-            self.annotate(img_file, labels)
+            self.annotate(cam.image_filename, labels)
+
+            tags = self.labels[visible_r]
+            pix = pixels_r[visible_r]
+            labels = np.hstack((pix, tags[:, None]))
+            self.annotate(cam.image_filename, labels, save_name='labelsReg.txt')
+
+    def register_pose(
+        self,
+        proj,
+        T_cam_world,
+        dist,
+        nearest_gx,
+        nearest_gy,
+        backend='gauss-newton'
+    ):
+
+        synth = proj.render(T_cam_world)
+        if backend == 'gauss-newton':
+            T_refined, residual, kps = self.gauss_newton_backend(
+                proj,
+                T_cam_world,
+                dist,
+                nearest_gx,
+                nearest_gy,
+                synth
+            )
+            return T_refined, residual, kps, synth
+        elif backend == 'gradient-descent':
+            return self.gradient_descent_backend(proj, T_cam_world, dist, synth), synth
+        else:
+            self.get_logger().info(
+                f" Unrecognized backend choice. Got {backend};"
+                " expected 'gauss-newton' or 'gradient-descent'"
+            )
+
+    def gauss_newton_backend(
+        self,
+        proj,
+        T_cam_world,
+        dist,
+        nearest_gx,
+        nearest_gy,
+        synth,
+        lamb = 1.0,
+        alpha=10.0,
+        beta=6.0,
+        k_thresh = 5,
+        max_iters=50
+    ):
+
+        gx = cv2.Sobel(dist, cv2.CV_32F, 1, 0, ksize=3)
+        gy = cv2.Sobel(dist, cv2.CV_32F, 0, 1, ksize=3)
+
+        T = np.linalg.inv(T_cam_world)
+
+        H, W, D = synth.normals.shape
+        landmarks, valid = synth.keypoints_3D
+        u = synth.keypoints_2D[:,0].astype(np.int32)
+        v = synth.keypoints_2D[:,1].astype(np.int32)
+        syn_dirs = np.stack([
+            synth.gx_syn[v, u],
+            synth.gy_syn[v, u]
+        ], axis=1)
+        k = 0
+
+        for iteration in range(max_iters):
+
+            # Linearize around CURRENT accepted pose
+            kps, valid_iter = proj.world_to_image(landmarks, T)
+
+            Pw = landmarks[valid_iter]
+            kps = kps[valid_iter]
+            syn_iter = syn_dirs[valid_iter]
+
+            u = np.round(kps[:,0]).astype(np.int32)
+            v = np.round(kps[:,1]).astype(np.int32)
+
+            inside = (
+                (u >= 0) & (u < W) &
+                (v >= 0) & (v < H)
+            )
+
+            Pw       = Pw[inside]
+            kps      = kps[inside]
+            syn_iter = syn_iter[inside]
+            u        = u[inside]
+            v        = v[inside]
+
+
+            real_dirs = np.stack([
+                nearest_gx[v, u],
+                nearest_gy[v, u]
+            ], axis=1)
+
+            dot = np.sum(real_dirs * syn_iter, axis=1)
+            dot = np.clip(dot, -1.0, 1.0)
+            orientation_cost = 1.0 - np.abs(dot)
+
+            J_proj = proj.analytic_projection_jacobian(T, Pw)
+            J_image = self.analytic_metric_jacobian(dist, gx, gy, kps)[:, None, :]
+            J = np.einsum("nij,njk->nik", J_image, J_proj).squeeze(1)
+
+            r = self.residuals(dist, kps)
+            r += alpha * orientation_cost
+
+            # s = np.linalg.svd(J, compute_uv=False)
+
+            # self.get_logger().info(f"Singular values: {s}")
+            # self.get_logger().info(f"Condition number: {s[0] / s[-1]}")
+            JTJ = J.T @ J
+            g = J.T @ r
+
+            current_cost = np.dot(r,r)
+            if not iteration:
+                self.get_logger().info(
+                    f'Initial Residual: {current_cost:.4f}'
+                    f'    (mean distance: {r.mean():.4f} +/- {r.std():.4f})\n'
+                    # f'Initial T: \n{np.linalg.inv(T)}'
+                )
+
+            while True:
+                if k == k_thresh:
+                    self.get_logger().info(' Rendering new synthetic view.')
+                    synth = proj.render(np.linalg.inv(T))
+                    landmarks, valid = synth.keypoints_3D
+                    u = synth.keypoints_2D[:,0].astype(np.int32)
+                    v = synth.keypoints_2D[:,1].astype(np.int32)
+                    syn_dirs = np.stack([
+                        synth.gx_syn[v, u],
+                        synth.gy_syn[v, u]
+                    ], axis=1)
+                    k = 0
+
+                A = JTJ + lamb * np.diag(np.diag(JTJ))
+                delta = np.linalg.solve(A, -g)
+
+                T_candidate = SE3.apply_se3_update(T, delta)
+
+                kps_new, valid = proj.world_to_image(landmarks, T_candidate)
+                Pw_new = landmarks[valid]
+                kps_new = kps_new[valid]
+                syn_new = syn_dirs[valid]
+
+                u = np.round(kps_new[:, 0]).astype(np.int32)
+                v = np.round(kps_new[:, 1]).astype(np.int32)
+
+                inside = (
+                    (u >= 0) & (u < W) &
+                    (v >= 0) & (v < H)
+                )
+
+                Pw_new   = Pw_new[inside]
+                kps_new  = kps_new[inside]
+                syn_new  = syn_new[inside]
+                u        = u[inside]
+                v        = v[inside]
+
+                real_dirs = np.stack([
+                    nearest_gx[v, u],
+                    nearest_gy[v, u]
+                ], axis=1)
+
+                dot = np.sum(real_dirs * syn_new, axis=1)
+                dot = np.clip(dot, -1.0, 1.0)
+                orientation_cost = 1.0 - np.abs(dot)
+
+                r_new = self.residuals(dist, kps_new)
+                r_new += alpha * orientation_cost
+
+                new_cost = np.dot(r_new, r_new)
+                # self.get_logger().info(
+                #     f"    lambda: {lamb}"
+                    # f"    delta: {np.linalg.norm(delta)}\n"
+                    # f"    predicted: {-g @ delta}\n"
+                    # f"    current: {current_cost}\n"
+                    # f"    candidate: {new_cost}"
+                # )
+                if new_cost < current_cost:
+                    # accept
+                    current_cost = new_cost
+                    T = T_candidate
+                    lamb *= 0.5
+                    self.get_logger().info(
+                        f'  Residual ({iteration+1}): {current_cost:.4f}'
+                        f'    (mean distance: {r_new.mean():.4f})'
+                    )
+                    k += 1
+                    break
+
+                # reject
+                lamb *= 2.0
+
+                if lamb > 1e10:
+                    self.get_logger().info(f'Early exit - LM lambda runaway: {lamb} > 1e10')
+                    return T, r, kps
+
+            if new_cost < 1e3:
+                self.get_logger().info(
+                    f'  Final Residual (Converged, {iteration+1}): '
+                    f'{current_cost:.4f}'
+                    f'    (mean distance: {r.mean():.4f} +/- {r.std():.4f})'
+                    # f'\n  Final T: \n{np.linalg.inv(T)}'
+                )
+                return T, r, kps
+
+
+        self.get_logger().info(
+            f'  Final Residual (Not Converged): {current_cost:.4f}'
+            f'    (mean distance: {r.mean():.4f} +/- {r.std():.4f})'
+            # f'  Final T: {np.linalg.inv(T)}'
+        )
+        return T, r, kps
+
+    def gradient_descent_backend(self, T_cam_world, dist):
+        self.get_logger().info(
+            f" Not implemented error: 'gradient-descent'"
+            "backend is not implemented.\n"
+            " Returning T_cam_world. "
+        )
+        return T_cam_world
+
+    def residuals(self, distance_image, uv):
+        u = np.clip(uv[:,0].astype(np.int32), 0, distance_image.shape[1]-1)
+        v = np.clip(uv[:,1].astype(np.int32), 0, distance_image.shape[0]-1)
+        return distance_image[v, u]  # opencv index is col/row vs numpy row/col
+
+    def analytic_metric_jacobian(self, distance_image, gx, gy, kps):
+        u = np.clip(kps[:,0].astype(np.int32), 0, distance_image.shape[1]-1)
+        v = np.clip(kps[:,1].astype(np.int32), 0, distance_image.shape[0]-1)
+        gx_i = gx[v, u]
+        gy_i = gy[v, u]
+        return np.stack((gx_i, gy_i), axis=-1)
 
     def pose_msg_to_matrix(self, pose):
         t = [pose.position.x, pose.position.y, pose.position.z]
@@ -291,12 +632,11 @@ class AnnotatorNode(Node):
 
                 line += vals
                 line += "\n"
-                lines.append(line)
-            f.write(lines)
-            print(
-                f"[PROC]    Annotation saved to {save_name}.txt:\n"
-                f"[PROC]        {line}"
-            )
+                f.write(line)
+                # print(
+                #     f"[PROC]    Annotation saved to {save_name}.txt:\n"
+                #     f"[PROC]        {line}"
+                # )
 
     def _queue_watchdog(self):
         while rclpy.ok():

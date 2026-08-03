@@ -7,6 +7,7 @@ import glob2
 import time
 import utm
 import csv
+import cv2
 
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
@@ -22,12 +23,29 @@ warnings.filterwarnings(
 import numpy as np
 import open3d as o3d
 import pyvista as pv
+# import matplotlib.pyplot as plt
+
+from open3d.visualization import rendering
+from dataclasses import dataclass
 
 from birdseye.camera.camera import CameraConfig, SensorConfigLoader, PinholeCameraModel
 from birdseye.camera.geo_datasets import GeoTIFF, GeoPointCloud
+from birdseye.geometry.se3 import SE3
 
 
-STRIDE = 200
+# STRIDE = 200
+STRIDE = 'corners'
+
+
+@dataclass
+class SyntheticView:
+    keypoints_2D: np.ndarray    # Shi-Tomasi features
+    keypoints_3D: np.ndarray    # Shi-Tomasi features, projected to 3D
+    depth: np.ndarray           # (w,h,1) depth image
+    normals: np.ndarray         # (w,h,3) normal orientation image
+    normalgrad: np.ndarray      # (w,h,1) normal orientation gradient image
+    gx_syn:np.ndarray           # (w,h,1) x normal-gradient edge normal directions
+    gy_syn:np.ndarray           # (w,h,1) y normal-gradient edge normal directions
 
 
 def csv_read(clicks_csv):
@@ -72,32 +90,24 @@ def to_pyvista_mesh(o3d_mesh):
 
 
 def draw_camera(
-    loader, engine, cam_name, color, T_ins_world, stride=STRIDE, verbose=False
+    loader, proj, cam_name, color, T_ins_world, stride=STRIDE, verbose=False
 ):
     cam_cfg = loader.get_camera(cam_name)
     cam = PinholeCameraModel.from_config(cam_cfg)
-    engine.camera = cam
+    proj.camera = cam
+    image_shape = proj.camera.image_shape()
+    stride = stride
 
     T_cam_ins = cam_cfg.T_cam_ins
     T_cam_world = T_ins_world @ T_cam_ins
-    start = time.time()
-    image_shape = engine.camera.image_shape()
-    stride = stride
 
-    origins, dirs = engine.camera_frustum(
+    origins, dirs = proj.camera_frustum(
         image_shape,
         T_cam_world,
         stride=stride,
     )
-    if verbose:
-        if stride != "corners":
-            print(
-                f"[PROC] [DEBUG]    Rays cast: ",
-                f"{(image_shape[0] // stride) * (image_shape[1] // stride)}",
-                f"({image_shape[0] // stride} x {image_shape[1] // stride})",
-            )
-            print(f"[PROC] [DEBUG]    elapsed: {time.time() - start}")
-    hit_result = engine.backend.raycast(origins, dirs)
+
+    hit_result = proj.backend.raycast(origins, dirs)
     t_hit = hit_result["t_hit"].numpy()
     hit_points = np.where(
         np.isfinite(t_hit)[:, None], origins + t_hit[:, None] * dirs, np.nan
@@ -124,11 +134,11 @@ def add_rays(plotter, origins, dirs, hit_points=None, color=None):
         if hit_points is not None and np.all(np.isfinite(hit_points[i])):
             if color is None:
                 plotter.add_mesh(
-                    pv.Sphere(radius=1.5, center=hit_points[i]), color="blue"
+                    pv.Sphere(radius=0.5, center=hit_points[i]), color="blue"
                 )
             else:
                 plotter.add_mesh(
-                    pv.Sphere(radius=1.5, center=hit_points[i]), color=color
+                    pv.Sphere(radius=0.5, center=hit_points[i]), color=color
                 )
 
 
@@ -139,6 +149,43 @@ def add_spheres(world_points, radius=None, color=None):
         radius = 0.5
     for point in world_points:
         plotter.add_mesh(pv.Sphere(radius=radius, center=point), color=color)
+
+
+def normal_gradient_image(
+    normals,
+    valid_mask=None,
+    eps = 1e-6,
+):
+    H, W, _ = normals.shape
+
+    dnx = np.zeros((H, W), np.float32)
+    dny = np.zeros((H, W), np.float32)
+
+    # central differences of the normals
+    dx = normals[:, 2:, :] - normals[:, :-2, :]
+    dy = normals[2:, :, :] - normals[:-2, :, :]
+
+    # magnitude of each derivative
+    dnx[:, 1:-1] = np.linalg.norm(dx, axis=2)
+    dny[1:-1, :] = np.linalg.norm(dy, axis=2)
+
+    if valid_mask is not None:
+        valid = (
+            valid_mask[1:-1,1:-1] &
+            valid_mask[1:-1,:-2] &
+            valid_mask[1:-1,2:] &
+            valid_mask[:-2,1:-1] &
+            valid_mask[2:,1:-1]
+        )
+
+        dnx[1:-1,1:-1] *= valid
+        dny[1:-1,1:-1] *= valid
+
+    mag = np.sqrt(dnx**2 + dny**2)
+    gx_syn = dnx / (mag + eps)
+    gy_syn = dny / (mag + eps)
+
+    return mag, gx_syn, gy_syn
 
 
 class GeometryBackend(ABC):
@@ -166,7 +213,11 @@ class ProjectionEngine:
 
     def image_to_world(self, pixels, T_cam_world):
         origins, dirs = self.camera.image_to_rays(pixels, T_cam_world)
-        return self.backend.raycast(origins, dirs)
+        ans = self.backend.raycast(origins, dirs)
+        t = ans["t_hit"].numpy()
+        valid = np.isfinite(t)
+        points = origins + dirs * t[:, None]
+        return points, valid
 
     def world_to_image(self, points, T_cam_world):
         return self.camera.world_to_image(points, T_cam_world)
@@ -185,7 +236,15 @@ class ProjectionEngine:
         return origins, dirs
 
     def pixels_in_view(self, pixels):
-        return self.camera.valid_path.contains_points(pixels)
+        u = pixels[:, 0]
+        v = pixels[:, 1]
+
+        return (
+            (u >= 0)
+            & (u < self.camera.width)
+            & (v >= 0)
+            & (v < self.camera.height)
+        )
 
     def occlusion_mask(self, world_points, T_cam_world, epsilon):
         cam_origin = T_cam_world[:3, 3]
@@ -198,7 +257,9 @@ class ProjectionEngine:
 
         # visible if:
         #   first thing hit is the target itself
-        not_occluded = np.isfinite(t_hit) & np.abs(t_hit - target_dist) <= epsilon
+        finite = np.isfinite(t_hit)
+        close = np.abs(t_hit - target_dist) <= epsilon
+        not_occluded = finite & close
         return not_occluded
 
     def visible_world_points(
@@ -224,6 +285,101 @@ class ProjectionEngine:
         visible = np.zeros(len(world_points), dtype=bool)
         visible[candidate_mask] = not_occluded
         return pixels, visible
+
+    def render(
+        self,
+        T_cam_world,
+        eps=1e-6
+    ):
+
+        rays = self.backend.scene.create_rays_pinhole(
+            self.camera.K,
+            np.linalg.inv(T_cam_world),  # wants world-to-cam not cam-to-world
+            self.camera.width,
+            self.camera.height,
+        )
+        ans = self.backend.scene.cast_rays(rays)
+
+        #  synthetic depth image
+        t_hit = ans['t_hit'].numpy()
+
+        # prepare normal gradient image, get Shi-Tomasi keypoints
+        normals = ans["primitive_normals"].numpy()      # H,W,3
+        norm = ((normals + 1.0) * 127.5).astype(np.uint8)
+
+        valid = np.isfinite(ans["t_hit"].numpy())
+        grad, gx_syn, gy_syn = normal_gradient_image(normals, valid)
+
+        grad = cv2.normalize(
+            grad,
+            None,
+            0,
+            255,
+            cv2.NORM_MINMAX
+        ).astype(np.uint8)
+        # grad = cv2.bilateralFilter(grad, 15, 45, 45)
+        ret,thresh = cv2.threshold(grad, 25.5, 255, cv2.THRESH_BINARY)
+
+        # --- Nonmax suppression in contour set ---
+        contours, _ = cv2.findContours(
+            thresh,
+            cv2.RETR_LIST,
+            cv2.CHAIN_APPROX_NONE
+        )
+        clean = np.zeros_like(thresh)
+        for c in contours:
+            if cv2.arcLength(c, False) > 40:
+                cv2.drawContours(clean, [c], -1, 255, 1)
+        thresh = cv2.ximgproc.thinning(clean)
+
+        # Shi-Tomasi features (from "Good Fetures to Track")
+        keypoints_2D = cv2.goodFeaturesToTrack(thresh, 2048, 0.1, 10)
+        keypoints_2D = keypoints_2D.reshape(-1,2).astype(np.float32)
+        keypoints_3D = self.image_to_world(keypoints_2D, T_cam_world)
+
+        return SyntheticView(
+            keypoints_2D,       # Shi-Tomasi features
+            keypoints_3D,       # keypoints_2D projected into 3D
+            t_hit,              # depth
+            norm,               # surface primitive normal image
+            thresh,             # thresholded surface normal gradient edge map
+            gx_syn,             # x normal-gradient edge normal directions
+            gy_syn              # y normal-gradient edge normal directions
+        )
+
+    def analytic_projection_jacobian(self, T, Pw):
+        N = len(Pw)
+        R = T[:3,:3]
+        t = T[:3,3]
+
+        xc = (R @ Pw.T).T + t
+        x = xc[:,0]
+        y = xc[:,1]
+        z = xc[:,2]
+
+        J_xi = np.zeros((N,3,6))
+        J_xi[:,:3,:3] = np.broadcast_to(np.eye(3),(N,3,3))
+        J_xi[:,:,3:] = -SE3.skew(xc)
+
+        J_pixel = np.zeros((N,2,3))
+        J_pixel[:,0,0] = self.camera.K[0,0]/z
+        J_pixel[:,0,2] = -self.camera.K[0,0]*x/z**2
+        J_pixel[:,1,1] = self.camera.K[1,1]/z
+        J_pixel[:,1,2] = -self.camera.K[1,1]*y/z**2
+
+        return np.einsum("nij,njk->nik", J_pixel, J_xi)
+
+    def numerical_projection_jacobian(self, T, Pw, eps=1e-6):
+        J = np.zeros((2,6))
+        u0 = self.camera.project(T, Pw)
+
+        for i in range(6):
+            d = eps*np.ones(6)
+            T_pert = SE3.perturb(T, d)
+            u1 = self.camera.world_to_image(Pw, T_pert)
+            J[:,i] = (u1 - u0) / eps
+
+        return J
 
 
 class FlatWorldBackend(GeometryBackend):
@@ -353,6 +509,10 @@ class MeshBackend(GeometryBackend):
             points[choose_neg]
             - t_neg[choose_neg, None] * direction
         )
+
+        # remove lingering NaNs (arise when the click is outside mesh extent)
+        snapped = snapped[~np.isnan(snapped).any(axis=1)]
+
         return snapped
 
 
@@ -413,27 +573,31 @@ if __name__ == "__main__":
         print("[PROC]    Making new mesh from pointcloud...")
         # Convert to Open3D point cloud
         pcd = o3d.geometry.PointCloud()
+        print('[PROC]        Loading points...')
         pcd.points = o3d.utility.Vector3dVector(dataset.points)
         if dataset.colors is not None:
+            print('[PROC]        Loading colors...')
             pcd.colors = o3d.utility.Vector3dVector(dataset.colors)
 
         if args.downsample:
             print("[PROC]    Downsampling...")
             # Optional: downsample if the cloud is very large
-            voxel_size = 0.25
+            voxel_size = 0.15
             pcd = pcd.voxel_down_sample(voxel_size)
 
         print(f"[PROC]        After downsampling: {len(pcd.points):,} points")
 
         # Estimate normals (required for Poisson reconstruction)
         print("[PROC]    Estimating pointcloud normals...")
+        origin = np.mean(np.asarray(pcd.points), axis=0)
+        pcd.translate(-origin)
         pcd.estimate_normals(
             search_param=o3d.geometry.KDTreeSearchParamHybrid(
-                radius=5.0,
+                radius=1.0,
                 max_nn=30,
             )
         )
-        pcd.orient_normals_consistent_tangent_plane(50)
+        pcd.orient_normals_consistent_tangent_plane(30)
 
         # Generate mesh
         print("[PROC]    Running Poisson reconstruction...")
@@ -465,9 +629,11 @@ if __name__ == "__main__":
                 vertex_colors[i] = pcd_colors[idx[0]]
 
             mesh.vertex_colors = o3d.utility.Vector3dVector(vertex_colors)
+        mesh.translate(origin)
 
         print("[PROC]    Building Open3D RaycastingScene")
         tmesh = o3d.t.geometry.TriangleMesh.from_legacy(mesh)
+        tmesh.fill_holes()
         scene = o3d.t.geometry.RaycastingScene()
         scene.add_triangles(tmesh)
         backend = MeshBackend(scene)
@@ -476,13 +642,24 @@ if __name__ == "__main__":
 
     verts = np.asarray(mesh.vertices)
 
+    T_ins_world = np.eye(4)
+    T_ins_world[:3, :3] = np.array(
+        [[0, 1, 0], [1, 0, 0], [0, 0, -1]]
+    )  # NED INS to ENU viz
+    x = (verts[:,0].max() - verts[:,0].min()) / 2 + verts[:,0].min()
+    y = (verts[:,1].max() - verts[:,1].min()) / 2 + verts[:,1].min()
+    z = verts[:,2].max() + 10
+    T_ins_world[:3, 3] = np.array([x,y,z])
+
+    # TODO: registrator.register()
+
+    # Visualize
     print(
         f"[PROC] Mesh bounds:\n"
         f"[PROC]    X: {verts[:,0].min():.2f} -> {verts[:,0].max():.2f}\n"
         f"[PROC]    Y: {verts[:,1].min():.2f} -> {verts[:,1].max():.2f}\n"
         f"[PROC]    Z: {verts[:,2].min():.2f} -> {verts[:,2].max():.2f}"
     )
-
     print(
         f"[PROC] Click bounds (pre-snap):\n"
         f"[PROC]    X: {clicks[:,0].min():.2f} -> {clicks[:,0].max():.2f}\n"
@@ -490,13 +667,6 @@ if __name__ == "__main__":
         f"[PROC]    Z: {clicks[:,2].min():.2f} -> {clicks[:,2].max():.2f}"
     )
 
-    T_ins_world = np.eye(4)
-    T_ins_world[:3, :3] = np.array(
-        [[0, 1, 0], [1, 0, 0], [0, 0, -1]]
-    )  # NED INS to ENU viz
-    T_ins_world[:3, 3] = np.array([584150, 4093350, 115])
-
-    # Visualize
     pv_mesh = to_pyvista_mesh(mesh)
     plotter = pv.Plotter()
     plotter.add_mesh(pv_mesh, scalars="Colors", rgb=True, opacity=1.0)
@@ -504,7 +674,7 @@ if __name__ == "__main__":
     loader = SensorConfigLoader(args.yaml_filepath)
     cam_cfg = loader.get_camera("rgb_1")
     cam = PinholeCameraModel.from_config(cam_cfg)
-    engine = ProjectionEngine(cam, backend)
+    proj = ProjectionEngine(cam, backend)
     clicks = backend.snap_points_along_direction(
         clicks,
         direction=[0, 0, 1],   # ENU "up"
@@ -517,14 +687,53 @@ if __name__ == "__main__":
         f"[PROC]    Z: {clicks[:,2].min():.2f} -> {clicks[:,2].max():.2f}"
     )
 
-    draw_camera(loader, engine, "rgb_1", "red", T_ins_world)
-    draw_camera(loader, engine, "rgb_2", "blue", T_ins_world)
-    draw_camera(loader, engine, "rgb_3", "green", T_ins_world)
-    draw_camera(loader, engine, "rgb_4", "yellow", T_ins_world)
-    draw_camera(loader, engine, "multispec_1", "misty_rose", T_ins_world)
-    draw_camera(loader, engine, "multispec_2", "lavender", T_ins_world)
-    draw_camera(loader, engine, "multispec_3", "honeydew", T_ins_world)
-    draw_camera(loader, engine, "multispec_4", "light_goldenrod", T_ins_world)
+    cam_cfg = loader.get_camera('rgb_1')
+    cam = PinholeCameraModel.from_config(cam_cfg)
+    proj.camera = cam
+    # T_cam_ins = cam_cfg.T_cam_ins
+    # T_cam_world = T_ins_world @ T_cam_ins
+    T_cam_world = np.array(
+        [[ 2.44943705e-01 ,-5.68428045e-01, -7.85424892e-01 , 5.84144897e+05],
+         [-9.61736962e-01, -2.45006580e-01, -1.22612415e-01,  4.09335174e+06],
+         [-1.22737924e-01 , 7.85405289e-01 ,-6.06691082e-01 , 1.22659203e+02],
+         [ 0.00000000e+00 , 0.00000000e+00 , 0.00000000e+00 , 1.00000000e+00]]
+    )
+    synth = proj.render(T_cam_world)
+
+    landmarks, _ = synth.keypoints_3D
+    Pw = landmarks[0:1,:]
+    T_world_cam = np.linalg.inv(T_cam_world)
+    J_analytic = proj.analytic_projection_jacobian(T_world_cam, Pw)
+    J_fd = np.zeros((2,6))
+
+    for k in range(6):
+        delta = np.zeros(6)
+        delta[k] = 1e-6
+
+        T2 = SE3.apply_se3_update(T_world_cam, delta)
+        with np.printoptions(precision=3):
+            print("T_world_cam: \n", T_world_cam)
+            print("T2: \n", T2)
+            print("diff of T's: \n", T_world_cam - T2)
+
+        p1, _ = proj.world_to_image(Pw, T_world_cam)
+        p2, _ = proj.world_to_image(Pw, T2)
+        print('points: \n', p1, p2)
+
+        J_fd[:,k] = (p2[0] - p1[0]) / 1e-6
+    with np.printoptions(precision=3):
+        print("J_analytic: \n", J_analytic)
+        print("J_fd: \n: ", J_fd)
+        print("diff of J's: \n", J_analytic - J_fd)
+
+    draw_camera(loader, proj, "rgb_1", "red", T_ins_world)
+    # draw_camera(loader, proj, "rgb_2", "blue", T_ins_world)
+    # draw_camera(loader, proj, "rgb_3", "green", T_ins_world)
+    draw_camera(loader, proj, "rgb_4", "yellow", T_ins_world)
+    # draw_camera(loader, proj, "multispec_1", "misty_rose", T_ins_world)
+    # draw_camera(loader, proj, "multispec_2", "lavender", T_ins_world)
+    # draw_camera(loader, proj, "multispec_3", "honeydew", T_ins_world)
+    # draw_camera(loader, proj, "multispec_4", "light_goldenrod", T_ins_world)
 
     add_spheres(clicks, color="magenta")
 

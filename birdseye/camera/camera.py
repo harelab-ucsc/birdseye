@@ -73,17 +73,6 @@ class PinholeCameraModel:
         self.height = height
         self.name = name
 
-        self._2DFrameEdges = [[0, i * 10] for i in range(self.height // 10)]
-        self._2DFrameEdges += [
-            [self.width - 1, i * 10] for i in range(self.height // 10)
-        ]
-        self._2DFrameEdges += [[i * 10, 0] for i in range(self.width // 10)]
-        self._2DFrameEdges += [
-            [i * 10, self.height - 1] for i in range(self.width // 10)
-        ]
-        self.valid_path = None
-        self.build_valid_polygon()
-
     @classmethod
     def from_config(cls, cam_cfg):
         """
@@ -122,11 +111,33 @@ class PinholeCameraModel:
     def image_shape(self):
         return (self.width, self.height)
 
-    def build_valid_polygon(self):
-        pts = np.asarray(self._2DFrameEdges, dtype=np.float32)
-        pts = cv2.undistortPoints(pts[:, None, :], self.K, self.D, P=self.K)
-        polygon = np.squeeze(pts)
-        self.valid_path = Path(polygon)
+    def pixel_rays(self, pixels):
+        """
+        Convert image pixels to unit rays in the camera frame.
+
+        Parameters
+        ----------
+        pixels : (N,2)
+
+        Returns
+        -------
+        dirs_cam : (N,3)
+        """
+        pixels = np.asarray(pixels, dtype=np.float32)
+
+        pix_h = np.column_stack((
+            pixels,
+            np.ones(len(pixels), dtype=np.float32)
+        ))
+
+        dirs_cam = (self.Kinv @ pix_h.T).T
+        dirs_cam /= np.linalg.norm(
+            dirs_cam,
+            axis=1,
+            keepdims=True
+        ) + 1e-12
+
+        return dirs_cam.astype(np.float32)
 
     def image_to_rays(self, pixels, T_cam_world):
         """
@@ -152,15 +163,14 @@ class PinholeCameraModel:
         dirs_world /= np.linalg.norm(dirs_world, axis=1, keepdims=True) + 1e-12
         return origins.astype(np.float32), dirs_world.astype(np.float32)
 
-    # Forward projection (3D → 2D)
-    def world_to_image(self, world_points, T_cam_world):
+    # Forward projection (3D -> 2D)
+    def world_to_image(self, world_points, T_world_cam):
         world_points = np.asarray(world_points)
         if world_points.shape[0] == 0:
             return np.zeros((0, 2)), np.zeros((0,), dtype=bool)
 
         if world_points.shape[1] == 3:
             world_points = np.hstack([world_points, np.ones((len(world_points), 1))])
-        T_world_cam = np.linalg.inv(T_cam_world)
         cam = T_world_cam @ world_points.T
         cam = cam[:3, :]
         proj = self.K @ cam
