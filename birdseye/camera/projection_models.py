@@ -39,13 +39,24 @@ STRIDE = 'corners'
 
 @dataclass
 class SyntheticView:
-    keypoints_2D: np.ndarray    # Shi-Tomasi features
-    keypoints_3D: np.ndarray    # Shi-Tomasi features, projected to 3D
-    depth: np.ndarray           # (w,h,1) depth image
-    normals: np.ndarray         # (w,h,3) normal orientation image
-    normalgrad: np.ndarray      # (w,h,1) normal orientation gradient image
-    gx_syn:np.ndarray           # (w,h,1) x normal-gradient edge normal directions
-    gy_syn:np.ndarray           # (w,h,1) y normal-gradient edge normal directions
+    contour_pixels: np.ndarray      # (N,2)
+    contour_world: np.ndarray       # (N,3)
+    contour_normals: np.ndarray     # (N,2)
+    edge_map: np.ndarray
+    distance: np.ndarray
+    gx: np.ndarray
+    gy: np.ndarray
+    normals: np.ndarray
+    depth: np.ndarray
+
+
+@dataclass
+class RaycastResult:
+    origins: np.ndarray      # (N,3)
+    directions: np.ndarray   # (N,3)
+    t: np.ndarray            # (N,)
+    points: np.ndarray       # (N,3)
+    valid: np.ndarray        # (N,)
 
 
 def csv_read(clicks_csv):
@@ -212,12 +223,25 @@ class ProjectionEngine:
         self.backend = backend
 
     def image_to_world(self, pixels, T_cam_world):
-        origins, dirs = self.camera.image_to_rays(pixels, T_cam_world)
-        ans = self.backend.raycast(origins, dirs)
+        origins, directions = self.camera.image_to_rays(
+            pixels,
+            T_cam_world,
+        )
+
+        ans = self.backend.raycast(origins, directions)
+
         t = ans["t_hit"].numpy()
         valid = np.isfinite(t)
-        points = origins + dirs * t[:, None]
-        return points, valid
+
+        points = origins + directions * t[:, None]
+
+        return RaycastResult(
+            origins=origins,
+            directions=directions,
+            t=t,
+            points=points,
+            valid=valid,
+        )
 
     def world_to_image(self, points, T_cam_world):
         return self.camera.world_to_image(points, T_cam_world)
@@ -289,62 +313,109 @@ class ProjectionEngine:
     def render(
         self,
         T_cam_world,
-        eps=1e-6
+        grad_thresh=25.5,
+        min_contour_length=40,
     ):
+        """
+        Render a synthetic observation suitable for contour registration.
 
+        Returns
+        -------
+        SyntheticView
+            contour_pixels : (N,2) float32 (u,v)
+            contour_world  : (N,3)
+            contour_normals: (N,2)
+            edge_map
+            distance
+            gx
+            gy
+            normals
+            depth
+        """
+
+        # Render mesh
         rays = self.backend.scene.create_rays_pinhole(
             self.camera.K,
-            np.linalg.inv(T_cam_world),  # wants world-to-cam not cam-to-world
+            np.linalg.inv(T_cam_world),
             self.camera.width,
             self.camera.height,
         )
+
         ans = self.backend.scene.cast_rays(rays)
-
-        #  synthetic depth image
-        t_hit = ans['t_hit'].numpy()
-
-        # prepare normal gradient image, get Shi-Tomasi keypoints
-        normals = ans["primitive_normals"].numpy()      # H,W,3
-        norm = ((normals + 1.0) * 127.5).astype(np.uint8)
-
-        valid = np.isfinite(ans["t_hit"].numpy())
-        grad, gx_syn, gy_syn = normal_gradient_image(normals, valid)
-
+        depth = ans["t_hit"].numpy()
+        normals = ans["primitive_normals"].numpy()
+        valid = np.isfinite(depth)
+        grad, gx_syn, gy_syn = normal_gradient_image(
+            normals,
+            valid,
+        )
         grad = cv2.normalize(
             grad,
             None,
             0,
             255,
-            cv2.NORM_MINMAX
+            cv2.NORM_MINMAX,
         ).astype(np.uint8)
-        # grad = cv2.bilateralFilter(grad, 15, 45, 45)
-        ret,thresh = cv2.threshold(grad, 25.5, 255, cv2.THRESH_BINARY)
 
-        # --- Nonmax suppression in contour set ---
-        contours, _ = cv2.findContours(
-            thresh,
-            cv2.RETR_LIST,
-            cv2.CHAIN_APPROX_NONE
+        _, edge = cv2.threshold(
+            grad,
+            grad_thresh,
+            255,
+            cv2.THRESH_BINARY,
         )
-        clean = np.zeros_like(thresh)
-        for c in contours:
-            if cv2.arcLength(c, False) > 40:
-                cv2.drawContours(clean, [c], -1, 255, 1)
-        thresh = cv2.ximgproc.thinning(clean)
 
-        # Shi-Tomasi features (from "Good Fetures to Track")
-        keypoints_2D = cv2.goodFeaturesToTrack(thresh, 2048, 0.1, 10)
-        keypoints_2D = keypoints_2D.reshape(-1,2).astype(np.float32)
-        keypoints_3D = self.image_to_world(keypoints_2D, T_cam_world)
+        # Remove tiny contours
+        clean = np.zeros_like(edge)
+        contours, _ = cv2.findContours(
+            edge,
+            cv2.RETR_LIST,
+            cv2.CHAIN_APPROX_NONE,
+        )
+        for c in contours:
+            if cv2.arcLength(c, False) > min_contour_length:
+                cv2.drawContours(clean, [c], -1, 255, 1)
+        edge = cv2.ximgproc.thinning(clean)
+
+        # Distance transform of synthetic contour
+        distance = cv2.distanceTransform(
+            255 - edge,
+            cv2.DIST_L2,
+            5,
+        )
+
+        # Extract every contour pixel
+        vv, uu = np.nonzero(edge)
+        contour_pixels = np.stack(
+            (uu, vv),
+            axis=1,
+        ).astype(np.float32)
+
+        # Recover corresponding 3D points directly from rendered depth
+        d = depth[vv, uu]
+        finite = np.isfinite(d)
+        contour_pixels = contour_pixels[finite]
+        uu = uu[finite]
+        vv = vv[finite]
+        d = d[finite]
+
+        # Get contour 3D points
+        contour_rc = self.image_to_world(contour_pixels, T_cam_world)
+        contour_world = contour_rc.points
+        # contour_world /= np.linalg.norm(contour_world, axis=1, keepdims=True)
+
+        # Edge normal directions
+        contour_normals = np.stack((gx_syn[vv, uu], gy_syn[vv, uu]), axis=1)
 
         return SyntheticView(
-            keypoints_2D,       # Shi-Tomasi features
-            keypoints_3D,       # keypoints_2D projected into 3D
-            t_hit,              # depth
-            norm,               # surface primitive normal image
-            thresh,             # thresholded surface normal gradient edge map
-            gx_syn,             # x normal-gradient edge normal directions
-            gy_syn              # y normal-gradient edge normal directions
+            contour_pixels=contour_pixels,
+            contour_world=contour_rc.points,
+            contour_normals=contour_normals,
+            edge_map=edge,
+            distance=distance,
+            gx=gx_syn,
+            gy=gy_syn,
+            normals=((normals + 1.0) * 127.5).astype(np.uint8),
+            depth=depth,
         )
 
     def analytic_projection_jacobian(self, T, Pw):

@@ -293,7 +293,7 @@ class AnnotatorNode(Node):
                 length = cv2.arcLength(c, False)
                 x, y, w, h = cv2.boundingRect(c)
                 extent = max(w, h)
-                if length > 40 and extent > 10:
+                if length > 40:# and extent > 10:
                     cv2.drawContours(edge_clean, [c], -1, 255, 1)
             edge = edge_clean
 
@@ -334,6 +334,7 @@ class AnnotatorNode(Node):
             edge = cv2.cvtColor(edge,cv2.COLOR_GRAY2RGB)
             real = cv2.cvtColor(real,cv2.COLOR_GRAY2RGB)
             dist = cv2.cvtColor(dist,cv2.COLOR_GRAY2RGB)
+            grad = cv2.cvtColor(synth.edge_map,cv2.COLOR_GRAY2RGB)
             for kp, r in zip(kps, residuals):
                 if r < 10:
                     color = (0, 255, 0)      # green
@@ -341,19 +342,19 @@ class AnnotatorNode(Node):
                     color = (0, 255, 255)    # yellow
                 else:
                     color = (0, 0, 255)      # red
-                cv2.circle(edge, kp.astype(np.int32), radius=2, color=color, thickness=-1)
-                cv2.circle(real, kp.astype(np.int32), radius=2, color=color, thickness=-1)
-                cv2.circle(dist, kp.astype(np.int32), radius=2, color=color, thickness=-1)
-            for kp in synth.keypoints_2D:
-                cv2.circle(edge, kp.astype(np.int32), radius=2, color=(255, 0, 0), thickness=-1)
-                cv2.circle(real, kp.astype(np.int32), radius=2, color=(255, 0, 0), thickness=-1)
-                cv2.circle(dist, kp.astype(np.int32), radius=2, color=(255, 0, 0), thickness=-1)
+                cv2.circle(edge, kp.astype(np.int32), radius=1, color=color, thickness=-1)
+                cv2.circle(real, kp.astype(np.int32), radius=1, color=color, thickness=-1)
+                cv2.circle(grad, kp.astype(np.int32), radius=1, color=color, thickness=-1)
+            # for kp in synth.contour_pixels:
+            #     cv2.circle(edge, kp.astype(np.int32), radius=1, color=(255, 0, 0), thickness=-1)
+            #     cv2.circle(real, kp.astype(np.int32), radius=1, color=(255, 0, 0), thickness=-1)
+            #     cv2.circle(grad, kp.astype(np.int32), radius=1, color=(255, 0, 0), thickness=-1)
 
             # --- Diagnnostic image writing with type clamping
             cv2.imwrite('edges.png', edge.astype(np.uint8))
             cv2.imwrite('real.png', real.astype(np.uint8))
             cv2.imwrite('norm.png', synth.normals.astype(np.uint8))
-            cv2.imwrite('grad.png', synth.normalgrad.astype(np.uint8))
+            cv2.imwrite('grad.png', grad.astype(np.uint8))
             cv2.imwrite('dist.png', dist.astype(np.uint8))
 
             pixels_r, visible_r = proj.visible_world_points(
@@ -423,12 +424,13 @@ class AnnotatorNode(Node):
         T = np.linalg.inv(T_cam_world)
 
         H, W, D = synth.normals.shape
-        landmarks, valid = synth.keypoints_3D
-        u = synth.keypoints_2D[:,0].astype(np.int32)
-        v = synth.keypoints_2D[:,1].astype(np.int32)
+        landmarks = synth.contour_world
+
+        u = synth.contour_pixels[:,0].astype(np.int32)
+        v = synth.contour_pixels[:,1].astype(np.int32)
         syn_dirs = np.stack([
-            synth.gx_syn[v, u],
-            synth.gy_syn[v, u]
+            synth.gx[v, u],
+            synth.gy[v, u]
         ], axis=1)
         k = 0
 
@@ -483,7 +485,7 @@ class AnnotatorNode(Node):
             if not iteration:
                 self.get_logger().info(
                     f'Initial Residual: {current_cost:.4f}'
-                    f'    (mean distance: {r.mean():.4f} +/- {r.std():.4f})\n'
+                    f'    (mean distance: {r.mean():.4f} +/- {r.std():.4f})'
                     # f'Initial T: \n{np.linalg.inv(T)}'
                 )
 
@@ -491,12 +493,12 @@ class AnnotatorNode(Node):
                 if k == k_thresh:
                     self.get_logger().info(' Rendering new synthetic view.')
                     synth = proj.render(np.linalg.inv(T))
-                    landmarks, valid = synth.keypoints_3D
-                    u = synth.keypoints_2D[:,0].astype(np.int32)
-                    v = synth.keypoints_2D[:,1].astype(np.int32)
+                    landmarks = synth.contour_world
+                    u = synth.contour_pixels[:,0].astype(np.int32)
+                    v = synth.contour_pixels[:,1].astype(np.int32)
                     syn_dirs = np.stack([
-                        synth.gx_syn[v, u],
-                        synth.gy_syn[v, u]
+                        synth.gx[v, u],
+                        synth.gy[v, u]
                     ], axis=1)
                     k = 0
 
