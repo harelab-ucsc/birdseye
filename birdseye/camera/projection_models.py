@@ -368,7 +368,7 @@ class ProjectionEngine:
         clean = np.zeros_like(edge)
         contours, _ = cv2.findContours(
             edge,
-            cv2.RETR_LIST,
+            cv2.RETR_EXTERNAL,
             cv2.CHAIN_APPROX_NONE,
         )
         for c in contours:
@@ -390,18 +390,9 @@ class ProjectionEngine:
             axis=1,
         ).astype(np.float32)
 
-        # Recover corresponding 3D points directly from rendered depth
-        d = depth[vv, uu]
-        finite = np.isfinite(d)
-        contour_pixels = contour_pixels[finite]
-        uu = uu[finite]
-        vv = vv[finite]
-        d = d[finite]
-
         # Get contour 3D points
         contour_rc = self.image_to_world(contour_pixels, T_cam_world)
         contour_world = contour_rc.points
-        # contour_world /= np.linalg.norm(contour_world, axis=1, keepdims=True)
 
         # Edge normal directions
         contour_normals = np.stack((gx_syn[vv, uu], gy_syn[vv, uu]), axis=1)
@@ -771,7 +762,7 @@ if __name__ == "__main__":
     )
     synth = proj.render(T_cam_world)
 
-    landmarks, _ = synth.keypoints_3D
+    landmarks = synth.contour_world
     Pw = landmarks[0:1,:]
     T_world_cam = np.linalg.inv(T_cam_world)
     J_analytic = proj.analytic_projection_jacobian(T_world_cam, Pw)

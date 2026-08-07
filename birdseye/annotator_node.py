@@ -31,6 +31,8 @@ from builtin_interfaces.msg import Time as BuiltinTime
 from geometry_msgs.msg import TransformStamped
 from sensor_msgs.msg import Image
 
+from hloc.localize_sfm import QueryLocalizer
+
 from birdseye.camera.projection_models import ProjectionEngine, MeshBackend
 from birdseye.camera.camera import SensorConfigLoader, PinholeCameraModel
 from birdseye.geometry.se3 import SE3
@@ -82,10 +84,10 @@ class AnnotatorNode(Node):
         super().__init__("projection_node")
 
         # --- PARAMETERS ---
-        self.declare_parameter("yaml_filepath", "")
-        self.declare_parameter("mesh_filepath", "")
-        self.declare_parameter("click_filepath", "")
-        self.declare_parameter("save_dir", "")
+        self.declare_parameter("yaml_filepath", "")   # payload calibration
+        self.declare_parameter("mesh_filepath", "")   # 3D reconstruction data
+        self.declare_parameter("click_filepath", "")  # RTK annotations and GCPs
+        self.declare_parameter("save_dir", "")        #output path
         self.yaml_filepath = self.get_parameter("yaml_filepath").value
         self.mesh_filepath = self.get_parameter("mesh_filepath").value
         self.clicks_csv = self.get_parameter("click_filepath").value
@@ -235,132 +237,41 @@ class AnnotatorNode(Node):
         self,
         data,
         eps = 1e-6,
+        min_contour_length=40,
     ):
         stamp = data.header.stamp
+        img = cv2.imread(
+            os.path.join(self.save_dir, cam.image_filename),
+            cv2.IMREAD_GRAYSCALE
+        )
         pose = data.ins_pose_ned
         T_ins_ned = self.pose_msg_to_matrix(pose)
 
         for cam in data.cameras:
-            # self.get_logger().info(f'{cam.camera_name}')
             if cam.camera_name != 'rgb_1':
                 continue
+
             proj = self.pipelines[cam.camera_name]
             T_cam_ins = proj.camera.T_cam_ins
-            # assert np.all(np.isclose(T_cam_ins, self.pose_msg_to_matrix(cam.cam_pose_ins)))
-            T_cam_world = self.T_ned_enu @ T_ins_ned @ T_cam_ins
+            T_cam_world = self.T_ned_enu @ T_ins_ned @ T_cam_ins  # cam->world
+
+            pose = self.localizer.localize(img, prior_pose)
 
             pixels, visible = proj.visible_world_points(self.clicks,T_cam_world)
 
-            real = cv2.imread(
-                os.path.join(self.save_dir, cam.image_filename),
-                cv2.IMREAD_GRAYSCALE
-            )
+
+
             # TODO: all-black image filter
-            # CLAHE is an adaptive contrast equalizer
-            clahe = cv2.createCLAHE(clipLimit=40)
-            clahe_img = np.clip(clahe.apply(real), 0, 255).astype(np.uint8)
 
-            # Small amount of smoothing
-            # base = cv2.bilateralFilter(clahe_img, 8, 32, 32)
+            # Apply flat-field correction
+            gain = np.load("/home/mwmaster/catch/ffc_test/ffc_gain.npy")
+            real = real.astype(np.float32)
+            real *= gain
 
-            # Build a Gaussian scale space
-            sigmas = [0, 2, 4, 6]
-            edges = []
+            real *= 128.0 / real.mean()
+            real = np.clip(real, 0, 255).astype(np.uint8)
 
-            for s in sigmas:
-                if s == 0:
-                    img = clahe_img
-                else:
-                    img = cv2.GaussianBlur(clahe_img, (0, 0), sigmaX=s)
-
-                edges.append(
-                    cv2.Canny(
-                        img,
-                        threshold1=25,
-                        threshold2=50
-                    ) > 0
-                )
-            # edge = np.logical_and.reduce(edges)
-            votes = np.sum(edges, axis=0)
-            edge = (votes >= 2).astype(np.uint8) * 255
-
-            # --- Nonmax suppression in contour set ---
-            edge_clean = np.zeros_like(edge)
-            contours, _ = cv2.findContours(edge,
-                               cv2.RETR_LIST,
-                               cv2.CHAIN_APPROX_NONE)
-            for c in contours:
-                length = cv2.arcLength(c, False)
-                x, y, w, h = cv2.boundingRect(c)
-                extent = max(w, h)
-                if length > 40:# and extent > 10:
-                    cv2.drawContours(edge_clean, [c], -1, 255, 1)
-            edge = edge_clean
-
-            # --- Get edge orientations ---
-            edge_f = edge.astype(np.float32)
-            gx = cv2.Sobel(edge_f, cv2.CV_32F, 1, 0, ksize=3)
-            gy = cv2.Sobel(edge_f, cv2.CV_32F, 0, 1, ksize=3)
-            mag = np.sqrt(gx**2 + gy**2)
-            gx /= (mag + eps)
-            gy /= (mag + eps)
-
-            dist = cv2.distanceTransform(255-edge, cv2.DIST_L2, 5)
-
-            # Build nearest-edge orientation images
-            edge_mask = edge > 0
-            edge_pixels = np.column_stack(np.nonzero(edge_mask))
-            # columns are (v,u)
-            tree = KDTree(edge_pixels)
-            H, W = edge.shape
-            vv, uu = np.indices((H, W))
-            query = np.column_stack((vv.ravel(), uu.ravel()))
-            _, idx = tree.query(query, workers=-1)
-            nearest = edge_pixels[idx]
-            nearest_v = nearest[:, 0]
-            nearest_u = nearest[:, 1]
-            nearest_gx = gx[nearest_v, nearest_u].reshape(H, W)
-            nearest_gy = gy[nearest_v, nearest_u].reshape(H, W)
-
-            # registration step
-            T_refined, residuals, kps, synth = self.register_pose(
-                proj,
-                T_cam_world,
-                dist,
-                nearest_gx,
-                nearest_gy,
-                backend='gauss-newton'
-            )
-            edge = cv2.cvtColor(edge,cv2.COLOR_GRAY2RGB)
-            real = cv2.cvtColor(real,cv2.COLOR_GRAY2RGB)
-            dist = cv2.cvtColor(dist,cv2.COLOR_GRAY2RGB)
-            grad = cv2.cvtColor(synth.edge_map,cv2.COLOR_GRAY2RGB)
-            for kp, r in zip(kps, residuals):
-                if r < 10:
-                    color = (0, 255, 0)      # green
-                elif r < 20:
-                    color = (0, 255, 255)    # yellow
-                else:
-                    color = (0, 0, 255)      # red
-                cv2.circle(edge, kp.astype(np.int32), radius=1, color=color, thickness=-1)
-                cv2.circle(real, kp.astype(np.int32), radius=1, color=color, thickness=-1)
-                cv2.circle(grad, kp.astype(np.int32), radius=1, color=color, thickness=-1)
-            # for kp in synth.contour_pixels:
-            #     cv2.circle(edge, kp.astype(np.int32), radius=1, color=(255, 0, 0), thickness=-1)
-            #     cv2.circle(real, kp.astype(np.int32), radius=1, color=(255, 0, 0), thickness=-1)
-            #     cv2.circle(grad, kp.astype(np.int32), radius=1, color=(255, 0, 0), thickness=-1)
-
-            # --- Diagnnostic image writing with type clamping
-            cv2.imwrite('edges.png', edge.astype(np.uint8))
-            cv2.imwrite('real.png', real.astype(np.uint8))
-            cv2.imwrite('norm.png', synth.normals.astype(np.uint8))
-            cv2.imwrite('grad.png', grad.astype(np.uint8))
-            cv2.imwrite('dist.png', dist.astype(np.uint8))
-
-            pixels_r, visible_r = proj.visible_world_points(
-                self.clicks,
-                T_refined
-            )
+            # TODO: hloc localization process
 
             # --- Annotate; diagnostic comparative for w/ and w/o register ---
             # TODO: annotate is not thread safe
@@ -381,8 +292,101 @@ class AnnotatorNode(Node):
         dist,
         nearest_gx,
         nearest_gy,
-        backend='gauss-newton'
+        backend='gauss-newton',
+        alpha=10,
     ):
+        self.get_logger().info('Coarse search...')
+        # Sample pose perturbations around INS estimate
+        N = 200
+
+        # xi ordering:
+        # [tx, ty, tz, rx, ry, rz]
+        # covariance values should be in matching units:
+        # meters for translation, radians for rotation
+        cov_diag = np.array([
+            2,                  # sigma_x
+            2,                  # sigma_y
+            2 ,                   # sigma_z
+            np.deg2rad(2),        # sigma_roll
+            np.deg2rad(2),        # sigma_pitch
+            np.deg2rad(15),      # sigma_yaw
+        ]) ** 2
+
+        Sigma = np.diag(cov_diag)
+
+        # Draw perturbations in tangent space
+        xis = np.random.multivariate_normal(
+            mean=np.zeros(6),
+            cov=Sigma,
+            size=N
+        )
+
+        best_score = np.inf
+        best_pose = T_cam_world
+        T = np.linalg.inv(T_cam_world)
+
+        for xi in xis:
+
+            # SE3 perturbation around INS pose
+            T_candidate = SE3.apply_se3_update(
+                T,
+                xi
+            )
+
+            synth_candidate = proj.render(T_candidate)
+            H, W, D = synth_candidate.normals.shape
+
+            u = synth_candidate.contour_pixels[:,0].astype(np.int32)
+            v = synth_candidate.contour_pixels[:,1].astype(np.int32)
+            syn_dirs = np.stack([
+                synth_candidate.gx[v, u],
+                synth_candidate.gy[v, u]
+            ], axis=1)
+
+            # Linearize around CURRENT accepted pose
+            kps, valid_iter = proj.world_to_image(
+                synth_candidate.contour_world,
+                T
+            )
+
+            Pw = synth_candidate.contour_world[valid_iter]
+            kps = kps[valid_iter]
+            syn_iter = syn_dirs[valid_iter]
+
+            u = np.round(kps[:,0]).astype(np.int32)
+            v = np.round(kps[:,1]).astype(np.int32)
+
+            inside = (
+                (u >= 0) & (u < W) &
+                (v >= 0) & (v < H)
+            )
+
+            Pw       = Pw[inside]
+            kps      = kps[inside]
+            syn_iter = syn_iter[inside]
+            u        = u[inside]
+            v        = v[inside]
+
+            real_dirs = np.stack([
+                nearest_gx[v, u],
+                nearest_gy[v, u]
+            ], axis=1)
+
+            dot = np.sum(real_dirs * syn_iter, axis=1)
+            dot = np.clip(dot, -1.0, 1.0)
+            orientation_cost = 1.0 - np.abs(dot)
+
+            r = self.residuals(dist, kps)
+            r += alpha * orientation_cost
+
+            score = np.dot(r,r)
+
+            if score < best_score:
+                best_score = score
+                best_pose = T_candidate
+
+        T_cam_world = np.linalg.inv(best_pose)
+        self.get_logger().info('...coarse search done.')
 
         synth = proj.render(T_cam_world)
         if backend == 'gauss-newton':
@@ -392,7 +396,8 @@ class AnnotatorNode(Node):
                 dist,
                 nearest_gx,
                 nearest_gy,
-                synth
+                synth,
+                alpha=alpha
             )
             return T_refined, residual, kps, synth
         elif backend == 'gradient-descent':

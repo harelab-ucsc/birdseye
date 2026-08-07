@@ -88,9 +88,9 @@ class BagProcessor:
 
     def save_image(self, image_msg, timestamp_str):
         """Save the image message as a PNG file."""
-        img_data = np.frombuffer(image_msg.data, dtype=np.uint8).reshape(
-            image_msg.height, image_msg.width, -1
-        )
+        bridge = CvBridge()
+        img = bridge.imgmsg_to_cv2(image_msg, desired_encoding="passthrough")
+        rgb = cv2.cvtColor(img, cv2.COLOR_BayerBG2RGB)
         savename = os.path.join(self.ds_dir, "images")
         if not os.path.isdir(savename):
             print(f"  Making Save Directory: {savename}")
@@ -98,7 +98,7 @@ class BagProcessor:
 
         savename = os.path.join(savename, f"{timestamp_str}.png")
         #        print(f"  Saving Image To: {savename}")
-        cv2.imwrite(savename, img_data)
+        cv2.imwrite(savename, rgb)
 
 
 def main():
