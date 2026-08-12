@@ -240,7 +240,7 @@ class AnnotatorNode(Node):
         min_contour_length=40,
     ):
         stamp = data.header.stamp
-        img = cv2.imread(
+        real = cv2.imread(
             os.path.join(self.save_dir, cam.image_filename),
             cv2.IMREAD_GRAYSCALE
         )
@@ -259,8 +259,6 @@ class AnnotatorNode(Node):
 
             pixels, visible = proj.visible_world_points(self.clicks,T_cam_world)
 
-
-
             # TODO: all-black image filter
 
             # Apply flat-field correction
@@ -268,7 +266,7 @@ class AnnotatorNode(Node):
             real = real.astype(np.float32)
             real *= gain
 
-            real *= 128.0 / real.mean()
+            # real *= 128.0 / real.mean()
             real = np.clip(real, 0, 255).astype(np.uint8)
 
             # TODO: hloc localization process

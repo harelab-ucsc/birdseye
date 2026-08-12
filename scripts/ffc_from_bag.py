@@ -99,7 +99,7 @@ class BagProcessor:
         self.sum += img
         self.count += 1
 
-    def make_ffc(self, sigma=128):
+    def make_ffc(self, sigma=64):
         mean = self.sum / self.count
 
         # Split BGGR Bayer planes
