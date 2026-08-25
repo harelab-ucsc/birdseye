@@ -240,34 +240,53 @@ class AnnotatorNode(Node):
         min_contour_length=40,
     ):
         stamp = data.header.stamp
-        real = cv2.imread(
-            os.path.join(self.save_dir, cam.image_filename),
-            cv2.IMREAD_GRAYSCALE
-        )
         pose = data.ins_pose_ned
         T_ins_ned = self.pose_msg_to_matrix(pose)
 
         for cam in data.cameras:
             if cam.camera_name != 'rgb_1':
                 continue
+            # real = cv2.imread(
+            #     os.path.join(self.save_dir, cam.image_filename),
+            #     cv2.IMREAD_GRAYSCALE
+            # )
+
+            path = os.path.join(self.save_dir, cam.image_filename)
+
+            self.get_logger().info(f"Reading: {path}")
+            self.get_logger().info(f"exists={os.path.exists(path)}")
+            self.get_logger().info(f"isfile={os.path.isfile(path)}")
+
+            if os.path.exists(path):
+                self.get_logger().info(f"size={os.path.getsize(path)} bytes")
+
+            real = cv2.imread(path, cv2.IMREAD_GRAYSCALE)
+
+            if real is None:
+                self.get_logger().error(f"cv2.imread FAILED: {path}")
+            else:
+                self.get_logger().info(f"Loaded image: shape={real.shape}, dtype={real.dtype}")
 
             proj = self.pipelines[cam.camera_name]
             T_cam_ins = proj.camera.T_cam_ins
             T_cam_world = self.T_ned_enu @ T_ins_ned @ T_cam_ins  # cam->world
 
-            pose = self.localizer.localize(img, prior_pose)
+            # pose = self.localizer.localize(img, prior_pose)
 
             pixels, visible = proj.visible_world_points(self.clicks,T_cam_world)
 
             # TODO: all-black image filter
 
             # Apply flat-field correction
-            gain = np.load("/home/mwmaster/catch/ffc_test/ffc_gain.npy")
-            real = real.astype(np.float32)
-            real *= gain
+            gain = np.load("/home/mwmaster/catch/ffc_rgb1/ffc_gain_cam0.npy")
+            # real = real.astype(np.float32)
+            # real *= gain
 
-            # real *= 128.0 / real.mean()
-            real = np.clip(real, 0, 255).astype(np.uint8)
+            # real = np.clip(real, 0, 255).astype(np.uint8)
+
+            synth = proj.render(T_cam_world)
+            cv2.imwrite(os.path.join(self.save_dir,'real.png'), real)
+            cv2.imwrite(os.path.join(self.save_dir,'norm.png'), synth.normals)
 
             # TODO: hloc localization process
 
@@ -278,10 +297,10 @@ class AnnotatorNode(Node):
             labels = np.hstack((pix, tags[:, None]))
             self.annotate(cam.image_filename, labels)
 
-            tags = self.labels[visible_r]
-            pix = pixels_r[visible_r]
-            labels = np.hstack((pix, tags[:, None]))
-            self.annotate(cam.image_filename, labels, save_name='labelsReg.txt')
+            # tags = self.labels[visible_r]
+            # pix = pixels_r[visible_r]
+            # labels = np.hstack((pix, tags[:, None]))
+            # self.annotate(cam.image_filename, labels, save_name='labelsReg.txt')
 
     def register_pose(
         self,
