@@ -31,7 +31,7 @@ from builtin_interfaces.msg import Time as BuiltinTime
 from geometry_msgs.msg import TransformStamped
 from sensor_msgs.msg import Image
 
-from hloc.localize_sfm import QueryLocalizer
+#from hloc.localize_sfm import QueryLocalizer
 
 from birdseye.camera.projection_models import ProjectionEngine, MeshBackend
 from birdseye.camera.camera import SensorConfigLoader, PinholeCameraModel
