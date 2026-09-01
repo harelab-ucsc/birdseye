@@ -788,10 +788,10 @@ if __name__ == "__main__":
         print("J_fd: \n: ", J_fd)
         print("diff of J's: \n", J_analytic - J_fd)
 
-    draw_camera(loader, proj, "rgb_1", "red", T_ins_world)
+    # draw_camera(loader, proj, "rgb_1", "red", T_ins_world)
     # draw_camera(loader, proj, "rgb_2", "blue", T_ins_world)
     # draw_camera(loader, proj, "rgb_3", "green", T_ins_world)
-    draw_camera(loader, proj, "rgb_4", "yellow", T_ins_world)
+    # draw_camera(loader, proj, "rgb_4", "yellow", T_ins_world)
     # draw_camera(loader, proj, "multispec_1", "misty_rose", T_ins_world)
     # draw_camera(loader, proj, "multispec_2", "lavender", T_ins_world)
     # draw_camera(loader, proj, "multispec_3", "honeydew", T_ins_world)

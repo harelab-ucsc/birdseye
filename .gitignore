@@ -5,3 +5,4 @@ __pycache__/
 **/.DS_Store
 **/clicks.png
 **/birdseye.egg-info/
+.venv/
