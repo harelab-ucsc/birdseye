@@ -57,7 +57,7 @@ DEFAULT_CAMERA = dict(w=1920, h=1200,
                       fx=4264.494512341911, fy=4262.892739736864,
                       cx=958.4594068961055, cy=592.50331737885)
 DEFAULT_ALTITUDES = [5.0, 10.0, 20.0, 50.0]
-DEFAULT_STD_DEVS = [0.01, 0.01, 0.06, 0.04, 0.04, 1.00]
+DEFAULT_STD_DEVS = [0.01, 0.01, 0.06, 0.04, 0.04, 0.13]
 DEFAULT_LAM_TARGET = 100.0        # = (30 px 3-sigma radius / 3)^2 = (10 px 1-sigma)^2
 DEFAULT_RADII = [5.0, 10.0, 20.0, 30.0, 50.0]
 
@@ -88,8 +88,8 @@ DEFINITIONS = [
     ("s", "Design vector s = [sigma_1^2 ... sigma_6^2], the per-DOF pose variances. Units m^2 "
           "(i <= 3), rad^2 (i >= 4). The unknown of every optimization here."),
     ("s_base", "The deployed pose-uncertainty budget, diag(CovarianceModel.realistic(std_devs)) "
-               "= [1e-4, 1e-4, 3.6e-3, 4.873879e-7, 4.873879e-7, 3.046174e-4], i.e. 1-sigma "
-               "[10, 10, 60] mm and [0.04, 0.04, 1.00] deg (datasheet). Note realistic converts "
+               "= [1e-4, 1e-4, 3.6e-3, 4.873879e-7, 4.873879e-7, 5.148034e-6], i.e. 1-sigma "
+               "[10, 10, 60] mm and [0.04, 0.04, 0.13] deg (datasheet). Note realistic converts "
                "DOF 4-6 from degrees to radians."),
     ("rho", "Normalized design rho = s / s_base, dimensionless multiples of the deployed "
             "variance. All solves are performed in these coordinates."),
