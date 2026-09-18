@@ -868,7 +868,7 @@ class Experiment:
                     "kl_divergence": kld
                 }
             print('\n')
-        print('\n[RUN]    Perturbation study done.')
+        print('[RUN]    Perturbation study done.')
 
         return results
 
@@ -878,8 +878,8 @@ class Experiment:
 
 if __name__ == "__main__":
 
-    load = True
-    # load = False
+    # load = True
+    load = False
 
     tgt_z = 0.0
 
@@ -919,7 +919,7 @@ if __name__ == "__main__":
             experiment,
             tgt_z)
 
-        std_devs=[0.01, 0.01, 0.15, 0.04, 0.04, 1.50]
+        std_devs=[0.01, 0.01, 0.06, 0.04, 0.04, 0.13]
         # std_devs=[0.01, 0.01, 1.50, 0.04, 0.04, 1.50]
 
         base_cov = CovarianceModel.realistic(std_devs=std_devs)
