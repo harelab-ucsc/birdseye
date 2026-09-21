@@ -1,3 +1,5 @@
+.venv/*
+__pycache__/*
 */catch
 */flights
 # macOS
@@ -15,3 +17,8 @@ scripts/__pycache__/*
 holding/*
 examples/*
 .dependencies.txt
+scripts/MDPI_Birdseye_v3/
+scripts/testdata/
+test/__pycache__/*
+test/fixtures/*
+scripts/test*

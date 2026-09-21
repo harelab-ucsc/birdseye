@@ -33,6 +33,11 @@ constraint matrix exactly.
 The payload is the design heuristic: admissible per-DOF 1-sigma pose accuracy
 as a function of altitude and desired pixel fidelity.
 
+Study execution and reporting are separate: ``run_study()`` computes the sweep
+and returns a ``Study`` (saved as JSON), while ``build_report()`` renders the
+PDF from a ``Study`` held in memory or reloaded from disk with ``--render
+STUDY.json``; the CLI renders a PDF only when ``--pdf`` is passed.
+
 ``pose_uncertainty_prop.py`` is imported, never modified.
 """
 
@@ -41,8 +46,9 @@ import json
 import os
 import time
 import textwrap
+from dataclasses import dataclass
 import numpy as np
-from scipy.optimize import Bounds, LinearConstraint, linprog, minimize
+import cvxpy as cp
 
 import matplotlib
 matplotlib.use("Agg")
@@ -181,16 +187,21 @@ REFERENCES = [
      "F. Pukelsheim, Optimal Design of Experiments, SIAM Classics in Applied Mathematics 50, "
      "2006 (orig. Wiley, 1993).",
      "the D-optimality lineage of the balanced log-allocation objective."),
+    ("The modelling layer the inner solves go through.",
+     "S. Diamond and S. Boyd, \"CVXPY: A Python-Embedded Modeling Language for Convex "
+     "Optimization\", Journal of Machine Learning Research 17(83), 1-5, 2016.",
+     "cvxpy builds both inner programs; it selects the backend and returns the solver "
+     "statistics recorded as solver/inner_iters/inner_time_s in the JSON."),
     ("The LP solver actually called.",
      "Q. Huangfu and J. A. J. Hall, \"Parallelizing the dual revised simplex method\", "
      "Mathematical Programming Computation 10(1), 119-142, 2018.",
-     "HiGHS, the backend of scipy.optimize.linprog(method=\"highs\")."),
+     "HiGHS, reached as cvxpy's SCIPY backend with method=\"highs\"; it solves the linear "
+     "objective (vertex_lp_norm)."),
     ("The nonlinear solver actually called.",
-     "R. H. Byrd, M. E. Hribar and J. Nocedal, \"An interior point algorithm for large-scale "
-     "nonlinear programming\", SIAM Journal on Optimization 9(4), 877-900, 1999, "
-     "doi:10.1137/S1052623497325107.",
-     "the trust-region interior-point method behind scipy.optimize.minimize("
-     "method=\"trust-constr\"), used for the geomean inner solves."),
+     "P. J. Goulart and Y. Chen, \"Clarabel: An interior-point solver for conic programs with "
+     "quadratic objectives\", arXiv:2405.12762, 2024.",
+     "the homogeneous-embedding interior-point method behind cvxpy's CLARABEL backend; the "
+     "geomean objective is solved as an exponential-cone program."),
     ("The lambda_max <= tr <= 2 lambda_max sandwich.",
      "R. A. Horn and C. R. Johnson, Matrix Analysis, 2nd ed., Cambridge University Press, 2012.",
      "for an n x n PSD matrix, lambda_max <= tr <= n lambda_max; n = 2 here."),
@@ -400,114 +411,54 @@ CONSTRAINTS = build_constraints()
 # Objective policies
 # ==========================================================
 
-def _interior_point(A, b, rho_caps):
-    """Strictly feasible starting point for the interior-point objectives."""
-    x = np.asarray(rho_caps, dtype=float).copy()
-    A = np.atleast_2d(A)
-    if A.size:
-        row = A @ x
-        with np.errstate(divide="ignore", invalid="ignore"):
-            t = np.min(np.where(row > 0, np.asarray(b) / np.maximum(row, 1e-300), np.inf))
-        if np.isfinite(t):
-            x = x * min(0.9 * t, 1.0)
-    return np.maximum(x, 1e-9)
-
-
+@dataclass(frozen=True)
 class Objective:
-    def __init__(self, key, kind, desc):
-        self.key = key
-        self.kind = kind
-        self.desc = desc
+    """One point-selection rule on the feasible polyhedron.
 
-    def solve(self, A, b, rho_caps, s_base):
-        A = np.atleast_2d(np.asarray(A, dtype=float))
-        b = np.asarray(b, dtype=float)
-        rho_caps = np.asarray(rho_caps, dtype=float)
-        info = {"fallback": False, "status": 0, "message": ""}
+    kind == "linear":  max sum_i s_i / w_i        (LP vertex)
+    kind == "log":     max sum_i log(s_i / w_i)   (balanced, strictly concave)
+    kind == "ray":     max kappa s.t. s = kappa s_base  (closed form, no solver)
+    """
 
-        if self.kind == "lp":
-            c = np.ones(6)
-            res = linprog(-c, A_ub=A, b_ub=b,
-                          bounds=[(0.0, float(rho_caps[i])) for i in range(6)],
-                          method="highs")
-            info.update(status=int(res.status), message=str(res.message))
-            if not res.success:
-                raise RuntimeError(f"LP failed for {self.key}: {res.message}")
-            return np.asarray(res.x, dtype=float), info
+    key: str
+    kind: str
+    desc: str
 
-        if self.kind == "kappa":
-            # restrict to the ray rho = kappa * 1
-            a1 = A @ np.ones(6)
-            res = linprog([-1.0], A_ub=a1.reshape(-1, 1), b_ub=b,
-                          bounds=[(0.0, float(np.min(rho_caps)))], method="highs")
-            info.update(status=int(res.status), message=str(res.message))
-            if not res.success:
-                raise RuntimeError(f"kappa LP failed: {res.message}")
-            return float(res.x[0]) * np.ones(6), info
 
-        # interior convex objective
-        if self.kind == "geomean":
-            fun = lambda r: -np.sum(np.log(r))
-            jac = lambda r: -1.0 / r
-            hess = lambda r: np.diag(1.0 / r ** 2)
-        else:
-            raise ValueError(self.kind)
+LINEAR_SOLVER = dict(solver=cp.SCIPY, scipy_options={"method": "highs"})
+# Default Clarabel tolerances (1e-8) move the geomean optimum by ~5e-5 relative
+# and can cost an extra cut; the published results are reproduced at 1e-6 only
+# with the gap/feasibility tolerances tightened.  At 1e-12 Clarabel sometimes
+# reports "optimal_inaccurate" while landing within 4e-9 of the optimum; that
+# status is accepted because feasibility and optimality of the returned design
+# are re-verified downstream (audit, and the golden test).
+LOG_SOLVER = dict(solver=cp.CLARABEL, tol_gap_abs=1e-12, tol_gap_rel=1e-12,
+                  tol_feas=1e-12)
 
-        x0 = _interior_point(A, b, rho_caps)
-        res = minimize(fun, x0, jac=jac, hess=hess, method="trust-constr",
-                       constraints=[LinearConstraint(A, -np.inf, b)],
-                       # keep_feasible: sum_i log rho_i is undefined for rho <= 0,
-                       # and trust-constr is free to step outside the box otherwise.
-                       bounds=Bounds(np.full(6, 1e-9), rho_caps,
-                                     keep_feasible=True),
-                       options={"maxiter": 3000, "gtol": 1e-12, "xtol": 1e-14,
-                                "verbose": 0})
-        info.update(status=int(res.status), message=str(res.message))
-        x = np.asarray(res.x, dtype=float)
-        # status 1 = gtol, 2 = xtol; both are genuine convergence for
-        # trust-constr. Feasibility is verified independently.
-        feasible = res.status in (1, 2) and np.all(
-            A @ x <= b * (1 + 1e-6) + 1e-9)
-        if not feasible:
-            # Fall back to the closed form on the most binding cut, then shrink
-            # uniformly until *every* accumulated cut holds.  A >= 0 and x >= 0,
-            # so the scaling is a valid feasibility projection of the polyhedron.
-            slack = b - A @ x0
-            k = int(np.argmin(slack))
-            x = self.closed_form(A[k], b[k], rho_caps)
-            info["fallback"] = True
-        x = np.minimum(x, rho_caps)
-        row = A @ x
-        if np.any(row > b * (1 + 1e-12)):
-            with np.errstate(divide="ignore", invalid="ignore"):
-                t = np.min(np.where(row > 0, b / np.maximum(row, 1e-300), np.inf))
-            if np.isfinite(t) and t < 1.0:
-                x = x * t
-        return x, info
 
-    def closed_form(self, a_tilde, lam, rho_caps=None):
-        """Analytic optimum on a single halfspace ``a_tilde . rho <= lam``.
+def _inner_solve(objective, A_x, b, x_caps, coef):
+    """max objective over {A_x x <= b, 0 <= x <= x_caps}, in solve coordinates x.
 
-        DOFs with a zero coefficient are unconstrained by the cut and go to
-        their cap (the ``spectral`` variant produces exactly such one-hot
-        cuts); the budget is split among the remaining coordinates.
-        """
-        a = np.asarray(a_tilde, dtype=float)
-        nz = a > 0
-        x = np.full(6, np.inf) if rho_caps is None else np.asarray(
-            rho_caps, dtype=float).copy()
-        if not np.any(nz):
-            return x
-        k = int(np.count_nonzero(nz))
-        az = a[nz]
-        if self.kind == "geomean":
-            xz = lam / (k * az)
-        else:
-            raise ValueError(f"no closed form for {self.kind}")
-        x[nz] = xz
-        if rho_caps is not None:
-            x = np.minimum(x, rho_caps)
-        return x
+    ``coef[i] = D_i / w_i`` maps the solve variable to the objective's units:
+    s = D * x and the objective is stated in units of w (see Objective.kind).
+    Returns (x, info) with info = {"solver", "status", "inner_iters", "inner_time_s"}.
+    """
+    x = cp.Variable(6, nonneg=True)
+    if objective.kind == "linear":
+        expr, opts = cp.sum(cp.multiply(coef, x)), LINEAR_SOLVER
+    elif objective.kind == "log":
+        expr, opts = cp.sum(cp.log(cp.multiply(coef, x))), LOG_SOLVER
+    else:
+        raise ValueError(objective.kind)
+    prob = cp.Problem(cp.Maximize(expr), [A_x @ x <= b, x <= x_caps])
+    prob.solve(**opts)
+    if prob.status not in ("optimal", "optimal_inaccurate"):
+        raise RuntimeError(f"{objective.key}: cvxpy status {prob.status}")
+    stats = prob.solver_stats
+    info = {"solver": stats.solver_name, "status": prob.status,
+            "inner_iters": int(stats.num_iters or 0),
+            "inner_time_s": float(stats.solve_time or 0.0)}
+    return np.asarray(x.value, dtype=float), info
 
 
 # The design program is a *maximization* of admissible noise: the constraint is
@@ -517,13 +468,13 @@ class Objective:
 # they differ only in how the budget is distributed across the six DOFs.
 OBJECTIVES = {
     "vertex_lp_norm": Objective(
-        "vertex_lp_norm", "lp",
+        "vertex_lp_norm", "linear",
         "max sum_i rho_i (largest total admissible noise budget, rho = s/s_base)"),
     "kappa_scaling": Objective(
-        "kappa_scaling", "kappa",
+        "kappa_scaling", "ray",
         "max kappa s.t. s = kappa s_base (uniform scaling of the deployed budget)"),
     "geomean": Objective(
-        "geomean", "geomean",
+        "geomean", "log",
         "max sum_i log rho_i (balanced allocation; scale-invariant, unique interior optimum)"),
 }
 
@@ -543,7 +494,7 @@ def _project_feasible(oracle, fields, s, lam_target, caps):
 # ==========================================================
 
 def _result(oracle, objective, fields, s, s_base, caps, lam_target, A, values,
-            iters, converged, cycle, fallback):
+            iters, converged, cycle, infos):
     A_arr = np.asarray(A, dtype=float).reshape(-1, 6)
     slack = (lam_target - A_arr @ s) if A_arr.size else np.zeros(0)
     final_val, final_cut = oracle(fields, s)
@@ -561,7 +512,9 @@ def _result(oracle, objective, fields, s, s_base, caps, lam_target, A, values,
                           and final_val <= lam_target * (1.0 + 1e-6)),
         "feasible": bool(final_val <= lam_target * (1.0 + 1e-6)),
         "cycle": bool(cycle),
-        "fallback": bool(fallback),
+        "solver": str(infos[-1]["solver"]) if infos else "none",
+        "inner_iters": int(sum(i["inner_iters"] for i in infos)),
+        "inner_time_s": float(sum(i["inner_time_s"] for i in infos)),
         "at_cap": (s >= caps * (1 - 1e-9)),
         "f_value": float(final_val),
         "final_cut": final_cut,
@@ -571,7 +524,8 @@ def _result(oracle, objective, fields, s, s_base, caps, lam_target, A, values,
 
 
 def solve_design(oracle, lam_target, objective, caps=None, s_base=None,
-                 fields=None, max_cuts=None, tol=1e-9):
+                 fields=None, max_cuts=None, tol=1e-9, *,
+                 coords="rho", weights="rho"):
     """Solve  max objective(s)  s.t.  f(s) <= lam_target,  0 <= s <= caps.
 
     Every oracle is convex, so the exact cutting-plane loop applies:
@@ -585,20 +539,42 @@ def solve_design(oracle, lam_target, objective, caps=None, s_base=None,
     always feasible for its own constraint; the ``converged`` flag reports
     whether the loop actually certified it.
 
-    All inner solves run in rescaled coordinates ``rho = s / s_base`` because
-    ``s_base`` spans 1e-7 .. 1e-2 and the unscaled nonlinear solves stall at
-    the initial point.
+    coords:  "rho" solves in x = s / s_base (cut matrix column-scaled by
+             s_base), "s" solves in x = s directly.  Mathematically identical
+             feasible set; the switch exists to measure conditioning (see
+             design_bound_ablation.py).
+    weights: "rho" states the objective in multiples of s_base, "s" in raw
+             m^2/rad^2.  Invariant for kind == "log" (a subtracted constant);
+             NOT invariant for kind == "linear", which is the whole point of
+             the ablation.  May also be a length-6 array of explicit weights.
     """
     if fields is None:
         raise ValueError("fields is required")
     s_base = np.ones(6) if s_base is None else np.asarray(s_base, dtype=float)
     caps = 1e3 * s_base if caps is None else np.asarray(caps, dtype=float)
-    rho_caps = caps / s_base
     if max_cuts is None:
         max_cuts = 200
 
-    A, values, seen = [], [], []
-    fallback = False
+    if coords == "rho":
+        D = s_base
+    elif coords == "s":
+        D = np.ones(6)
+    else:
+        raise ValueError(f"coords={coords!r}")
+    if isinstance(weights, str):
+        if weights == "rho":
+            w = s_base
+        elif weights == "s":
+            w = np.ones(6)
+        else:
+            raise ValueError(f"weights={weights!r}")
+    else:
+        w = np.asarray(weights, dtype=float)
+    coef = D / w
+    x_caps = caps / D
+    ray = s_base / D                      # the scaling ray in solve coordinates
+
+    A, values, seen, infos = [], [], [], []
     cycle = False
 
     s = caps.copy()
@@ -615,15 +591,22 @@ def solve_design(oracle, lam_target, objective, caps=None, s_base=None,
             break
         seen.append(key)
         A.append(cut)
-        A_t = np.asarray(A, dtype=float) * s_base       # rescale columns
-        rho_new, info = objective.solve(
-            A_t, np.full(len(A), lam_target), rho_caps, s_base)
-        fallback = fallback or bool(info.get("fallback", False))
-        s = rho_new * s_base
+        A_x = np.asarray(A, dtype=float) * D            # rescale columns
+        b = np.full(len(A), lam_target)
+        if objective.kind == "ray":
+            # max kappa s.t. kappa (a_k . s_base) <= lam for every cut k
+            kappa = float(np.min(b / (A_x @ ray)))
+            x = np.minimum(kappa * ray, x_caps)
+            info = {"solver": "closed-form", "status": "optimal",
+                    "inner_iters": 0, "inner_time_s": 0.0}
+        else:
+            x, info = _inner_solve(objective, A_x, b, x_caps, coef)
+        infos.append(info)
+        s = x * D
     if not converged:
         s = _project_feasible(oracle, fields, s, lam_target, caps)
     return _result(oracle, objective, fields, s, s_base, caps, lam_target,
-                   A, values, iters, converged, cycle, fallback)
+                   A, values, iters, converged, cycle, infos)
 
 
 def kappa_star(oracle, fields, s_base, lam_target):
@@ -734,140 +717,53 @@ def design_heuristic(fields, s_base, radii, rho_max, oracle, objective):
 
 
 # ==========================================================
-# Self-tests
+# Self-tests: scripts/test_design_bound_lp.py (pytest), reachable through
+# --self-test.  No in-module harness.
 # ==========================================================
 
-def self_test(camera, altitude=10.0, z=0.0, stride=4.0, lam_target=DEFAULT_LAM_TARGET,
-              std_devs=None, rho_max=1e3, verbose=True):
-    std_devs = DEFAULT_STD_DEVS if std_devs is None else std_devs
-    s_base = np.diag(CovarianceModel.realistic(std_devs)).copy()
-    failures = []
 
-    def check(name, cond, detail=""):
-        ok = bool(cond)
-        if verbose:
-            print(f"[TEST] {'PASS' if ok else 'FAIL'}  {name}  {detail}")
-        if not ok:
-            failures.append(name)
+@dataclass
+class Study:
+    """Everything a run produces: JSON-serializable records plus the cached
+    reference-altitude FOV fields the report pages need."""
 
-    # 1. batch_jacobian vs the per-point analytic Jacobian
-    Jc, uvc, Pwc, _ = batch_jacobian(camera, altitude, z=z, stride=97.0)
-    model = ProjectionModel(camera)
-    T = SE3.nominal_pose(altitude)
-    ref = np.array([model.analytic_jacobian(T, p) for p in Pwc])
-    dmax = float(np.max(np.abs(ref - Jc)))
-    check("1 batch_jacobian == analytic_jacobian", dmax < 1e-12,
-          f"n={len(Pwc)} max|diff|={dmax:.3e}")
+    meta: dict
+    per_alt: dict           # {float altitude: {"stats": ..., "variants": ...}}
+    heuristic: dict         # {float altitude: [row, ...]}
+    ref_fields: object = None   # FovFields at meta["reference_altitude"], or None
 
-    F = FovFields(camera, altitude, z=z, stride=stride)
-    reg = build_constraints()
+    def payload(self):
+        return {"meta": self.meta,
+                "altitudes": {f"{a:g}": self.per_alt[a] for a in self.per_alt},
+                "heuristic": {f"{a:g}": self.heuristic[a] for a in self.heuristic}}
 
-    # 2. pointwise sandwich lmax <= trace <= 2 lmax
-    t = F.trace(s_base)
-    lm = F.lmax(s_base)
-    check("2 pointwise lambda_max <= tr <= 2 lambda_max",
-          np.all(lm <= t * (1 + 1e-9) + 1e-12)
-          and np.all(t <= 2 * lm * (1 + 1e-9) + 1e-9),
-          f"max tr/lmax={float(np.max(t / lm)):.6f}")
+    def save_json(self, path):
+        path = os.path.abspath(path)
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, "w") as fh:
+            json.dump(self.payload(), fh, indent=1)
+        return path
 
-    # 3. homogeneity of every oracle
-    worst = 0.0
-    for k, orc in reg.items():
-        v1 = orc(F, s_base)[0]
-        v2 = orc(F, 3.7 * s_base)[0]
-        worst = max(worst, abs(v2 - 3.7 * v1) / (3.7 * v1))
-    check("3 homogeneity f(3.7 s) = 3.7 f(s)", worst < 1e-9,
-          f"max rel err={worst:.3e}")
+    @classmethod
+    def from_payload(cls, payload):
+        return cls(meta=payload["meta"],
+                   per_alt={float(k): v for k, v in payload["altitudes"].items()},
+                   heuristic={float(k): v for k, v in payload["heuristic"].items()})
 
-    # 4. cut validity for every oracle (all are convex and homogeneous)
-    rng = np.random.default_rng(0)
-    worst = 0.0
-    for k, orc in reg.items():
-        for _ in range(20):
-            s = s_base * rng.uniform(0.1, 10.0, 6)
-            v, cut = orc(F, s)
-            worst = max(worst, abs(float(cut @ s) - v) / max(v, 1e-30))
-    check("4 cut . s == f(s) for every oracle", worst < 1e-9,
-          f"max rel err={worst:.3e}")
+    @classmethod
+    def load_json(cls, path):
+        with open(path) as fh:
+            return cls.from_payload(json.load(fh))
 
-    # 5. kappa* consistency
-    worst = 0.0
-    for k, orc in reg.items():
-        kap, _ = kappa_star(orc, F, s_base, lam_target)
-        v = orc(F, kap * s_base)[0]
-        worst = max(worst, abs(v - lam_target) / lam_target)
-    check("5 f(kappa* s_base) == lam_target", worst < 1e-9,
-          f"max rel err={worst:.3e}")
-
-    # 6. single-cut closed form vs trust-constr (geomean)
-    a = reg["sup_trace"](F, s_base)[1]
-    a_t = a * s_base
-    rho_caps = np.full(6, rho_max)
-    obj = OBJECTIVES["geomean"]
-    num, info = obj.solve(a_t.reshape(1, 6), np.array([lam_target]),
-                          rho_caps, s_base)
-    ana = obj.closed_form(a_t, lam_target, rho_caps)
-    worst = float(np.max(np.abs(num - ana) / ana))
-    check("6 geomean closed form == trust-constr", worst < 1e-6,
-          f"max rel err={worst:.3e}")
-
-    # 7. exact_lmax design is strictly looser than the trace design
-    r = solve_design(reg["exact_lmax"], lam_target,
-                     OBJECTIVES["vertex_lp_norm"],
-                     caps=rho_max * s_base, s_base=s_base, fields=F)
-    a7 = audit(F, r["s"], lam_target, oracle=reg["exact_lmax"])
-    check("7 exact_lmax audit: sup_lmax == lam, sup_trace > lam",
-          abs(a7["sup_lmax"] - lam_target) <= 1e-6 * lam_target
-          and a7["sup_trace"] > lam_target,
-          f"sup_lmax={a7['sup_lmax']:.4f} sup_trace={a7['sup_trace']:.1f} "
-          f"cuts={r['iterations']} converged={r['converged']}")
-
-    # 8. every returned design satisfies its own constraint
-    worst, offender = 0.0, ""
-    for k, orc in reg.items():
-        for oname, obj in OBJECTIVES.items():
-            r = solve_design(orc, lam_target, obj, caps=rho_max * s_base,
-                             s_base=s_base, fields=F)
-            ratio = r["f_value"] / lam_target
-            if ratio > worst:
-                worst, offender = ratio, f"{k}/{oname}"
-    check("8 every design satisfies f(s*) <= lam_target", worst <= 1 + 1e-6,
-          f"worst f/lam={worst:.6f} ({offender})")
-
-    # 9. every certified design delivers the guarantee it claims
-    worst, offender = 0.0, ""
-    for k, orc in reg.items():
-        for oname, obj in OBJECTIVES.items():
-            r = solve_design(orc, lam_target, obj, caps=rho_max * s_base,
-                             s_base=s_base, fields=F)
-            a = audit(F, r["s"], lam_target, oracle=orc)
-            ratio = a["sup_lmax"] / lam_target
-            if ratio > worst:
-                worst, offender = ratio, f"{k}/{oname}"
-            if a["violation_frac"] > 0.0:
-                worst, offender = max(worst, 9.9), f"{k}/{oname} viol"
-    check("9 certified designs: sup_lmax <= lam, no FOV violation",
-          worst <= 1 + 1e-6, f"worst sup_lmax/lam={worst:.6f} ({offender})")
-
-    # 10. heuristic scaling identity: rho* is linear in lam, so admissible
-    #     sigma is linear in the desired pixel radius r.
-    orc = reg["exact_lmax"]
-    obj = OBJECTIVES["geomean"]
-    r1 = solve_design(orc, lam_target, obj, caps=rho_max * s_base,
-                      s_base=s_base, fields=F)
-    r4 = solve_design(orc, 4.0 * lam_target, obj, caps=rho_max * s_base,
-                      s_base=s_base, fields=F)
-    ratio = r4["rho"] / r1["rho"]
-    err = float(np.max(np.abs(ratio - 4.0) / 4.0))
-    a10 = audit(F, r4["s"], 4.0 * lam_target)
-    check("10 heuristic scaling rho*(4 lam) == 4 rho*(lam)",
-          err < 1e-6 and a10["sup_lmax"] <= 4.0 * lam_target * (1 + 1e-6),
-          f"max rel err={err:.3e} sigma ratio={float(np.max(np.sqrt(ratio))):.6f} "
-          f"sup_lmax={a10['sup_lmax']:.2f} <= {4.0 * lam_target:.2f}")
-
-    if verbose:
-        print(f"[TEST] {10 - len(failures)}/10 checks passed")
-    return failures
+    def fields(self):
+        """Reference-altitude FovFields, rebuilt from meta when absent (the
+        JSON record cannot carry them)."""
+        if self.ref_fields is None:
+            self.ref_fields = FovFields(Camera(**self.meta["camera"]),
+                                        self.meta["reference_altitude"],
+                                        z=self.meta["z"],
+                                        stride=self.meta["stride"])
+        return self.ref_fields
 
 
 # ==========================================================
@@ -927,7 +823,9 @@ def run_altitude(camera, altitude, lam_target, s_base, z, stride, rho_max,
                 "iterations": r["iterations"],
                 "converged": r["converged"],
                 "cycle": r["cycle"],
-                "fallback": r["fallback"],
+                "solver": r["solver"],
+                "inner_iters": r["inner_iters"],
+                "inner_time_s": r["inner_time_s"],
                 "at_cap": r["at_cap"].tolist(),
                 "f_value": r["f_value"],
                 "n_cuts": int(r["cuts"].shape[0]),
@@ -940,6 +838,69 @@ def run_altitude(camera, altitude, lam_target, s_base, z, stride, rho_max,
         variants[key] = rec
 
     return F, stats, variants
+
+
+def run_study(camera, altitudes, lam_target, s_base, z=0.0, stride=1.0,
+              rho_max=1e3, radii=None, std_devs=None, constraints=None,
+              objectives=None, keep_fields=True, log=print):
+    """Run the altitude sweep and the design heuristic.  Pure computation: no
+    plotting, no file I/O."""
+    radii = DEFAULT_RADII if radii is None else radii
+    constraints = build_constraints() if constraints is None else constraints
+    objectives = OBJECTIVES if objectives is None else objectives
+
+    log(f"[CFG] s_base = {np.array2string(np.asarray(s_base), precision=8)}")
+    log(f"[CFG] lam_target = {lam_target:g} px^2, stride = {stride:g}, "
+        f"rho_max = {rho_max:g}")
+    log(f"[CFG] heuristic radii = {list(radii)} px (3-sigma)")
+
+    ref_alt = 10.0 if 10.0 in altitudes else float(altitudes[0])
+    per_alt, ref_fields, heuristic = {}, None, {}
+    t_start = time.time()
+
+    for alt in altitudes:
+        F, stats, variants = run_altitude(
+            camera, alt, lam_target, s_base, z, stride,
+            rho_max, constraints, objectives, log=log)
+        per_alt[float(alt)] = {"stats": stats, "variants": variants}
+        rows = design_heuristic(F, s_base, radii, rho_max,
+                                constraints["exact_lmax"],
+                                objectives["geomean"])
+        heuristic[float(alt)] = rows
+        for row in rows:
+            mm = np.asarray(row["sigma_mm"], dtype=float)
+            dg = np.asarray(row["sigma_deg"], dtype=float)
+            log(f"[HEUR] h={alt:g} m r={row['r']:5.1f} px "
+                f"lam={row['lam']:8.2f} "
+                f"sigma_xyz=[{mm[0]:7.2f},{mm[1]:7.2f},{mm[2]:8.2f}] mm "
+                f"sigma_rpy=[{dg[3]:7.4f},{dg[4]:7.4f},{dg[5]:7.4f}] deg "
+                f"at_cap={row['at_cap']}")
+        if float(alt) == ref_alt and keep_fields:
+            ref_fields = F
+        else:
+            del F
+
+    meta = {
+        "camera": DEFAULT_CAMERA,
+        "altitudes": [float(a) for a in altitudes],
+        "reference_altitude": ref_alt,
+        "lam_target": float(lam_target),
+        "stride": float(stride),
+        "std_devs": [float(v) for v in
+                     (DEFAULT_STD_DEVS if std_devs is None else std_devs)],
+        "s_base": np.asarray(s_base, dtype=float).tolist(),
+        "rho_max": float(rho_max),
+        "radii": [float(r) for r in radii],
+        "z": float(z),
+        "constraints": {k: o.desc for k, o in constraints.items()},
+        "objectives": {k: o.desc for k, o in objectives.items()},
+        "heuristic_constraint": "exact_lmax",
+        "heuristic_objective": "geomean",
+        "runtime_s": time.time() - t_start,
+    }
+    return Study(meta=meta, per_alt=per_alt, heuristic=heuristic,
+                 ref_fields=ref_fields)
+
 
 
 # ==========================================================
@@ -1147,19 +1108,26 @@ def _page_objectives(pdf, meta, per_alt):
         "  rule may have.  Two legitimate repairs exist: (a) normalize by the deployed budget, rho = s/s_base, giving dimensionless",
         "  multiples of hardware we actually own; (b) weight by a procurement cost vector c (currency per unit variance).  (b) needs cost",
         "  data that does not exist for this platform, so (a) is used and the raw-unit objective is deleted rather than kept as a variant.",
-        "  STRUCTURE INVOKED: the cut matrix is rescaled columnwise, A_t = A * s_base.  This is also a numerical necessity, not only a",
-        "  semantic one: s_base spans 1e-7 .. 1e-2, and the unscaled nonlinear solves stall at their initial point.",
+        "  STRUCTURE INVOKED: the cut matrix is rescaled columnwise, A_x = A * s_base.  This is a SEMANTIC choice only.  Measured by",
+        "  design_bound_ablation.py (stride 4, h = 10/20 m): solving in raw s instead of rho moves the geomean optimum by <= 2.2e-12",
+        "  (Clarabel) and never stalls -- the earlier 'unscaled solves stall at the initial point' claim does not reproduce.  Cost of",
+        "  raw coordinates: Clarabel unchanged (34 ms vs 34 ms, 225 vs 192 interior iterations on spectral); the old trust-constr",
+        "  backend degrades 2.8x in iterations (664 vs 237) and 2.1x in wall time (343 ms vs 161 ms).  Unit degeneracy is real and is",
+        "  measured on the LP in STEP 3.",
         "",
         "STEP 3 -- decision: an extreme design or a balanced one?  (linear vs strictly concave objective)",
         "  A LINEAR objective over a polytope attains its optimum at a vertex (fundamental theorem of LP).  With one active row, a vertex",
         "  of F puts the entire budget into the single cheapest DOF and zero into the other five.  Measured, h = 10 m, sup_trace:",
         f"    vertex_lp_norm   rho* = {fmt(st['vertex_lp_norm']['rho'])}   budget share = {fmt(st['vertex_lp_norm']['audit']['budget_share'])}",
-        "  That is the honest maximizer of sum_i rho_i and it is useless as a specification: it says the x, y, z and yaw estimates may be",
-        "  arbitrarily bad provided roll is perfect.  It is also non-unique when rows tie.  Reported because it is the correct answer to",
-        "  the question as literally posed -- which is the argument for not posing it that way.",
+        "  That is the honest maximizer of sum_i rho_i and it is useless as a specification: it says the x, y, z and roll/pitch estimates",
+        "  may be arbitrarily bad provided the rest is perfect.  It is also non-unique when rows tie.  Reported because it is the correct",
+        "  answer to the question as literally posed -- which is the argument for not posing it that way.",
+        "  MEASURED unit degeneracy of the raw-unit LP (ablation, sup_trace, h = 10 m): summing raw variances puts the whole budget on z",
+        "  (rho* = [0, 0, 2.147, 0, 0, 0]); relabelling the rotations from radians to degrees moves the same objective's answer to yaw",
+        "  (rho* = [0, 0, 0, 0, 0, 15.021]).  The normalized objective is invariant to that relabelling by construction.",
         "  If a design that spends on every DOF is wanted, the objective must be STRICTLY CONCAVE; then the optimum is interior and unique.",
         "  STRUCTURE INVOKED: strict concavity + a strictly feasible point (Slater) => unique maximizer, and KKT stationarity on a single",
-        "  active row gives the closed form used to validate the solver (self-test check 6).",
+        "  active row gives the closed form used to validate the solver (test_geomean_single_cut_closed_form).",
         "",
         "STEP 4 -- decision: which strictly concave objective?  (what 'balanced' means)",
         "  Candidates: sum_i log rho_i (geometric mean, D-optimality), sum_i rho_i^p with p < 1 (power means), min_i rho_i (max-min fair).",
@@ -1379,12 +1347,12 @@ def _page_methods(pdf, meta, per_alt, heuristic):
     lines += [
         "",
         "SOLVER",
-        "  Cutting-plane loop in rescaled coordinates rho = s/s_base "
-        "(s_base spans 1e-7..1e-2; unscaled nonlinear solves stall).",
+        "  Cutting-plane loop in rho = s/s_base; the rescaling is semantic, "
+        "not numerical (ablation: raw-s identical to 2.2e-12, same cuts).",
         "  Homogeneity => each subgradient a satisfies f(s) = a.s, so every cut "
         "a.s' <= lambda is a globally valid halfspace (all f here are convex).",
-        "  LP: scipy linprog/HiGHS.  Interior objective (geomean): trust-constr "
-        "with analytic jac/hess; the single-cut closed form is validated in --self-test.",
+        "  Inner solves via cvxpy 1.7: linear -> SCIPY/HiGHS simplex, log -> "
+        "Clarabel (exp cone, tol 1e-12), kappa_scaling -> closed form.",
         f"  Caps: rho <= {meta['rho_max']:g}; cap-limited DOFs are flagged "
         "at_cap in the JSON, hatched on page 7 and starred on page 9.",
         f"  Cut counts (vertex_lp_norm, h={a10:g} m): {cutinfo}   "
@@ -1396,10 +1364,8 @@ def _page_methods(pdf, meta, per_alt, heuristic):
         "sup_trace and exact_lmax.  Descriptive trace statistics "
         "(mean, median, quantiles, CVaR) are NOT upper bounds and are not",
         "  registered as constraints; page 4 shows them as descriptive markers only.",
-        "  Pointwise sandwich lambda_max <= tr <= 2 lambda_max is asserted over "
-        "every sampled pixel in --self-test check 2.",
-        "  Every returned design is re-audited over the full FOV: sup_lmax <= "
-        "lambda and violation_frac = 0 (checks 8 and 9).",
+        "  Pointwise sandwich lambda_max <= tr <= 2 lambda_max and the full-FOV "
+        "re-audit (sup_lmax <= lambda, viol = 0) run in test_design_bound_lp.py.",
         "",
         "HEADLINE RESULT (h = {:g} m)".format(a10),
         f"  incumbent spectral kappa* = {v['spectral']['kappa']:.4e}  "
@@ -1428,7 +1394,12 @@ def _page_methods(pdf, meta, per_alt, heuristic):
     _text_pages(pdf, lines)
 
 
-def build_report(out_pdf, meta, per_alt, ref_fields, objectives, heuristic):
+def build_report(out_pdf, study, objectives=None):
+    """Render the 10-page PDF for a completed Study.  Rebuilds the reference
+    FOV fields if the study was loaded from JSON."""
+    objectives = OBJECTIVES if objectives is None else objectives
+    meta, per_alt, heuristic = study.meta, study.per_alt, study.heuristic
+    ref_fields = study.fields()
     os.makedirs(os.path.dirname(os.path.abspath(out_pdf)), exist_ok=True)
     a_ref = meta["reference_altitude"]
     with PdfPages(out_pdf) as pdf:
@@ -1465,85 +1436,49 @@ def main(argv=None):
     p.add_argument("--out", default=os.path.join(os.path.expanduser("~"),
                                                  "catch", "design_bound_lp.pdf"))
     p.add_argument("--json", default=None)
+    p.add_argument("--pdf", action="store_true",
+                   help="render the PDF report after the study "
+                        "(default: study + JSON only)")
+    p.add_argument("--render", metavar="STUDY_JSON", default=None,
+                   help="skip the study: load a saved study JSON and render "
+                        "its PDF to --out")
     p.add_argument("--self-test", action="store_true")
     args = p.parse_args(argv)
 
     camera = Camera(**DEFAULT_CAMERA)
 
     if args.self_test:
-        failures = self_test(camera, altitude=10.0, z=args.z,
-                            stride=args.stride if args.stride > 1.0 else 4.0,
-                            lam_target=args.lam_target, std_devs=args.std_devs,
-                            rho_max=args.rho_max)
-        return 1 if failures else 0
+        # the harness is scripts/test_design_bound_lp.py; --self-test is the
+        # documented alias for running it.
+        import pytest
+        here = os.path.dirname(os.path.abspath(__file__))
+        return pytest.main(["-q", os.path.join(here, "test_design_bound_lp.py")])
+
+    if args.render:
+        if not os.path.isfile(args.render):
+            print(f"[ERR] no study JSON at {args.render}")
+            return 2
+        study = Study.load_json(args.render)
+        print(f"[CFG] rebuilding FOV fields at "
+              f"h={study.meta['reference_altitude']:g} m, "
+              f"stride={study.meta['stride']:g}")
+        print(f"[OUT] report  -> {build_report(args.out, study)}")
+        return 0
 
     s_base = np.diag(CovarianceModel.realistic(args.std_devs)).copy()
-    constraints = build_constraints()
-    out_json = args.json or os.path.splitext(args.out)[0] + ".json"
+    study = run_study(camera, args.altitudes, args.lam_target, s_base,
+                      z=args.z, stride=args.stride, rho_max=args.rho_max,
+                      radii=args.radii, std_devs=args.std_devs)
 
-    print(f"[CFG] s_base = {np.array2string(s_base, precision=8)}")
-    print(f"[CFG] lam_target = {args.lam_target:g} px^2, stride = {args.stride:g}, "
-          f"rho_max = {args.rho_max:g}")
-    print(f"[CFG] heuristic radii = {list(args.radii)} px (3-sigma)")
-
-    ref_alt = 10.0 if 10.0 in args.altitudes else float(args.altitudes[0])
-    per_alt, ref_fields, heuristic = {}, None, {}
-    t_start = time.time()
-
-    for alt in args.altitudes:
-        F, stats, variants = run_altitude(
-            camera, alt, args.lam_target, s_base, args.z, args.stride,
-            args.rho_max, constraints, OBJECTIVES)
-        per_alt[float(alt)] = {"stats": stats, "variants": variants}
-        rows = design_heuristic(F, s_base, args.radii, args.rho_max,
-                                constraints["exact_lmax"],
-                                OBJECTIVES["geomean"])
-        heuristic[float(alt)] = rows
-        for row in rows:
-            mm = np.asarray(row["sigma_mm"], dtype=float)
-            dg = np.asarray(row["sigma_deg"], dtype=float)
-            print(f"[HEUR] h={alt:g} m r={row['r']:5.1f} px "
-                  f"lam={row['lam']:8.2f} "
-                  f"sigma_xyz=[{mm[0]:7.2f},{mm[1]:7.2f},{mm[2]:8.2f}] mm "
-                  f"sigma_rpy=[{dg[3]:7.4f},{dg[4]:7.4f},{dg[5]:7.4f}] deg "
-                  f"at_cap={row['at_cap']}")
-        if float(alt) == ref_alt:
-            ref_fields = F
-        else:
-            del F
-
-    meta = {
-        "camera": DEFAULT_CAMERA,
-        "altitudes": [float(a) for a in args.altitudes],
-        "reference_altitude": ref_alt,
-        "lam_target": float(args.lam_target),
-        "stride": float(args.stride),
-        "std_devs": [float(v) for v in args.std_devs],
-        "s_base": s_base.tolist(),
-        "rho_max": float(args.rho_max),
-        "radii": [float(r) for r in args.radii],
-        "z": float(args.z),
-        "constraints": {k: o.desc for k, o in constraints.items()},
-        "objectives": {k: o.desc for k, o in OBJECTIVES.items()},
-        "heuristic_constraint": "exact_lmax",
-        "heuristic_objective": "geomean",
-        "runtime_s": None,
-    }
-
-    pdf_path = build_report(args.out, meta, per_alt, ref_fields, OBJECTIVES,
-                            heuristic)
-    meta["runtime_s"] = time.time() - t_start
-
-    payload = {"meta": meta,
-               "altitudes": {f"{a:g}": per_alt[a] for a in per_alt},
-               "heuristic": {f"{a:g}": heuristic[a] for a in heuristic}}
-    os.makedirs(os.path.dirname(os.path.abspath(out_json)), exist_ok=True)
-    with open(out_json, "w") as fh:
-        json.dump(payload, fh, indent=1)
-
-    print(f"[OUT] report  -> {pdf_path}")
+    out_json = study.save_json(args.json or
+                               os.path.splitext(args.out)[0] + ".json")
     print(f"[OUT] records -> {out_json}")
-    print(f"[OUT] total runtime {meta['runtime_s']:.1f} s")
+    if args.pdf:
+        print(f"[OUT] report  -> {build_report(args.out, study)}")
+    else:
+        print("[OUT] report  -> skipped (pass --pdf to render, "
+              f"or --render {out_json})")
+    print(f"[OUT] total runtime {study.meta['runtime_s']:.1f} s")
     return 0
 
 
