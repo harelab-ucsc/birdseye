@@ -878,8 +878,8 @@ class Experiment:
 
 if __name__ == "__main__":
 
-    load = True
-    # load = False
+    # load = True
+    load = False
 
     tgt_z = 0.0
 

@@ -38,7 +38,7 @@ definition rather than by preference.
 |`rho`|Normalized design `rho = s / s_base`, dimensionless multiples of the deployed variance.|—|
 |`rho*`|The maximizer of a stated objective over the feasible set, in normalized coordinates.|—|
 |`caps`|Artificial box on the design, `rho_max = 1e3` in normalized coordinates, imposed to keep the program bounded. An axis that hits it is flagged `at_cap`, and a cap-limited row is not a tolerance.|m², rad²|
-|`Sigma_u`|Propagated pixel covariance `Sigma_u = J_xi diag(s) J_xi^T`, a 2×2 PSD matrix.|px²|
+|`Sigma_u`|Propagated pixel covariance `Sigma_u = J_xi diag(s) J_xi^T`, a 3×3, rank 2 PSD matrix.|px²|
 |`lambda_max`|Larger eigenvalue of `Sigma_u`: variance along the worst pixel direction.|px²|
 |`tr`|Trace of `Sigma_u`; by the identity of Section 3, the inner product of `s` and `g`.|px²|
 |`w`|Unit pixel direction; at the argsup pixel, the top eigenvector of `Sigma_u`.|—|
@@ -86,7 +86,7 @@ at `lambda_u,target` = 100 px² it rejects a platform that conforms with headroo
 also cannot say which axis to spend on. It is not studied further, appearing only as the baseline row of Section 4.
 
 The replacement is the trace identity over the columns `j_i`, exactly linear in `s`, with the eigenvalue sandwich for
-2×2 PSD matrices [10], asserted pointwise over all sampled pixels at a measured worst ratio of 1.999969:
+3×3, rank 2 PSD matrices [10], asserted pointwise over all sampled pixels at a measured worst ratio of 1.999969:
 
 ```
 tr(J_xi Sigma_0 J_xi^T) = sum_i sigma_i^2 ||j_i(X_w)||_2^2 = s . g(X_w),
@@ -397,4 +397,4 @@ Environment: Python 3.10.12, numpy 2.2.6, scipy 1.15.2, matplotlib 3.10.1, cvxpy
 9. P. J. Goulart and Y. Chen, "Clarabel: An interior-point solver for conic programs with quadratic objectives",
    arXiv:2405.12762, 2024. The method behind the exponential-cone solve.
 10. R. A. Horn and C. R. Johnson, *Matrix Analysis*, 2nd ed., Cambridge University Press, 2012. For an `n x n` PSD
-    matrix, `lambda_max <= tr <= n lambda_max`; here the matrix is 2×2.
+    matrix, `lambda_max <= tr <= n lambda_max`; here the matrix is 3×3, rank 2. 
