@@ -2,6 +2,7 @@ import numpy as np
 from fixtures.simple_camera import make_camera
 from birdseye.camera.projection_models import FlatWorldBackend
 
+
 def test_flat_world_intersection():
     cam, T_cam_world = make_camera()
     backend = FlatWorldBackend(ground_z=0.0)
@@ -16,11 +17,7 @@ def test_flat_world_intersection():
 def test_image_to_world_consistency():
     cam, T_cam_world = make_camera()
     backend = FlatWorldBackend(ground_z=0.0)
-    pixels = np.array([
-        [320, 240],
-        [300, 240],
-        [340, 240]
-    ])
+    pixels = np.array([[320, 240], [300, 240], [340, 240]])
     origins, dirs = cam.image_to_rays(pixels, T_cam_world)
     world = backend.raycast(origins, dirs)
     assert world.shape[0] == len(pixels)

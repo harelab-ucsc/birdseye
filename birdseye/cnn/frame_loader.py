@@ -7,16 +7,13 @@ from sklearn.utils.class_weight import compute_class_weight
 
 
 class FrameLoader:
-    def __init__(self, 
-        label_file='labels.txt', 
-        image_size=(224, 224), 
-        use_heatmaps=False
-        ):
+    def __init__(
+        self, label_file="labels.txt", image_size=(224, 224), use_heatmaps=False
+    ):
 
         self.label_file = label_file
         self.image_size = image_size
         self.use_heatmaps = use_heatmaps
-
 
     def load_labels(self, label_file, image_filename):
         """Parse labels from a text file. Each line: idx, filepath, [x,y,class]"""
@@ -27,13 +24,12 @@ class FrameLoader:
             with open(load_name, "r") as f:
                 for line in f:
                     _, path, data = line.strip().split()
-                    x_str, y_str, class_str = data.split(',')
+                    x_str, y_str, class_str = data.split(",")
                     if os.path.basename(path) == os.path.basename(image_filename):
                         labels.append((float(x_str), float(y_str), float(class_str)))
         except Exception as e:
             print(f"      [Label Load Error] {e}")
         return labels
-
 
     def frame_label(self, image_np, labels):
         h, w = image_np.shape[:2]
@@ -46,7 +42,6 @@ class FrameLoader:
             return heatmap
         else:
             return 1.0 if labels else 0.0
-
 
     def tf_frame_fn(self, image_path, label_file):
         def pyfunc(image_path_py):
@@ -64,7 +59,7 @@ class FrameLoader:
         image, label = tf.py_function(
             pyfunc,
             [image_path],
-            [tf.uint8, tf.float32 if not self.use_heatmaps else tf.float32]
+            [tf.uint8, tf.float32 if not self.use_heatmaps else tf.float32],
         )
 
         image.set_shape([self.image_size[0], self.image_size[1], 3])
@@ -74,7 +69,6 @@ class FrameLoader:
             label.set_shape([])
 
         return image, label
-
 
     def augment(self, image, label):
         image = tf.image.convert_image_dtype(image, tf.float32)
@@ -93,22 +87,36 @@ class FrameLoader:
         image = tf.image.convert_image_dtype(image, tf.uint8)
         return image, tf.expand_dims(label, -1) if not self.use_heatmaps else label
 
-
-    def build_dataset(self, file_list, label_file, batch_size, buffer_size=64, repeat=True, augment=False):
-        ds = tf.data.Dataset.from_tensor_slices(tf.convert_to_tensor(file_list, dtype=tf.string))
-        ds = ds.map(lambda path: self.tf_frame_fn(path, label_file), num_parallel_calls=tf.data.AUTOTUNE)
+    def build_dataset(
+        self,
+        file_list,
+        label_file,
+        batch_size,
+        buffer_size=64,
+        repeat=True,
+        augment=False,
+    ):
+        ds = tf.data.Dataset.from_tensor_slices(
+            tf.convert_to_tensor(file_list, dtype=tf.string)
+        )
+        ds = ds.map(
+            lambda path: self.tf_frame_fn(path, label_file),
+            num_parallel_calls=tf.data.AUTOTUNE,
+        )
 
         if augment:
             ds = ds.map(self.augment, num_parallel_calls=tf.data.AUTOTUNE)
         elif not self.use_heatmaps:
-            ds = ds.map(lambda x, y: (x, tf.expand_dims(y, -1)), num_parallel_calls=tf.data.AUTOTUNE)
+            ds = ds.map(
+                lambda x, y: (x, tf.expand_dims(y, -1)),
+                num_parallel_calls=tf.data.AUTOTUNE,
+            )
 
         if repeat:
             ds = ds.repeat()
 
         ds = ds.shuffle(buffer_size).batch(batch_size).prefetch(tf.data.AUTOTUNE)
         return ds
-
 
     def show_frame_batch(self, dataset, num_samples=6):
         for images, labels in dataset.take(1):
@@ -117,17 +125,23 @@ class FrameLoader:
                 plt.subplot(1, 2, 1)
                 plt.imshow(images[i].numpy().astype(np.uint8))
                 plt.title("Frame")
-                plt.axis('off')
+                plt.axis("off")
 
                 plt.subplot(1, 2, 2)
                 if self.use_heatmaps:
-                    plt.imshow(labels[i].numpy().squeeze(), cmap='hot')
+                    plt.imshow(labels[i].numpy().squeeze(), cmap="hot")
                     plt.title("Heatmap")
                 else:
-                    lbl = int(labels[i].numpy()) if tf.rank(labels[i]) == 0 else int(labels[i].numpy()[0])
-                    plt.text(0.5, 0.5, f"Class: {lbl}", ha='center', va='center', fontsize=16)
+                    lbl = (
+                        int(labels[i].numpy())
+                        if tf.rank(labels[i]) == 0
+                        else int(labels[i].numpy()[0])
+                    )
+                    plt.text(
+                        0.5, 0.5, f"Class: {lbl}", ha="center", va="center", fontsize=16
+                    )
                     plt.title("Label")
-                    plt.axis('off')
+                    plt.axis("off")
 
                 plt.tight_layout()
                 plt.show()
@@ -143,10 +157,12 @@ def get_class_weights(file_list, frame_loader):
     total_neg = 0
 
     for i, image_path in enumerate(file_list):
-        print(f'  Progress: {i+1}/{len(file_list)} images', end='\r')
+        print(f"  Progress: {i + 1}/{len(file_list)} images", end="\r")
         try:
             image_path_str = str(image_path)
-            image = tf.io.decode_png(tf.io.read_file(image_path_str), channels=3).numpy()
+            image = tf.io.decode_png(
+                tf.io.read_file(image_path_str), channels=3
+            ).numpy()
             labels = frame_loader.load_labels(frame_loader.label_file, image_path_str)
             label = frame_loader.frame_label(image, labels)
 
@@ -166,5 +182,5 @@ def get_class_weights(file_list, frame_loader):
 
     print(f"\n\n📏 Final class sample counts: pos={total_pos}, neg={total_neg}")
     y_true = [0] * total_neg + [1] * total_pos
-    weights = compute_class_weight('balanced', classes=np.unique(y_true), y=y_true)
+    weights = compute_class_weight("balanced", classes=np.unique(y_true), y=y_true)
     return {int(cl): float(w) for cl, w in zip(np.unique(y_true), weights)}

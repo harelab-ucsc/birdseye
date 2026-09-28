@@ -23,6 +23,7 @@ def _parse(plan_rows, **kwargs):
 
 # --- Output structure ---
 
+
 def test_output_is_valid_json():
     result = plan_2_qgc(SINGLE_WP)
     parsed = json.loads(result)
@@ -38,6 +39,7 @@ def test_top_level_keys():
 
 
 # --- Mission items ---
+
 
 def test_waypoint_item_present():
     d = _parse(SINGLE_WP)
@@ -106,16 +108,29 @@ def test_hover_does_not_append_rtl():
 
 # --- Actions sequence ---
 
+
 def test_action_shoot():
-    plan = [{"lat": "36.9741", "lon": "-122.0308", "speed": "3.0",
-             "actions_sequence": "SHOOT"}]
+    plan = [
+        {
+            "lat": "36.9741",
+            "lon": "-122.0308",
+            "speed": "3.0",
+            "actions_sequence": "SHOOT",
+        }
+    ]
     d = _parse(plan)
     assert any(i["command"] == 2000 for i in d["mission"]["items"])
 
 
 def test_action_hover_delay():
-    plan = [{"lat": "36.9741", "lon": "-122.0308", "speed": "3.0",
-             "actions_sequence": "H1000"}]
+    plan = [
+        {
+            "lat": "36.9741",
+            "lon": "-122.0308",
+            "speed": "3.0",
+            "actions_sequence": "H1000",
+        }
+    ]
     d = _parse(plan)
     delay_items = [i for i in d["mission"]["items"] if i["command"] == 112]
     assert len(delay_items) == 1
@@ -123,6 +138,7 @@ def test_action_hover_delay():
 
 
 # --- Geofence ---
+
 
 def test_geofence_polygon_generated():
     d = _parse(TWO_WP)
@@ -178,8 +194,11 @@ def test_empty_plan_returns_valid_structure():
 
 # --- make_simple_item helper ---
 
+
 def test_make_simple_item_structure():
-    item = make_simple_item(16, [0, 0, 0, None, 1.0, 2.0, 10.0], lat=1.0, lon=2.0, alt=10.0)
+    item = make_simple_item(
+        16, [0, 0, 0, None, 1.0, 2.0, 10.0], lat=1.0, lon=2.0, alt=10.0
+    )
     assert item["command"] == 16
     assert item["type"] == "SimpleItem"
     assert item["Altitude"] == pytest.approx(10.0)

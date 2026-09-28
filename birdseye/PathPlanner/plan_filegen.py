@@ -269,7 +269,9 @@ def plan_2_qgc(plan: list[dict], on_finish: str = "Hover", wait_ms: int = 0) -> 
     return json.dumps(plan_json, indent=4)
 
 
-def csv2qgc(data_path: str, plan_path: str, on_finish: str = "GoHome", wait_ms: int = 0):
+def csv2qgc(
+    data_path: str, plan_path: str, on_finish: str = "GoHome", wait_ms: int = 0
+):
     # Convert an existing CSV path with flight data into a QGC .plan path
     flight_plan_csv = _read_csv_file(data_path)
     plan_str = plan_2_qgc(flight_plan_csv, on_finish, wait_ms=wait_ms)

@@ -13,6 +13,7 @@ Adapated from [csv2djipilot]{https://github.com/IPGP/csv2djipilot/tree/main}.
 @todo
     * Set header if not supplied.
 """
+
 from string import Template
 from typing import Union
 
@@ -22,28 +23,30 @@ import sys
 
 
 DEFAULT_KML_PATH = "./catch/flight.kml"
-#_CURRENT_ALTITUDE = 30
+# _CURRENT_ALTITUDE = 30
 DEFAULT_ACTIONS_SEQUENCE: Union[str, None] = None
 DEFAULT_GIMBAL: Union[float, None] = None
 DEFAULT_HEADING: Union[float, None] = None
-DEFAULT_HEIGHT: float = 10    # m
-DEFAULT_SPEED: float = 2.3    # m/s
+DEFAULT_HEIGHT: float = 10  # m
+DEFAULT_SPEED: float = 2.3  # m/s
 DEFAULT_TURNMODE: str = "AUTO"
 
-#print(f"{CsvFile} to {args.output.name}")
-#CsvFile = "exemple.csv"
-#CsvFile = "exemple_simple.csv"
+# print(f"{CsvFile} to {args.output.name}")
+# CsvFile = "exemple.csv"
+# CsvFile = "exemple_simple.csv"
 CSV_HEADER = False
+
 
 def _write_file(path: str, data: any):
     with open(path, "w+") as fp:
         fp.write(data)
 
+
 def _read_csv_file(path: str) -> list[dict]:
     """_read_csv_file(path) -> data
 
     Generate a list of CSV lines from input CSV file.
-    
+
     @param  path (str)          Input path.
     @return data (list[dict])   Output data.
     """
@@ -55,14 +58,12 @@ def _read_csv_file(path: str) -> list[dict]:
             data.append(row)
     return data
 
-def plan_2_kml(
-    plan: list[dict],
-    on_finish: str = "Hover"
-) -> str:
+
+def plan_2_kml(plan: list[dict], on_finish: str = "Hover") -> str:
     """plan_2_kml(plan, hover) -> kml_str
 
     Generate a string-ified KML from a flight plan, ready for writing to a file.
-    
+
     @param  plan (list[dict])   Path to be converted.
     @param  on_finish (str)     "Hover" by default.
     """
@@ -146,9 +147,8 @@ def plan_2_kml(
     stoprecord_template = Template("""
               <mis:actions param="0" accuracy="0" cameraIndex="0" payloadType="0" payloadIndex="0">StopRecording</mis:actions>""")
 
-
     all_coordinates_template = Template("$lon,$lat,$height")
-#        <mis:altitude>$_CURRENT_ALTITUDE</mis:altitude>
+    #        <mis:altitude>$_CURRENT_ALTITUDE</mis:altitude>
     xml_end = Template("""    </Folder>
         <Placemark>
           <name>Wayline</name>
@@ -193,15 +193,17 @@ def plan_2_kml(
         gimbal = row["gimbal"] if "speed" in row.keys() else DEFAULT_GIMBAL
         heading = row["heading"] if "heading" in row.keys() else DEFAULT_HEADING
         height = (
-            float(row["altWGS84"]) + 10.0
-        ) if "altWGS84" in row.keys() else DEFAULT_HEIGHT
+            (float(row["altWGS84"]) + 10.0)
+            if "altWGS84" in row.keys()
+            else DEFAULT_HEIGHT
+        )
         speed = row["speed"] if "speed" in row.keys() else DEFAULT_SPEED
         if "turnmode" in row.keys():
-            turnmode = row["turnmode"] 
+            turnmode = row["turnmode"]
         else:
             turnmode = DEFAULT_TURNMODE
         if "actions_sequence" in row.keys():
-            actions_sequence = row["actions_sequence"] 
+            actions_sequence = row["actions_sequence"]
         else:
             actions_sequence = DEFAULT_ACTIONS_SEQUENCE
 
@@ -209,7 +211,7 @@ def plan_2_kml(
             sys.exit("speed should be >0 or <=15 m/s for {}".format(name))
 
         if gimbal and "." not in gimbal:
-            gimbal = gimbal+".0"
+            gimbal = gimbal + ".0"
 
         if turnmode == "AUTO":
             turnmode = "Auto"
@@ -232,7 +234,7 @@ def plan_2_kml(
                 waypoint_number=waypoint_number,
                 speed=speed,
                 heading=heading,
-                gimbal=gimbal
+                gimbal=gimbal,
             )
 
         # Actions decoding
@@ -247,34 +249,38 @@ def plan_2_kml(
                     kml_str += stoprecord_template.substitute()
                 # Gimbal orientation
                 elif action[0] == "G":
-                    kml_str += gimbal_template.substitute(
-                        gimbal_angle=action[1:])
+                    kml_str += gimbal_template.substitute(gimbal_angle=action[1:])
                 # Aircraft orientation
                 elif action[0] == "A":
-                    kml_str += aircraftyaw_template.substitute(
-                        aircraftyaw=action[1:])
+                    kml_str += aircraftyaw_template.substitute(aircraftyaw=action[1:])
                 elif action[0] == "H":
                     if float(action[1:]) < 500:
                         sys.exit(
-                            "Hover length is in ms and should be >500  for {}".format(name)
+                            "Hover length is in ms and should be >500  for {}".format(
+                                name
+                            )
                         )
-                    kml_str += hover_template.substitute(
-                        length=action[1:]
-                    )
+                    kml_str += hover_template.substitute(length=action[1:])
 
-        kml_str += "\n" + \
-            waypoint_end.substitute(lon=lon, lat=lat, height=height,)+"\n"
+        kml_str += (
+            "\n"
+            + waypoint_end.substitute(
+                lon=lon,
+                lat=lat,
+                height=height,
+            )
+            + "\n"
+        )
 
-        all_coordinates += all_coordinates_template.substitute(
-            lon=lon, lat=lat, height=height)+" "
+        all_coordinates += (
+            all_coordinates_template.substitute(lon=lon, lat=lat, height=height) + " "
+        )
         waypoint_number += 1
-# remove last space from coordinates string
+    # remove last space from coordinates string
     all_coordinates = all_coordinates[:-1]
-    kml_str += xml_end.substitute(
-        all_coordinates=all_coordinates,
-        on_finish=on_finish
-    )
+    kml_str += xml_end.substitute(all_coordinates=all_coordinates, on_finish=on_finish)
     return kml_str
+
 
 def csv2djipilot(data_path: str, kml_path: str, on_finish: str = "hover"):
     """csv2djipilot(data_path, kml_path, on_finish)
@@ -288,27 +294,25 @@ def csv2djipilot(data_path: str, kml_path: str, on_finish: str = "hover"):
     flight_plan_csv = _read_csv_file(data_path)
     kml_str = plan_2_kml(flight_plan_csv, on_finish)
     _write_file(path=kml_path, data=kml_str)
-    
+
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument(
-        "csvfile",
-        type=argparse.FileType("r"),
-        help="Specify csv input file"
+        "csvfile", type=argparse.FileType("r"), help="Specify csv input file"
     )
     parser.add_argument(
         "-o",
         "--output",
         type=argparse.FileType("w"),
         default=DEFAULT_KML_PATH,
-        help="Specify output file (default:stdout)"
+        help="Specify output file (default:stdout)",
     )
     parser.add_argument(
         "--onfinish",
         default="hover",
         choices=["hover", "gohome"],
-        help="Aircraft action when finish. hover or gohome (default: %(default)s)."
+        help="Aircraft action when finish. hover or gohome (default: %(default)s).",
     )
     args = parser.parse_args()
 

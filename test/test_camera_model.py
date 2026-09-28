@@ -33,11 +33,13 @@ def test_ray_normalization():
 
 def test_world_to_image_consistency():
     cam, T_cam_world = make_camera()
-    pts = np.array([
-        [0, 0, 0],
-        [1, 0, 0],
-        [-1, 0, 0],
-    ])
+    pts = np.array(
+        [
+            [0, 0, 0],
+            [1, 0, 0],
+            [-1, 0, 0],
+        ]
+    )
     pixels, in_front = cam.world_to_image(pts, T_cam_world)
     assert np.all(in_front)
 

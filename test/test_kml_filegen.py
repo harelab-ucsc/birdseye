@@ -52,6 +52,7 @@ def _parse(rows, **kwargs):
 
 # --- XML validity ---
 
+
 def test_output_is_valid_xml():
     root = _parse(SINGLE_WP)
     assert root is not None
@@ -63,6 +64,7 @@ def test_root_tag_is_kml():
 
 
 # --- Waypoint placemarks ---
+
 
 def test_waypoint_name_in_output():
     out = _kml(SINGLE_WP)
@@ -97,6 +99,7 @@ def test_all_waypoint_coords_in_wayline():
 
 # --- on_finish ---
 
+
 def test_on_finish_hover():
     out = _kml(SINGLE_WP, on_finish="Hover")
     assert "<mis:actionOnFinish>Hover</mis:actionOnFinish>" in out
@@ -129,6 +132,7 @@ def test_turnmode_counterclockwise():
 
 
 # --- Actions ---
+
 
 def test_action_shoot():
     out = _kml(SINGLE_WP)
@@ -176,6 +180,7 @@ def test_action_sequence_multiple():
 
 
 # --- Heading ---
+
 
 def test_no_heading_uses_wayline_altitude():
     # Without heading, the no-heading template sets useWaylineAltitude=true
