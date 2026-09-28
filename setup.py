@@ -4,7 +4,7 @@ package_name = "birdseye"
 
 setup(
     name=package_name,
-    version="0.0.0",
+    version="2.0.0",
     packages=find_packages(exclude=["test"]),
     data_files=[
         ("share/ament_index/resource_index/packages", ["resource/" + package_name]),
@@ -15,10 +15,10 @@ setup(
         "setuptools",
     ],
     zip_safe=True,
-    maintainer="mwmaster",
+    maintainer="Morgan Masters",
     maintainer_email="mwmaster@ucsc.edu",
-    description="TODO: Package description",
-    license="TODO: License declaration",
+    description="birdsEye v2: human-in-the-loop geospatial annotation of UAV imagery against 3-D models (ray casting, SE(3) poses).",
+    license="MIT",
     tests_require=["pytest"],
     entry_points={
         "console_scripts": [
