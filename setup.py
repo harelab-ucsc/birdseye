@@ -4,7 +4,7 @@ package_name = 'birdseye'
 
 setup(
     name=package_name,
-    version='0.0.0',
+    version='1.0.0',
     packages=find_packages(exclude=['test']),
     data_files=[
         ('share/ament_index/resource_index/packages',
@@ -14,10 +14,10 @@ setup(
     ],
     install_requires=['setuptools',],
     zip_safe=True,
-    maintainer='jetson',
-    maintainer_email='jetson@todo.todo',
-    description='TODO: Package description',
-    license='TODO: License declaration',
+    maintainer='Morgan Masters',
+    maintainer_email='mwmaster@ucsc.edu',
+    description='birdsEye v1: ROS 2 UAV imagery ingestion to SQLite and human-in-the-loop geospatial annotation (flat-world projection).',
+    license='MIT',
     tests_require=['pytest'],
     entry_points={
         'console_scripts': [
