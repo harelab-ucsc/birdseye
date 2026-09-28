@@ -22,3 +22,4 @@ scripts/testdata/
 test/__pycache__/*
 test/fixtures/*
 scripts/test*
+birdseye.egg-info/*
