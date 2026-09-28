@@ -1,3 +1,4 @@
+.venv/*
 __pycache__/*
 */catch
 */flights
@@ -17,3 +18,8 @@ holding/*
 examples/*
 .dependencies.txt
 logs/*
+scripts/MDPI_Birdseye_v3/
+scripts/testdata/
+test/__pycache__/*
+test/fixtures/*
+scripts/test*
