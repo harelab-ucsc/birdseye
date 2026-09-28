@@ -4,21 +4,16 @@ import rclpy
 from rclpy.node import Node
 from rosbag2_py import SequentialReader, SequentialWriter, StorageOptions, ConverterOptions
 from sensor_msgs.msg import Image
-from inertial_sense_ros2.msg import DIDINS2
 import argparse
 import numpy as np
 from rosidl_runtime_py.utilities import get_message
 from rclpy.serialization import deserialize_message, serialize_message
-from scipy.spatial.transform import Rotation as R
 import matplotlib.pyplot as plt
 from cv_bridge import CvBridge
 import cv2
 import os
-import json
 import yaml
 import copy
-from pyproj import Proj, Transformer
-import matplotlib.pyplot as plt
 
 #from rectify import rectify_image
 
@@ -72,8 +67,10 @@ class BagProcessor:
         print(f'  image_msgs length: {len(self.image_msgs)}')
         print('bag read done \n')
 
-        for img in self.image_msgs:
+        for i, img in enumerate(self.image_msgs):
             timestamp_str = f"{img.header.stamp.sec}.{img.header.stamp.nanosec:09d}"
+            if timestamp_str == '0.000000000':
+                timestamp_str = str(i)
             # print(timestamp_str)
             self.save_image(img, timestamp_str)
 
