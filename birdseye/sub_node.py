@@ -34,7 +34,7 @@ from birdseye.camera.projection_models import ProjectionEngine, MeshBackend
 from birdseye.camera.camera import SensorConfigLoader, PinholeCameraModel
 
 # Tolerant imports — these message types live in repos that may not be
-# installed in test/CI containers (inertial_sense_ros2, custom_msgs).
+# installed in test/CI containers (inertial_sense_ros2, ros2_radalt_msgs).
 # Subscriptions are skipped when their msg types aren't importable, and
 # all_caught() naturally only requires inputs we actually subscribed to.
 try:
@@ -43,7 +43,7 @@ except ImportError:
     DIDINS2 = None
 
 # try:
-#     from custom_msgs.msg import AltSNR
+#     from ros2_radalt_msgs.msg import AltSNR
 # except ImportError:
 #     AltSNR = None
 
