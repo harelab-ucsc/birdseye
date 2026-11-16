@@ -2,6 +2,8 @@
 
 > **Version note** — This is v2 (3-D ray casting / SE(3)), under active development. The code used in the manuscript ([arXiv:2609.28767](https://arxiv.org/abs/2609.28767)) is the v1 SQLite line — use tag [`v1.0.0`](https://github.com/harelab-ucsc/birdseye/tree/v1.0.0) / branch [`v1`](https://github.com/harelab-ucsc/birdseye/tree/v1) to reproduce it.
 
+Review GUI for adjudicating detections: [birdseye-review](https://github.com/harelab-ucsc/birdseye-review).
+
 ## Overview
 
 birdsEye is a ROS 2 (`ament_python`) package for human-in-the-loop geospatial annotation of UAV camera-payload imagery. v2 projects RTK-surveyed annotations into images by casting camera rays against a 3-D model of the scene instead of a flat ground plane.
