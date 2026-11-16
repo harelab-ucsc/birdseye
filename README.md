@@ -4,6 +4,8 @@
 
 Review GUI for adjudicating detections: [birdseye-review](https://github.com/harelab-ucsc/birdseye-review).
 
+Easy-up, Raspberry Pi4-based RTK basestation repository: [rtk-station](https://github.com/harelab-ucsc/rtk-station)
+
 ## Overview
 
 birdsEye is a ROS 2 (`ament_python`) package for human-in-the-loop geospatial annotation of UAV camera-payload imagery. v2 projects RTK-surveyed annotations into images by casting camera rays against a 3-D model of the scene instead of a flat ground plane.
