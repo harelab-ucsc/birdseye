@@ -4,7 +4,7 @@
 
 Review GUI for adjudicating detections: [birdseye-review](https://github.com/harelab-ucsc/birdseye-review).
 
-Easy-up, Raspberry Pi4-based RTK basestation repository: [rtk-station](https://github.com/harelab-ucsc/rtk-station)
+Easy-up, Raspberry Pi4-based RTK basestation repository: [rtk-station](https://github.com/harelab-ucsc/rtk-station).
 
 ## Overview
 
